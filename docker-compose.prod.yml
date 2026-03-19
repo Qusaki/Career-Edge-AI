@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend-api-prod
+    restart: always
+    ports:
+      # Exposes the API on port 80 (standard HTTP) of the EC2 instance
+      - "80:8000"
+    environment:
+      # Connects directly to your newly created AWS RDS PostgreSQL Database!
+      - DATABASE_URL=postgresql://postgres:***REMOVED***@career-edge-ai-db.c4vq8u4cgvog.us-east-1.rds.amazonaws.com:5432/thesis
