@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  AWS_REGION: us-east-1 # Change if your ECR repo is in another region
+  AWS_REGION: ap-southeast-1 # Change if your ECR repo is in another region
   ECR_REPOSITORY: fastapi-backend # Replace with your ECR repository name
 
 jobs:
