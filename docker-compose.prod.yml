@@ -12,4 +12,4 @@ services:
       - "80:8000"
     environment:
       # Connects directly to your newly created AWS RDS PostgreSQL Database!
-      - DATABASE_URL=postgresql://postgres:***REMOVED***@career-edge-ai-db.c4vq8u4cgvog.us-east-1.rds.amazonaws.com:5432/thesis
+      - DATABASE_URL=postgresql://postgres:***REMOVED***@career-edge-ai-db.cfeuee2ompp8.ap-southeast-1.rds.amazonaws.com:5432/thesis
