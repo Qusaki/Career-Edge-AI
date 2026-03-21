@@ -20,6 +20,7 @@ resource "aws_instance" "web" {
   subnet_id     = aws_subnet.public.id
 
   vpc_security_group_ids = [aws_security_group.web_sg.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
   
   # For SSH access, you usually provide a key name.
   # key_name = "your-key-pair-name"
@@ -29,7 +30,7 @@ resource "aws_instance" "web" {
   user_data = <<-EOF
               #!/bin/bash
               apt-get update
-              apt-get install -y ca-certificates curl gnupg
+              apt-get install -y ca-certificates curl gnupg unzip awscli
               install -m 0755 -d /etc/apt/keyrings
               curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
               chmod a+r /etc/apt/keyrings/docker.gpg
@@ -44,11 +45,23 @@ resource "aws_instance" "web" {
               
               systemctl enable docker
               systemctl start docker
-              
               usermod -aG docker ubuntu
+
+              # Get Region and Account ID dynamically
+              TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+              REGION=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/placement/region)
+              ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --region $REGION)
+
+              # Login to ECR
+              aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+              
+              # Run the Docker container exposing Port 80
+              docker run -d --restart always -p 80:8000 \
+                -e DATABASE_URL="postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.endpoint}/${aws_db_instance.postgres.db_name}" \
+                $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/fastapi-backend:latest
               EOF
 
   tags = {
-    Name = "${var.project_name}-web"
+    Name = "$${var.project_name}-web"
   }
 }
