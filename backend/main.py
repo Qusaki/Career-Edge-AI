@@ -17,9 +17,11 @@ app.add_middleware(
 app.include_router(routers_user.router)
 app.include_router(routers_auth.router)
 
+
 @app.get("/")
 async def root():
     return {"message": "Hello World"}
+
 
 @app.get("/health")
 async def health_check():
