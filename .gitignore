@@ -7,6 +7,7 @@ ENV/
 env.bak/
 venv.bak/
 .env*
+.vscode/
 
 # Python
 __pycache__/
