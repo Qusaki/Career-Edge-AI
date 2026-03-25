@@ -3,6 +3,6 @@ sqlalchemy
 psycopg2-binary
 python-dotenv
 alembic
-passlib[bcrypt]
+bcrypt
 python-jose[cryptography]
 python-multipart
