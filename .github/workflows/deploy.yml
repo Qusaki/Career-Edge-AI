@@ -37,3 +37,33 @@ jobs:
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+    - name: Deploy to EC2
+      uses: appleboy/ssh-action@v1.0.3
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: ${{ env.ECR_REPOSITORY }}
+        AWS_REGION: ${{ env.AWS_REGION }}
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.EC2_SSH_KEY }}
+        envs: ECR_REGISTRY,ECR_REPOSITORY,AWS_REGION
+        script: |
+          # Login to ECR on the EC2 instance
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+          
+          # Pull the latest image
+          docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          # Stop and remove the existing container
+          docker stop backend-api-prod || true
+          docker rm backend-api-prod || true
+          
+          # Run the new container
+          docker run -d \
+            --name backend-api-prod \
+            -p 80:8000 \
+            --restart always \
+            -e DATABASE_URL="postgresql://postgres:***REMOVED***@career-edge-ai-db.cfeuee2ompp8.ap-southeast-1.rds.amazonaws.com:5432/thesis" \
+            $ECR_REGISTRY/$ECR_REPOSITORY:latest
