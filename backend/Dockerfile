@@ -10,4 +10,4 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["fastapi", "run", "main.py", "--port", "8000"]
+CMD ["sh", "-c", "alembic upgrade head && fastapi run main.py --port 8000"]
