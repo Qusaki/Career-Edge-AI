@@ -9,3 +9,4 @@ python-multipart
 google-generativeai
 google-cloud-texttospeech
 sse-starlette
+boto3

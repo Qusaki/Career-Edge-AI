@@ -13,3 +13,4 @@ class User(Base):
     middlename = Column(String, nullable=True)
     lastname = Column(String, nullable=False, server_default="")
     department = Column(String, nullable=False, server_default="CCIT")
+    profile_picture_url = Column(String, nullable=True)

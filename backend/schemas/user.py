@@ -8,6 +8,7 @@ class UserBase(BaseModel):
     middlename: Optional[str] = None
     lastname: str
     department: Literal["CBAPA", "CCIT", "CTE"]
+    profile_picture_url: Optional[str] = None
 
 
 class UserCreate(UserBase):
