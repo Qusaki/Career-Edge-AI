@@ -9,6 +9,12 @@ AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_REGION")
 AWS_S3_BUCKET_NAME = os.getenv("AWS_S3_BUCKET_NAME")
 
+# Validate required variables
+if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_S3_BUCKET_NAME]):
+    # We will raise the error later during upload to avoid crashing the whole app on import
+    # but let's at least initialize the client safely if possible
+    pass
+
 s3_client = boto3.client(
     "s3",
     aws_access_key_id=AWS_ACCESS_KEY_ID,
@@ -20,6 +26,9 @@ def upload_file_to_s3(file: UploadFile, object_name: str = None) -> str:
     """
     Upload a file to an S3 bucket and return its public URL.
     """
+    if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_S3_BUCKET_NAME]):
+        raise ValueError("AWS credentials or configuration (Bucket/Region) are missing in environment variables.")
+
     if object_name is None:
         object_name = file.filename
 
