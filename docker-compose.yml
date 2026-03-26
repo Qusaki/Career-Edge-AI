@@ -7,7 +7,7 @@ services:
     restart: always
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "***REMOVED***"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: thesis
     ports:
       - "5432:5432"
@@ -23,7 +23,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://postgres:***REMOVED***@db:5432/thesis
+      - DATABASE_URL=${DATABASE_URL}
     depends_on:
       - db
 

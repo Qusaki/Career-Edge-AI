@@ -11,8 +11,8 @@ services:
       # Exposes the API on port 80 (standard HTTP) of the EC2 instance
       - "80:8000"
     environment:
-      # Connects directly to your newly created AWS RDS PostgreSQL Database!
-      - DATABASE_URL=postgresql://postgres:***REMOVED***@career-edge-ai-db.cfeuee2ompp8.ap-southeast-1.rds.amazonaws.com:5432/thesis
+      # Pull variables from .env to keep secrets safe
+      - DATABASE_URL=${DATABASE_URL}
       # Pass through the API keys from your production server's .env file
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GOOGLE_APPLICATION_CREDENTIALS=/app/backend/google-credentials.json

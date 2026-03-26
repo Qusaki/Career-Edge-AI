@@ -12,7 +12,6 @@ variable "db_password" {
   description = "PostgreSQL DB password"
   type        = string
   sensitive   = true
-  default     = "***REMOVED***"
 }
 
 variable "db_username" {
