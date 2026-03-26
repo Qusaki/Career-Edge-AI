@@ -28,7 +28,7 @@ app.include_router(gemini.router, prefix="/gemini", tags=["Gemini"])
 
 @app.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"message": "Career Edge AI Backend API"}
 
 
 @app.get("/health")
