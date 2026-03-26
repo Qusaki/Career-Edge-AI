@@ -6,3 +6,6 @@ alembic
 bcrypt
 python-jose[cryptography]
 python-multipart
+google-generativeai
+google-cloud-texttospeech
+sse-starlette

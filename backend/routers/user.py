@@ -4,8 +4,9 @@ from database import get_db
 from models.user import User
 from schemas.user import UserCreate, UserResponse
 from core.security import get_password_hash
+from core.deps import get_current_user
 
-router = APIRouter(prefix="/users", tags=["users"])
+router = APIRouter()
 
 
 @router.post("/", response_model=UserResponse)
@@ -30,7 +31,7 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/{user_id}", response_model=UserResponse)
-def get_user(user_id: int, db: Session = Depends(get_db)):
+def get_user(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     db_user = db.query(User).filter(User.id == user_id).first()
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
