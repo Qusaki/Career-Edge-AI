@@ -21,11 +21,90 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // UI States
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://47.129.8.239';
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Submit:', { mode, firstName, middleName, lastName, email, password, selectedDept });
-    // Handle auth logic here later
-    onSuccess();
+    setError(null);
+    setIsLoading(true);
+
+    try {
+      if (mode === 'signup') {
+        if (!selectedDept) {
+          setError('Please select a department.');
+          setIsLoading(false);
+          return;
+        }
+
+        const payload = {
+          email,
+          password,
+          firstname: firstName,
+          middlename: middleName || null,
+          lastname: lastName,
+          department: selectedDept
+        };
+
+        const res = await fetch(`${API_URL}/users/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.detail || 'Sign up failed');
+        }
+
+        // Auto-login after successful sign up
+        const loginParams = new URLSearchParams();
+        loginParams.append('username', email);
+        loginParams.append('password', password);
+
+        const loginRes = await fetch(`${API_URL}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: loginParams
+        });
+
+        if (!loginRes.ok) {
+          const loginData = await loginRes.json();
+          throw new Error(loginData.detail || 'Auto-login failed after sign up');
+        }
+
+        const loginData = await loginRes.json();
+        localStorage.setItem('token', loginData.access_token);
+        onSuccess();
+      } else {
+        const params = new URLSearchParams();
+        params.append('username', email);
+        params.append('password', password);
+
+        const res = await fetch(`${API_URL}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: params
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.detail || 'Sign in failed');
+        }
+
+        const data = await res.json();
+        localStorage.setItem('token', data.access_token);
+        onSuccess();
+      }
+    } catch (err: any) {
+      setError(err.message || 'An error occurred');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -63,6 +142,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
             </p>
           </div>
 
+          {error && (
+            <div className="mb-6 p-4 bg-red-500/10 border border-red-500/50 rounded-xl flex items-center gap-3">
+              <p className="text-sm font-medium text-red-500">{error}</p>
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-5">
               {mode === 'signup' && (
                 <div className="space-y-5 mb-5">
@@ -203,10 +287,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
             {/* Submit Button */}
             <button
               type="submit"
-              className="w-full flex items-center justify-center gap-2 py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-sky-500 hover:bg-sky-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 focus:ring-offset-slate-900 transition-all mt-6"
+              disabled={isLoading}
+              className="w-full flex items-center justify-center gap-2 py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-sky-500 hover:bg-sky-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 focus:ring-offset-slate-900 transition-all mt-6 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {mode === 'signin' ? 'Sign In' : 'Create Account'}
-              <ArrowRight className="w-4 h-4" />
+              {isLoading ? 'Processing...' : (mode === 'signin' ? 'Sign In' : 'Create Account')}
+              {!isLoading && <ArrowRight className="w-4 h-4" />}
             </button>
           </form>
 
@@ -215,7 +300,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
             <p className="text-sm text-slate-400">
               {mode === 'signin' ? "Don't have an account? " : "Already have an account? "}
               <button
-                onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
+                type="button"
+                onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(null); }}
                 className="font-medium text-sky-400 hover:text-sky-300 transition-colors"
               >
                 {mode === 'signin' ? 'Sign up' : 'Sign in'}
