@@ -19,3 +19,9 @@ variable "db_username" {
   type        = string
   default     = "postgres"
 }
+
+variable "gemini_api_key" {
+  description = "API Key for Gemini"
+  type        = string
+  sensitive   = true
+}
