@@ -22,8 +22,8 @@ resource "aws_instance" "web" {
   vpc_security_group_ids = [aws_security_group.web_sg.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
   
-  # For SSH access, you usually provide a key name.
-  # key_name = "your-key-pair-name"
+  # Attach SSH key pair to allow GitHub actions to login
+  key_name = var.key_name
   
   associate_public_ip_address = true
 

@@ -31,3 +31,8 @@ variable "google_credentials_json" {
   type        = string
   sensitive   = true
 }
+
+variable "key_name" {
+  description = "Name of the AWS Key Pair for SSH access to the EC2 instance"
+  type        = string
+}
