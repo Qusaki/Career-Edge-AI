@@ -61,6 +61,7 @@ resource "aws_instance" "web" {
                 -e AWS_REGION=$REGION \
                 -e AWS_S3_BUCKET_NAME="${aws_s3_bucket.profile_pictures.bucket}" \
                 -e GEMINI_API_KEY="${var.gemini_api_key}" \
+                -e GOOGLE_CREDENTIALS_JSON='${var.google_credentials_json}' \
                 $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/fastapi-backend:latest
               EOF
 

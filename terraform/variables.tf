@@ -25,3 +25,9 @@ variable "gemini_api_key" {
   type        = string
   sensitive   = true
 }
+
+variable "google_credentials_json" {
+  description = "Google Cloud Service Account JSON Key"
+  type        = string
+  sensitive   = true
+}
