@@ -22,7 +22,22 @@ def strip_markdown_for_tts(text: str) -> str:
     text = re.sub(r'#+\s', '', text)
     return text.strip()
 
-INTERVIEW_SYSTEM_PROMPT = """
+def get_interview_system_prompt(department: str) -> str:
+    dep = department.upper() if department else ""
+    if dep == "CTE":
+        return """
+You are an expert Professor in the College of Teacher Education (CTE) interviewing an incoming college freshman.
+Your goal is to assess their teaching aptitude, subject matter knowledge, communication skills, and personal values.
+
+Follow these strict rules:
+1. As soon as the interview starts, warmly welcome the student and politely ask them what specific major or course they are choosing within CTE (e.g., Major in English, Science, Mathematics, Physical Education, etc.). Wait for them to answer before proceeding.
+2. Keep the conversation flowing naturally. Ask exactly ONE question at a time based on their chosen major and general teaching aptitude.
+3. Wait for the user to answer before moving to the next topic.
+4. Be warm and encouraging, but ask challenging follow-up questions to test their critical thinking and readiness for teaching.
+5. Topics to cover: Subject matter foundation, teaching pedagogy, problem-solving in a classroom setting, and why they want to be a teacher.
+"""
+    else:
+        return """
 You are an expert Computer Science Professor interviewing an incoming college freshman for a prestigious CS program.
 Your goal is to assess their foundational knowledge, problem-solving skills, and enthusiasm for computer science.
 
@@ -36,8 +51,8 @@ Follow these strict rules:
 @router.post("/start", response_model=InterviewSessionResponse)
 def start_interview(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Creates a new interview session."""
-    if not current_user.department or current_user.department.upper() != "CCIT":
-        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT students.")
+    if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE"]:
+        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT and CTE students.")
         
     session = InterviewSession(user_id=current_user.id)
     db.add(session)
@@ -48,8 +63,8 @@ def start_interview(db: Session = Depends(get_db), current_user: User = Depends(
 @router.post("/{session_id}/chat")
 async def interview_chat(session_id: int, request: Request, body: InterviewChatRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Handles chat responses inside the specific interview session."""
-    if not current_user.department or current_user.department.upper() != "CCIT":
-        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT students.")
+    if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE"]:
+        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT and CTE students.")
 
     # 1. Validate Session & Timer
     session = db.query(InterviewSession).filter(InterviewSession.id == session_id, InterviewSession.user_id == current_user.id).first()
@@ -73,7 +88,8 @@ async def interview_chat(session_id: int, request: Request, body: InterviewChatR
     # 3. Fetch History
     history = db.query(InterviewMessage).filter(InterviewMessage.session_id == session.id).order_by(InterviewMessage.timestamp.asc()).all()
     
-    messages_payload = [{"role": "user", "parts": [INTERVIEW_SYSTEM_PROMPT]}]
+    system_prompt = get_interview_system_prompt(current_user.department)
+    messages_payload = [{"role": "user", "parts": [system_prompt]}]
     for msg in history:
         # Gemini uses 'model' instead of 'ai'
         gemini_role = "model" if msg.role == "ai" else "user"
@@ -144,7 +160,23 @@ async def interview_chat(session_id: int, request: Request, body: InterviewChatR
 
     return EventSourceResponse(event_generator())
 
-EVALUATION_SYSTEM_PROMPT = """
+def get_evaluation_system_prompt(department: str) -> str:
+    if department and department.upper() == "CTE":
+        return """
+You are a strict grading algorithm evaluating a transcript of a mock College of Teacher Education (CTE) freshman interview.
+You will extract 7 scores out of 100 based on the provided rubric. You must respond in STRICT JSON matching the schema.
+
+Weights:
+1. Subject Matter Knowledge (25%)
+2. Teaching Aptitude & Pedagogy (20%)
+3. Communication Skills (20%)
+4. Personal Motivation & Values (15%)
+5. Academic Preparedness (10%)
+6. Problem-Solving & Critical Thinking (5%)
+7. Leadership (5%)
+"""
+    else:
+        return """
 You are a strict grading algorithm evaluating a transcript of a mock computer science freshman interview.
 You will extract 5 scores out of 100 based on the provided rubric. You must respond in STRICT JSON matching the schema.
 
@@ -166,10 +198,20 @@ class InterviewEvaluation(typing_extensions.TypedDict):
     soft_skills_score: float
     feedback_summary: str
 
+class CteInterviewEvaluation(typing_extensions.TypedDict):
+    subject_matter_score: float
+    teaching_aptitude_score: float
+    communication_score: float
+    motivation_score: float
+    academic_preparedness_score: float
+    problem_solving_score: float
+    leadership_score: float
+    feedback_summary: str
+
 @router.post("/{session_id}/complete", response_model=InterviewSessionResponse)
 def complete_interview(session_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if not current_user.department or current_user.department.upper() != "CCIT":
-        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT students.")
+    if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE"]:
+        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT and CTE students.")
 
     session = db.query(InterviewSession).filter(InterviewSession.id == session_id, InterviewSession.user_id == current_user.id).first()
     if not session:
@@ -186,34 +228,58 @@ def complete_interview(session_id: int, db: Session = Depends(get_db), current_u
     transcript = "\\n".join([f"{msg.role.upper()}: {msg.content}" for msg in history])
     
     # Send to Gemini with JSON Schema
-    model = genai.GenerativeModel('gemini-2.5-flash', system_instruction=EVALUATION_SYSTEM_PROMPT)
+    system_prompt = get_evaluation_system_prompt(current_user.department)
+    schema_to_use = CteInterviewEvaluation if current_user.department.upper() == "CTE" else InterviewEvaluation
+    
+    model = genai.GenerativeModel('gemini-2.5-flash', system_instruction=system_prompt)
     
     response = model.generate_content(
         f"Evaluate this transcript:\\n\\n{transcript}",
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
-            response_schema=InterviewEvaluation
+            response_schema=schema_to_use
         )
     )
     
     try:
         evaluation = json.loads(response.text)
         
-        session.score_technical = evaluation.get("technical_score", 0)
-        session.score_problem_solving = evaluation.get("problem_solving_score", 0)
-        session.score_coding = evaluation.get("coding_score", 0)
-        session.score_communication = evaluation.get("communication_score", 0)
-        session.score_soft_skills = evaluation.get("soft_skills_score", 0)
-        session.feedback_summary = evaluation.get("feedback_summary", "")
-        
-        # Calculate weighted total
-        total = (
-            (session.score_technical * 0.30) +
-            (session.score_problem_solving * 0.25) +
-            (session.score_coding * 0.20) +
-            (session.score_communication * 0.15) +
-            (session.score_soft_skills * 0.10)
-        )
+        if current_user.department.upper() == "CTE":
+            session.score_cte_subject_matter = evaluation.get("subject_matter_score", 0)
+            session.score_cte_teaching = evaluation.get("teaching_aptitude_score", 0)
+            session.score_cte_communication = evaluation.get("communication_score", 0)
+            session.score_cte_motivation = evaluation.get("motivation_score", 0)
+            session.score_cte_academic = evaluation.get("academic_preparedness_score", 0)
+            session.score_cte_problem_solving = evaluation.get("problem_solving_score", 0)
+            session.score_cte_leadership = evaluation.get("leadership_score", 0)
+            session.feedback_summary = evaluation.get("feedback_summary", "")
+            
+            total = (
+                (session.score_cte_subject_matter * 0.25) +
+                (session.score_cte_teaching * 0.20) +
+                (session.score_cte_communication * 0.20) +
+                (session.score_cte_motivation * 0.15) +
+                (session.score_cte_academic * 0.10) +
+                (session.score_cte_problem_solving * 0.05) +
+                (session.score_cte_leadership * 0.05)
+            )
+        else:
+            session.score_technical = evaluation.get("technical_score", 0)
+            session.score_problem_solving = evaluation.get("problem_solving_score", 0)
+            session.score_coding = evaluation.get("coding_score", 0)
+            session.score_communication = evaluation.get("communication_score", 0)
+            session.score_soft_skills = evaluation.get("soft_skills_score", 0)
+            session.feedback_summary = evaluation.get("feedback_summary", "")
+            
+            # Calculate weighted total
+            total = (
+                (session.score_technical * 0.30) +
+                (session.score_problem_solving * 0.25) +
+                (session.score_coding * 0.20) +
+                (session.score_communication * 0.15) +
+                (session.score_soft_skills * 0.10)
+            )
+            
         session.total_score = round(total, 2)
         session.passed = session.total_score >= 70.0
         
@@ -228,8 +294,8 @@ def complete_interview(session_id: int, db: Session = Depends(get_db), current_u
 
 @router.get("/{session_id}", response_model=InterviewSessionWithMessagesResponse)
 def get_interview(session_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if not current_user.department or current_user.department.upper() != "CCIT":
-        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT students.")
+    if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE"]:
+        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT and CTE students.")
 
     session = db.query(InterviewSession).filter(InterviewSession.id == session_id, InterviewSession.user_id == current_user.id).first()
     if not session:

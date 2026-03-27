@@ -22,6 +22,16 @@ class InterviewSessionResponse(BaseModel):
     score_coding: Optional[float] = None
     score_communication: Optional[float] = None
     score_soft_skills: Optional[float] = None
+    
+    # CTE Scores
+    score_cte_subject_matter: Optional[float] = None
+    score_cte_teaching: Optional[float] = None
+    score_cte_communication: Optional[float] = None
+    score_cte_motivation: Optional[float] = None
+    score_cte_academic: Optional[float] = None
+    score_cte_problem_solving: Optional[float] = None
+    score_cte_leadership: Optional[float] = None
+
     total_score: Optional[float] = None
     passed: Optional[bool] = None
     feedback_summary: Optional[str] = None
