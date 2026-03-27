@@ -56,9 +56,13 @@ jobs:
           # Pull the latest image
           docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest
           
-          # Stop and remove the existing container
+          # Stop and remove the existing container (by name)
           docker stop backend-api-prod || true
           docker rm backend-api-prod || true
+          
+          # Stop and remove any unnamed containers launched by Terraform user_data
+          docker stop $(docker ps -q --filter ancestor=$ECR_REGISTRY/$ECR_REPOSITORY:latest) || true
+          docker rm $(docker ps -aq --filter ancestor=$ECR_REGISTRY/$ECR_REPOSITORY:latest) || true
           
           # Run the new container
           docker run -d \
