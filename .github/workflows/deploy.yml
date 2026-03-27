@@ -65,5 +65,9 @@ jobs:
             --name backend-api-prod \
             -p 80:8000 \
             --restart always \
-            -e DATABASE_URL="postgresql://postgres:***REMOVED***@career-edge-ai-db.cfeuee2ompp8.ap-southeast-1.rds.amazonaws.com:5432/thesis" \
+            -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+            -e AWS_REGION="${{ env.AWS_REGION }}" \
+            -e AWS_S3_BUCKET_NAME="${{ secrets.AWS_S3_BUCKET_NAME }}" \
+            -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+            -e GOOGLE_CREDENTIALS_JSON='${{ secrets.GOOGLE_CREDENTIALS_JSON }}' \
             $ECR_REGISTRY/$ECR_REPOSITORY:latest

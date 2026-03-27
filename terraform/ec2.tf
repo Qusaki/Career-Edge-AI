@@ -22,8 +22,8 @@ resource "aws_instance" "web" {
   vpc_security_group_ids = [aws_security_group.web_sg.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
   
-  # For SSH access, you usually provide a key name.
-  # key_name = "your-key-pair-name"
+  # Attach SSH key pair to allow GitHub actions to login
+  key_name = var.key_name
   
   associate_public_ip_address = true
 
@@ -58,6 +58,10 @@ resource "aws_instance" "web" {
               # Run the Docker container exposing Port 80
               docker run -d --restart always -p 80:8000 \
                 -e DATABASE_URL="postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.endpoint}/${aws_db_instance.postgres.db_name}" \
+                -e AWS_REGION=$REGION \
+                -e AWS_S3_BUCKET_NAME="${aws_s3_bucket.profile_pictures.bucket}" \
+                -e GEMINI_API_KEY="${var.gemini_api_key}" \
+                -e GOOGLE_CREDENTIALS_JSON='${var.google_credentials_json}' \
                 $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/fastapi-backend:latest
               EOF
 

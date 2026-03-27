@@ -5,6 +5,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    container_name: backend-api-prod
     restart: always
     ports:
       # Exposes the API on port 80 (standard HTTP) of the EC2 instance
@@ -12,6 +13,8 @@ services:
     environment:
       # Pull variables from .env to keep secrets safe
       - DATABASE_URL=${DATABASE_URL}
+      - AWS_S3_BUCKET_NAME=${AWS_S3_BUCKET_NAME}
+      - AWS_REGION=${AWS_REGION}
       # Pass through the API keys from your production server's .env file
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GOOGLE_APPLICATION_CREDENTIALS=/app/backend/google-credentials.json

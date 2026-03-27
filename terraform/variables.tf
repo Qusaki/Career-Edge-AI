@@ -19,3 +19,20 @@ variable "db_username" {
   type        = string
   default     = "postgres"
 }
+
+variable "gemini_api_key" {
+  description = "API Key for Gemini"
+  type        = string
+  sensitive   = true
+}
+
+variable "google_credentials_json" {
+  description = "Google Cloud Service Account JSON Key"
+  type        = string
+  sensitive   = true
+}
+
+variable "key_name" {
+  description = "Name of the AWS Key Pair for SSH access to the EC2 instance"
+  type        = string
+}

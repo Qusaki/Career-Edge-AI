@@ -16,7 +16,14 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), "..")))
 load_dotenv()
 
-config.set_main_option("sqlalchemy.url", os.getenv("DATABASE_URL", ""))
+db_url = os.getenv("DATABASE_URL", "")
+if db_url and "rds.amazonaws.com" in db_url and "sslmode" not in db_url:
+    if "?" in db_url:
+        db_url += "&sslmode=require"
+    else:
+        db_url += "?sslmode=require"
+
+config.set_main_option("sqlalchemy.url", db_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
