@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import re
 from fastapi import APIRouter, HTTPException, Depends, Request
 from sse_starlette.sse import EventSourceResponse
 import google.generativeai as genai
@@ -11,6 +12,12 @@ from core.tts import generate_tts_base64_async
 from models.user import User
 
 load_dotenv(override=True)
+
+def strip_markdown_for_tts(text: str) -> str:
+    """Removes Markdown symbols so the TTS engine speaks naturally."""
+    text = re.sub(r'[*_]', '', text)
+    text = re.sub(r'#+\s', '', text)
+    return text.strip()
 
 router = APIRouter()
 
@@ -60,9 +67,10 @@ async def generate_text_response(request: Request, body: GeminiRequest, current_
                                 parts = sentence_buffer.split(punctuation)
                                 # The first part is the full sentence (reattach the punctuation mark)
                                 text_to_speak = parts[0] + punctuation[0]
+                                sanitized_text = strip_markdown_for_tts(text_to_speak)
                                 
                                 # Send sentence to TTS asynchronously
-                                task = asyncio.create_task(process_tts(text_to_speak.strip()))
+                                task = asyncio.create_task(process_tts(sanitized_text))
                                 tts_tasks.append(task)
                                 
                                 # Keep the remainder in the buffer
@@ -71,7 +79,8 @@ async def generate_text_response(request: Request, body: GeminiRequest, current_
                                 
                 # If there's any remaining text in the buffer after the stream completes
                 if sentence_buffer.strip():
-                    task = asyncio.create_task(process_tts(sentence_buffer.strip()))
+                    sanitized_remainder = strip_markdown_for_tts(sentence_buffer)
+                    task = asyncio.create_task(process_tts(sanitized_remainder))
                     tts_tasks.append(task)
                     
             except Exception as e:
