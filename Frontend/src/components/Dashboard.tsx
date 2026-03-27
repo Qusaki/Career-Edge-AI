@@ -331,7 +331,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
           'Content-Type': 'application/json'
         }
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         sessionIdRef.current = data.id;
@@ -525,7 +525,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       }, 600);
       return () => clearTimeout(timer);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAiSpeaking]);
 
   const toggleListening = async () => {
@@ -1194,7 +1194,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
             >
               <div className="text-center space-y-4">
                 <div className={`mx-auto inline-flex items-center justify-center w-32 h-32 rounded-full mb-4 border-4 ${interviewResult.passed ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
-                   <span className="text-5xl font-black">{interviewResult.total_score}%</span>
+                  <span className="text-5xl font-black">{interviewResult.total_score}%</span>
                 </div>
                 <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Interview Complete</h1>
                 <p className="text-xl text-slate-400">{interviewResult.passed ? 'Congratulations! You passed the interview.' : 'Keep practicing! You did not meet the passing criteria this time.'}</p>
@@ -1203,7 +1203,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
               <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 space-y-8 shadow-2xl relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-500"></div>
                 <h2 className="text-2xl font-bold text-slate-200 border-b border-slate-800 pb-4">Performance Breakdown</h2>
-                
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                   <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800/50 hover:border-sky-500/30 transition-colors">
                     <p className="text-sm text-slate-400 mb-2">Technical Fundamentals</p>
@@ -1230,7 +1230,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                 {interviewResult.feedback_summary && (
                   <div className="bg-indigo-500/10 border border-indigo-500/20 p-6 rounded-2xl mt-6 relative overflow-hidden">
                     <h3 className="text-lg font-bold text-indigo-400 mb-3 flex items-center gap-2">
-                       AI Feedback Summary
+                      AI Feedback Summary
                     </h3>
                     <p className="text-slate-300 leading-relaxed relative z-10">{interviewResult.feedback_summary}</p>
                   </div>
