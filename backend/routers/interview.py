@@ -36,6 +36,9 @@ Follow these strict rules:
 @router.post("/start", response_model=InterviewSessionResponse)
 def start_interview(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Creates a new interview session."""
+    if not current_user.department or current_user.department.upper() != "CCIT":
+        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT students.")
+        
     session = InterviewSession(user_id=current_user.id)
     db.add(session)
     db.commit()
@@ -45,6 +48,9 @@ def start_interview(db: Session = Depends(get_db), current_user: User = Depends(
 @router.post("/{session_id}/chat")
 async def interview_chat(session_id: int, request: Request, body: InterviewChatRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Handles chat responses inside the specific interview session."""
+    if not current_user.department or current_user.department.upper() != "CCIT":
+        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT students.")
+
     # 1. Validate Session & Timer
     session = db.query(InterviewSession).filter(InterviewSession.id == session_id, InterviewSession.user_id == current_user.id).first()
     if not session:
@@ -162,6 +168,9 @@ class InterviewEvaluation(typing_extensions.TypedDict):
 
 @router.post("/{session_id}/complete", response_model=InterviewSessionResponse)
 def complete_interview(session_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if not current_user.department or current_user.department.upper() != "CCIT":
+        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT students.")
+
     session = db.query(InterviewSession).filter(InterviewSession.id == session_id, InterviewSession.user_id == current_user.id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Interview session not found.")
@@ -219,6 +228,9 @@ def complete_interview(session_id: int, db: Session = Depends(get_db), current_u
 
 @router.get("/{session_id}", response_model=InterviewSessionWithMessagesResponse)
 def get_interview(session_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if not current_user.department or current_user.department.upper() != "CCIT":
+        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT students.")
+
     session = db.query(InterviewSession).filter(InterviewSession.id == session_id, InterviewSession.user_id == current_user.id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Interview session not found.")
