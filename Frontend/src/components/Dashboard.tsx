@@ -21,7 +21,8 @@ import {
   GraduationCap,
   Briefcase,
   Cloud,
-  Folder
+  Folder,
+  Lock
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -29,13 +30,19 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'history' | 'analytics' | 'profile' | 'settings' | 'interview-type' | 'university-setup' | 'new-interview' | 'interview-session'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'history' | 'analytics' | 'profile' | 'settings' | 'interview-type' | 'university-setup' | 'new-interview' | 'interview-session' | 'interview-result'>('dashboard');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [selectedCompanyType, setSelectedCompanyType] = useState('');
   const [position, setPosition] = useState('');
   const [isSaved, setIsSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [sessionId, setSessionId] = useState<number | null>(null);
+  const sessionIdRef = React.useRef<number | null>(null);
+  const [isStartingInterview, setIsStartingInterview] = useState(false);
+  const [isFinishingInterview, setIsFinishingInterview] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [interviewResult, setInterviewResult] = useState<any>(null);
   const [profile, setProfile] = useState({
     name: '',
     email: '',
@@ -168,6 +175,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const [userAudioData, setUserAudioData] = useState<number[]>(new Array(3).fill(8));
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
+  const [isMicTransitioning, setIsMicTransitioning] = useState(false);
+  const silenceTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
@@ -191,9 +200,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         const newTranscript = (finalT + ' ' + interimT).trim();
         transcriptRef.current = newTranscript;
         setTranscript(newTranscript);
+
+        // Reset the 5-second silence timer every time speech is detected
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = setTimeout(() => {
+          // 5s of silence — stop recognition which triggers onend → auto-sends
+          if (isListeningRef.current) {
+            recognitionRef.current?.stop();
+          }
+        }, 5000);
       };
 
       recognitionRef.current.onend = () => {
+        // Clear any pending silence timer
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+
         setIsListening(false);
         isListeningRef.current = false;
 
@@ -227,37 +248,37 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
   const updateUserAudioData = () => {
     if (userAnalyserRef.current && isListeningRef.current) {
-       const dataArray = new Uint8Array(userAnalyserRef.current.frequencyBinCount);
-       userAnalyserRef.current.getByteFrequencyData(dataArray);
-       
-       const voiceBins = [2, 4, 6];
-       const bars = voiceBins.map(binIndex => {
-          const val = dataArray[binIndex] || 0;
-          return 8 + (val / 255) * 20; // Scale dynamically from 8px (min) to ~28px (max)
-       });
-       setUserAudioData(bars);
-       userAnimationRef.current = requestAnimationFrame(updateUserAudioData);
+      const dataArray = new Uint8Array(userAnalyserRef.current.frequencyBinCount);
+      userAnalyserRef.current.getByteFrequencyData(dataArray);
+
+      const voiceBins = [2, 4, 6];
+      const bars = voiceBins.map(binIndex => {
+        const val = dataArray[binIndex] || 0;
+        return 8 + (val / 255) * 20; // Scale dynamically from 8px (min) to ~28px (max)
+      });
+      setUserAudioData(bars);
+      userAnimationRef.current = requestAnimationFrame(updateUserAudioData);
     } else {
-       setUserAudioData([8, 8, 8]);
+      setUserAudioData([8, 8, 8]);
     }
   };
 
   const updateAudioData = () => {
     if (analyserRef.current && isPlayingRef.current) {
-       const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
-       analyserRef.current.getByteFrequencyData(dataArray);
-       
-       // dataArray contains all frequencies up to 22kHz. Human voice is mostly in the lowest 10% (bins 1-10).
-       // To make a beautiful symmetrical, full sound wave, we mirror the most active lower frequencies across our 15 bars:
-       const voiceBins = [9, 8, 7, 5, 4, 3, 2, 1, 2, 3, 4, 5, 7, 8, 9];
-       const bars = voiceBins.map(binIndex => {
-          const val = dataArray[binIndex] || 0;
-          return 20 + (val / 255) * 80; // Scale dynamically from 20px (min) to ~100px (max)
-       });
-       setAudioData(bars);
-       animationRef.current = requestAnimationFrame(updateAudioData);
+      const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+      analyserRef.current.getByteFrequencyData(dataArray);
+
+      // dataArray contains all frequencies up to 22kHz. Human voice is mostly in the lowest 10% (bins 1-10).
+      // To make a beautiful symmetrical, full sound wave, we mirror the most active lower frequencies across our 15 bars:
+      const voiceBins = [9, 8, 7, 5, 4, 3, 2, 1, 2, 3, 4, 5, 7, 8, 9];
+      const bars = voiceBins.map(binIndex => {
+        const val = dataArray[binIndex] || 0;
+        return 20 + (val / 255) * 80; // Scale dynamically from 20px (min) to ~100px (max)
+      });
+      setAudioData(bars);
+      animationRef.current = requestAnimationFrame(updateAudioData);
     } else {
-       setAudioData(new Array(15).fill(20));
+      setAudioData(new Array(15).fill(20));
     }
   };
 
@@ -272,14 +293,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
       // Lazy load context only on user interaction play
       if (!audioContextRef.current) {
-         audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-         analyserRef.current = audioContextRef.current.createAnalyser();
-         analyserRef.current.fftSize = 64;
-         const source = audioContextRef.current.createMediaElementSource(audio);
-         source.connect(analyserRef.current);
-         analyserRef.current.connect(audioContextRef.current.destination);
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        analyserRef.current = audioContextRef.current.createAnalyser();
+        analyserRef.current.fftSize = 64;
+        const source = audioContextRef.current.createMediaElementSource(audio);
+        source.connect(analyserRef.current);
+        analyserRef.current.connect(audioContextRef.current.destination);
       } else if (audioContextRef.current.state === 'suspended') {
-         try { await audioContextRef.current.resume(); } catch(e){}
+        try { await audioContextRef.current.resume(); } catch (e) { }
       }
 
       updateAudioData();
@@ -299,12 +320,95 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     }
   };
 
+  const startInterviewSession = async () => {
+    setIsStartingInterview(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_URL}/interview/start`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        sessionIdRef.current = data.id;
+        setSessionId(data.id);
+        setActiveTab('interview-session');
+      } else {
+        const errorText = await response.text();
+        console.error("Failed to start interview:", errorText);
+        alert("Failed to start session. Please try again.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Network error starting interview.");
+    } finally {
+      setIsStartingInterview(false);
+    }
+  };
+
+  const exitInterview = () => {
+    setIsLeaveModalOpen(false);
+    setIsAiSpeaking(false);
+    setIsListening(false);
+    setSessionId(null);
+    sessionIdRef.current = null;
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.pause();
+      audioPlayerRef.current.src = "";
+    }
+    try {
+      recognitionRef.current?.stop();
+    } catch (e) { }
+    setActiveTab('dashboard');
+  };
+
+  const finishInterviewSession = async () => {
+    if (!sessionId) return;
+    setIsFinishingInterview(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_URL}/interview/${sessionId}/complete`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setInterviewResult(data);
+        setIsLeaveModalOpen(false);
+        setIsAiSpeaking(false);
+        setIsListening(false);
+        if (audioPlayerRef.current) audioPlayerRef.current.pause();
+        try { recognitionRef.current?.abort(); } catch (e) { }
+        setActiveTab('interview-result');
+      } else {
+        alert("Failed to grade interview. Please try again.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Network error finishing interview.");
+    } finally {
+      setIsFinishingInterview(false);
+    }
+  };
+
   const sendToGemini = async (text: string) => {
     setAiResponseText(''); // Clear any previous errors
     setIsAiSpeaking(true); // Automatically triggers the sound wave visualizer to indicate loading
     try {
+      if (!sessionIdRef.current) {
+        setAiResponseText("Error: Interview session not initialized.");
+        setIsAiSpeaking(false);
+        return;
+      }
+
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/gemini/generate`, {
+      const response = await fetch(`${API_URL}/interview/${sessionIdRef.current}/chat`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -395,6 +499,30 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     }
   };
 
+  // Auto-start mic when entering the interview session
+  useEffect(() => {
+    if (activeTab === 'interview-session' && !isListeningRef.current) {
+      const timer = setTimeout(() => {
+        toggleListening();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  // Auto-restart mic after AI finishes speaking
+  useEffect(() => {
+    if (!isAiSpeaking && activeTab === 'interview-session' && !isListeningRef.current) {
+      setIsMicTransitioning(true);
+      const timer = setTimeout(() => {
+        toggleListening();
+        setIsMicTransitioning(false);
+      }, 600);
+      return () => clearTimeout(timer);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAiSpeaking]);
+
   const toggleListening = async () => {
     if (isListeningRef.current) {
       // Just hit stop, native onend listener will accurately trigger the backend send.
@@ -475,17 +603,34 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
           {/* Main Action */}
           <div className="p-4">
-            <button
-              onClick={() => {
-                setSelectedCompanyType('');
-                setPosition('');
-                setActiveTab('interview-type');
-              }}
-              className="w-full py-3 px-4 rounded-xl font-medium flex items-center justify-center gap-2 transition-colors shadow-lg bg-sky-500 hover:bg-sky-400 text-white shadow-sky-500/20"
-            >
-              <Plus className="w-5 h-5" />
-              Start Interview
-            </button>
+            {profile.department?.toUpperCase() === 'CCIT' ? (
+              <button
+                onClick={() => {
+                  setSelectedCompanyType('');
+                  setPosition('');
+                  setActiveTab('interview-type');
+                }}
+                className="w-full py-3 px-4 rounded-xl font-medium flex items-center justify-center gap-2 transition-colors shadow-lg bg-sky-500 hover:bg-sky-400 text-white shadow-sky-500/20"
+              >
+                <Plus className="w-5 h-5" />
+                Start Interview
+              </button>
+            ) : (
+              <div className="w-full relative group">
+                <button
+                  disabled
+                  className="w-full py-3 px-4 rounded-xl font-medium flex items-center justify-center gap-2 bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50 transition-colors"
+                >
+                  <Lock className="w-4 h-4 text-slate-500" />
+                  Locked
+                </button>
+                {/* Tooltip */}
+                <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-3 px-3 py-2 bg-slate-800 border border-slate-700 text-xs font-medium text-slate-300 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-xl z-50">
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 border-b border-r border-slate-700 rotate-45 -mt-1" />
+                  Only available to CCIT students
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Navigation */}
@@ -627,7 +772,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
                   <button
-                    onClick={() => setActiveTab('university-setup')}
+                    onClick={startInterviewSession}
+                    disabled={isStartingInterview}
                     className="bg-slate-900 border border-slate-800 hover:border-sky-500 hover:ring-1 hover:ring-sky-500 rounded-2xl p-8 flex flex-col items-center text-center transition-all duration-300 group"
                   >
                     <div className="w-16 h-16 bg-sky-500/10 text-sky-400 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
@@ -646,50 +792,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                     </div>
                     <h3 className="text-xl font-bold text-slate-200 mb-2">Practice for Work</h3>
                     <p className="text-slate-400 text-sm">Job interview practice tailored to a specific role and company.</p>
-                  </button>
-                </div>
-              </motion.div>
-            </div>
-          )}
-
-          {activeTab === 'university-setup' && (
-            <div className="relative h-full">
-              <button
-                onClick={() => setActiveTab('interview-type')}
-                className="absolute top-0 left-0 flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors font-medium"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Back
-              </button>
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="max-w-3xl mx-auto space-y-8 pt-12"
-              >
-                <div>
-                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">University Enrollment</h1>
-                  <p className="text-lg text-slate-400 mt-2">PRMSU CASTI Interview Setup</p>
-                </div>
-
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-8">
-                  <div className="space-y-3">
-                    <label className="text-sm font-medium text-slate-300">What course are you applying for?</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. BS Computer Science, BS Information Technology..."
-                      className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 hover:shadow-md hover:shadow-black/20 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
-                    />
-                    <p className="text-xs text-slate-500">The AI will tailor questions based on your prospective course.</p>
-                  </div>
-                </div>
-
-                <div className="flex justify-center">
-                  <button
-                    onClick={() => setActiveTab('interview-session')}
-                    className="px-8 py-4 bg-sky-500 hover:bg-sky-400 text-white rounded-xl font-medium flex items-center gap-2 transition-colors shadow-lg shadow-sky-500/20 text-lg"
-                  >
-                    Continue
-                    <ArrowRight className="w-5 h-5" />
                   </button>
                 </div>
               </motion.div>
@@ -749,8 +851,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                                 setIsDropdownOpen(false);
                               }}
                               className={`px-4 py-3 cursor-pointer transition-colors duration-200 flex items-center ${selectedCompanyType === type.value
-                                  ? 'bg-sky-500/10 text-sky-400 font-medium'
-                                  : 'text-slate-300 hover:bg-slate-800 hover:text-slate-100'
+                                ? 'bg-sky-500/10 text-sky-400 font-medium'
+                                : 'text-slate-300 hover:bg-slate-800 hover:text-slate-100'
                                 }`}
                             >
                               {type.label}
@@ -777,11 +879,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
                 <div className="flex justify-center">
                   <button
-                    onClick={() => setActiveTab('interview-session')}
-                    className="px-8 py-4 bg-sky-500 hover:bg-sky-400 text-white rounded-xl font-medium flex items-center gap-2 transition-colors shadow-lg shadow-sky-500/20 text-lg"
+                    onClick={startInterviewSession}
+                    disabled={isStartingInterview}
+                    className={`px-8 py-4 bg-sky-500 hover:bg-sky-400 text-white rounded-xl font-medium flex items-center gap-2 transition-colors shadow-lg shadow-sky-500/20 text-lg ${isStartingInterview ? 'opacity-75 cursor-not-allowed' : ''}`}
                   >
-                    Continue
-                    <ArrowRight className="w-5 h-5" />
+                    {isStartingInterview ? 'Starting...' : 'Continue'}
+                    {!isStartingInterview && <ArrowRight className="w-5 h-5" />}
                   </button>
                 </div>
               </motion.div>
@@ -812,33 +915,45 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                     <div className="h-40 flex items-center justify-center">
                       {isListening ? (
                         <Mic className="w-20 h-20 text-emerald-400 animate-pulse" />
+                      ) : isMicTransitioning || isAiSpeaking ? (
+                        <div className="flex items-center gap-3">
+                          {[0, 1, 2].map(i => (
+                            <div key={i} className="w-3 h-3 rounded-full bg-sky-400/60" style={{ animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite` }} />
+                          ))}
+                        </div>
                       ) : (
-                        <MicOff className="w-20 h-20 text-rose-500/80" />
+                        <div className="flex items-center gap-3">
+                          {[0, 1, 2].map(i => (
+                            <div key={i} className="w-3 h-3 rounded-full bg-slate-700" />
+                          ))}
+                        </div>
                       )}
                     </div>
                   )}
 
                   <div className="w-full space-y-6 text-center">
                     {(() => {
-                        const isSystemError = aiResponseText.startsWith('Backend Error') || aiResponseText.startsWith('Network Error') || aiResponseText.startsWith('Server returned') || aiResponseText.startsWith('Stream closed') || aiResponseText.includes('[AI Error:');
-                        
-                        return (
-                          <>
-                            {isSystemError && (
-                              <div className="p-6 bg-rose-500/10 border border-rose-500/50 rounded-2xl">
-                                <p className="text-rose-400 text-lg leading-relaxed">{aiResponseText}</p>
-                              </div>
-                            )}
+                      const isSystemError = aiResponseText.startsWith('Backend Error') || aiResponseText.startsWith('Network Error') || aiResponseText.startsWith('Server returned') || aiResponseText.startsWith('Stream closed') || aiResponseText.includes('[AI Error:');
 
-                            {transcript && (
-                              <p className="text-emerald-400 text-lg font-medium">"{transcript}"</p>
-                            )}
+                      return (
+                        <>
+                          {isSystemError && (
+                            <div className="p-6 bg-rose-500/10 border border-rose-500/50 rounded-2xl">
+                              <p className="text-rose-400 text-lg leading-relaxed">{aiResponseText}</p>
+                            </div>
+                          )}
 
-                            {!transcript && !isSystemError && (
-                              <p className="text-slate-400 text-lg font-medium">{isListening ? 'Listening...' : 'Click the microphone to start speaking'}</p>
-                            )}
-                          </>
-                        );
+                          {transcript && (
+                            <p className="text-emerald-400 text-lg font-medium">"{transcript}"</p>
+                          )}
+
+                          {!transcript && !isSystemError && (
+                            <p className="text-slate-400 text-lg font-medium">
+                              {isListening ? 'Listening...' : isMicTransitioning ? 'Preparing...' : isAiSpeaking ? '' : 'Please wait...'}
+                            </p>
+                          )}
+                        </>
+                      );
                     })()}
                   </div>
                 </div>
@@ -867,21 +982,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                       className="absolute right-0 bottom-[calc(100%+16px)] w-56 bg-slate-800 border border-slate-700/80 rounded-2xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.5)] overflow-hidden z-10"
                     >
                       <div className="flex flex-col p-2 space-y-1">
-                        <button 
+                        <button
                           onClick={() => setIsAddMenuOpen(false)}
                           className="flex items-center gap-3 w-full p-3 text-left hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all shrink-0"
                         >
                           <div className="w-8 h-8 rounded-lg bg-sky-500/10 flex items-center justify-center shrink-0">
-                             <Folder className="w-4 h-4 text-sky-400" />
+                            <Folder className="w-4 h-4 text-sky-400" />
                           </div>
                           <span className="text-sm font-medium">Local Files</span>
                         </button>
-                        <button 
+                        <button
                           onClick={() => setIsAddMenuOpen(false)}
                           className="flex items-center gap-3 w-full p-3 text-left hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all shrink-0"
                         >
                           <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
-                             <Cloud className="w-4 h-4 text-emerald-400" />
+                            <Cloud className="w-4 h-4 text-emerald-400" />
                           </div>
                           <span className="text-sm font-medium">Google Drive</span>
                         </button>
@@ -890,25 +1005,23 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                   )}
                 </div>
 
-                <button
-                  onClick={toggleListening}
-                  className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-rose-500 hover:bg-rose-600 shadow-rose-500/30'} text-white w-24 h-24 rounded-[2rem] transition-all duration-300 flex items-center justify-center shrink-0 shadow-lg`}
-                  title={isListening ? "Stop Microphone" : "Start Microphone"}
+                <div
+                  className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800 shadow-slate-900/30'} text-white w-24 h-24 rounded-[2rem] transition-all duration-300 flex items-center justify-center shrink-0 shadow-lg`}
                 >
                   {isListening ? (
                     <div className="flex items-center justify-center gap-[6px] h-10 w-full relative z-10">
-                       {[...userAudioData, ...Array.from(userAudioData).reverse()].map((height, i) => (
-                           <motion.div key={`w-${i}`} className="w-[4px] bg-white/95 rounded-full" animate={{height: `${height}px`}} transition={{ duration: 0.1, ease: 'linear' }} />
-                       ))}
+                      {[...userAudioData, ...Array.from(userAudioData).reverse()].map((height, i) => (
+                        <motion.div key={`w-${i}`} className="w-[4px] bg-white text-white rounded-full" animate={{ height: `${height}px` }} transition={{ duration: 0.1, ease: 'linear' }} />
+                      ))}
                     </div>
                   ) : (
-                    <MicOff className="w-10 h-10 relative z-10" />
+                    <Mic className={`w-10 h-10 relative z-10 ${isMicTransitioning ? 'text-sky-400 opacity-100' : 'text-slate-500 opacity-40'}`} />
                   )}
-                  
+
                   {isListening && (
                     <span className="absolute inset-0 rounded-[2rem] border-4 border-emerald-400 opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }} />
                   )}
-                </button>
+                </div>
 
                 <button
                   onClick={() => setIsLeaveModalOpen(true)}
@@ -944,15 +1057,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                     Cancel
                   </button>
                   <button
-                    onClick={() => {
-                      setIsLeaveModalOpen(false);
-                      setIsAiSpeaking(false);
-                      setIsListening(false);
-                      if (audioPlayerRef.current) audioPlayerRef.current.pause();
-                      try { recognitionRef.current?.abort(); } catch(e) {}
-                      setActiveTab('dashboard');
-                    }}
-                    className="flex-1 py-3 px-4 bg-rose-500 hover:bg-rose-600 text-white rounded-xl font-medium transition-colors shadow-lg shadow-rose-500/20"
+                    onClick={exitInterview}
+                    className="flex-1 py-3 px-4 bg-sky-500 hover:bg-sky-400 text-white rounded-xl font-medium transition-colors shadow-lg shadow-sky-500/20"
                   >
                     Leave
                   </button>
@@ -1069,6 +1175,65 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                     className="px-6 py-3 bg-sky-500 hover:bg-sky-400 text-white rounded-xl font-medium transition-colors shadow-lg shadow-sky-500/20 disabled:opacity-50"
                   >
                     {isSaving ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'interview-result' && interviewResult && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="max-w-4xl mx-auto space-y-8 pb-12 pt-8"
+            >
+              <div className="text-center space-y-4">
+                <div className={`mx-auto inline-flex items-center justify-center w-32 h-32 rounded-full mb-4 border-4 ${interviewResult.passed ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
+                   <span className="text-5xl font-black">{interviewResult.total_score}%</span>
+                </div>
+                <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Interview Complete</h1>
+                <p className="text-xl text-slate-400">{interviewResult.passed ? 'Congratulations! You passed the interview.' : 'Keep practicing! You did not meet the passing criteria this time.'}</p>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 space-y-8 shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-500"></div>
+                <h2 className="text-2xl font-bold text-slate-200 border-b border-slate-800 pb-4">Performance Breakdown</h2>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800/50 hover:border-sky-500/30 transition-colors">
+                    <p className="text-sm text-slate-400 mb-2">Technical Fundamentals</p>
+                    <p className="text-4xl font-black text-sky-400">{interviewResult.score_technical}<span className="text-lg text-slate-600 font-medium">/100</span></p>
+                  </div>
+                  <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800/50 hover:border-purple-500/30 transition-colors">
+                    <p className="text-sm text-slate-400 mb-2">Problem Solving</p>
+                    <p className="text-4xl font-black text-purple-400">{interviewResult.score_problem_solving}<span className="text-lg text-slate-600 font-medium">/100</span></p>
+                  </div>
+                  <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800/50 hover:border-emerald-500/30 transition-colors">
+                    <p className="text-sm text-slate-400 mb-2">Coding Basics</p>
+                    <p className="text-4xl font-black text-emerald-400">{interviewResult.score_coding}<span className="text-lg text-slate-600 font-medium">/100</span></p>
+                  </div>
+                  <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800/50 hover:border-amber-500/30 transition-colors">
+                    <p className="text-sm text-slate-400 mb-2">Communication</p>
+                    <p className="text-4xl font-black text-amber-400">{interviewResult.score_communication}<span className="text-lg text-slate-600 font-medium">/100</span></p>
+                  </div>
+                  <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800/50 hover:border-pink-500/30 transition-colors">
+                    <p className="text-sm text-slate-400 mb-2">Soft Skills</p>
+                    <p className="text-4xl font-black text-pink-400">{interviewResult.score_soft_skills}<span className="text-lg text-slate-600 font-medium">/100</span></p>
+                  </div>
+                </div>
+
+                {interviewResult.feedback_summary && (
+                  <div className="bg-indigo-500/10 border border-indigo-500/20 p-6 rounded-2xl mt-6 relative overflow-hidden">
+                    <h3 className="text-lg font-bold text-indigo-400 mb-3 flex items-center gap-2">
+                       AI Feedback Summary
+                    </h3>
+                    <p className="text-slate-300 leading-relaxed relative z-10">{interviewResult.feedback_summary}</p>
+                  </div>
+                )}
+
+                <div className="flex justify-center pt-8">
+                  <button onClick={() => setActiveTab('dashboard')} className="px-10 py-4 bg-sky-500 hover:bg-sky-400 text-white rounded-xl font-bold transition-colors shadow-lg shadow-sky-500/20 text-lg">
+                    Return to Dashboard
                   </button>
                 </div>
               </div>
