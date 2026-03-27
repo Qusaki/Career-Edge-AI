@@ -5,6 +5,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    container_name: backend-api-prod
     restart: always
     ports:
       # Exposes the API on port 80 (standard HTTP) of the EC2 instance
