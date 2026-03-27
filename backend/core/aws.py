@@ -15,19 +15,24 @@ if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_S3_BUCKET_
     # but let's at least initialize the client safely if possible
     pass
 
-s3_client = boto3.client(
-    "s3",
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-    region_name=AWS_REGION,
-)
+# Initialize s3_client conditionally
+if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+    s3_client = boto3.client(
+        "s3",
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        region_name=AWS_REGION,
+    )
+else:
+    # Fallback to IAM Role (e.g. on EC2)
+    s3_client = boto3.client("s3", region_name=AWS_REGION)
 
 def upload_file_to_s3(file: UploadFile, object_name: str = None) -> str:
     """
     Upload a file to an S3 bucket and return its public URL.
     """
-    if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_S3_BUCKET_NAME]):
-        raise ValueError("AWS credentials or configuration (Bucket/Region) are missing in environment variables.")
+    if not all([AWS_REGION, AWS_S3_BUCKET_NAME]):
+        raise ValueError("AWS configuration (Bucket/Region) is missing in environment variables.")
 
     if object_name is None:
         object_name = file.filename
