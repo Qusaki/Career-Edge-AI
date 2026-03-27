@@ -20,6 +20,24 @@ class InterviewSession(Base):
     score_communication = Column(Float, nullable=True)   # 15%
     score_soft_skills = Column(Float, nullable=True)     # 10%
     
+    # CTE Grading criteria (0.0 to 100.0)
+    score_cte_subject_matter = Column(Float, nullable=True)     # 25%
+    score_cte_teaching = Column(Float, nullable=True)           # 20%
+    score_cte_communication = Column(Float, nullable=True)      # 20%
+    score_cte_motivation = Column(Float, nullable=True)         # 15%
+    score_cte_academic = Column(Float, nullable=True)           # 10%
+    score_cte_problem_solving = Column(Float, nullable=True)    # 5%
+    score_cte_leadership = Column(Float, nullable=True)         # 5%
+    
+    # CBAPA Grading criteria (0.0 to 100.0)
+    score_cbapa_business = Column(Float, nullable=True)         # 25%
+    score_cbapa_analytical = Column(Float, nullable=True)       # 20%
+    score_cbapa_communication = Column(Float, nullable=True)    # 15%
+    score_cbapa_entrepreneurial = Column(Float, nullable=True)  # 15%
+    score_cbapa_academic = Column(Float, nullable=True)         # 10%
+    score_cbapa_leadership = Column(Float, nullable=True)       # 10%
+    score_cbapa_ethical = Column(Float, nullable=True)          # 5%
+    
     total_score = Column(Float, nullable=True)
     passed = Column(Boolean, nullable=True)
     feedback_summary = Column(String, nullable=True)
