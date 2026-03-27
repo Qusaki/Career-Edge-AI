@@ -128,8 +128,8 @@ async def interview_chat(session_id: int, request: Request, body: InterviewChatR
             tts_tasks = []
             full_ai_response = ""
             try:
-                # Use gemini-2.0-flash for ultra-low latency & system_instruction for strict adherence
-                model = genai.GenerativeModel('gemini-2.0-flash', system_instruction=system_prompt)
+                # Use gemini-2.5-flash for ultra-low latency & system_instruction for strict adherence
+                model = genai.GenerativeModel('gemini-2.5-flash', system_instruction=system_prompt)
                 response_stream = await model.generate_content_async(messages_payload, stream=True)
                 sentence_buffer = ""
 

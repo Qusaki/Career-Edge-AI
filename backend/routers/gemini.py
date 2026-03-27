@@ -46,8 +46,8 @@ async def generate_text_response(request: Request, body: GeminiRequest, current_
             """Streams text tokens from Gemini, splits sentences, and fires off TTS tasks."""
             tts_tasks = []
             try:
-                # Use gemini-2.0-flash for ultra-low latency
-                model = genai.GenerativeModel('gemini-2.0-flash')
+                # Use gemini-2.5-flash for ultra-low latency
+                model = genai.GenerativeModel('gemini-2.5-flash')
                 response_stream = await model.generate_content_async(body.text, stream=True)
                 
                 sentence_buffer = ""
