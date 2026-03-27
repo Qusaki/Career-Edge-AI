@@ -537,7 +537,7 @@ export default function App() {
   }
 
   if (currentView === 'dashboard') {
-    return <Dashboard onLogout={() => setCurrentView('landing')} />;
+    return <Dashboard onLogout={() => { localStorage.removeItem('token'); setCurrentView('landing'); }} />;
   }
 
   return (

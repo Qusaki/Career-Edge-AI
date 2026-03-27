@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { 
   LayoutDashboard, 
@@ -16,7 +16,9 @@ import {
   Mic,
   Send,
   PlusCircle,
-  Paperclip
+  Paperclip,
+  GraduationCap,
+  Briefcase
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -24,10 +26,296 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'history' | 'analytics' | 'settings' | 'new-interview' | 'interview-session'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'history' | 'analytics' | 'profile' | 'settings' | 'interview-type' | 'university-setup' | 'new-interview' | 'interview-session'>('dashboard');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [selectedCompanyType, setSelectedCompanyType] = useState('');
   const [position, setPosition] = useState('');
+  const [isSaved, setIsSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [profile, setProfile] = useState({
+    name: '',
+    email: '',
+    password: '',
+    department: '',
+    profilePicture: 'https://api.dicebear.com/7.x/micah/svg?seed=Alex&backgroundColor=cbd5e1'
+  });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://54.179.46.220';
+
+  useEffect(() => {
+    const fetchUser = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) {
+          onLogout();
+          return;
+        }
+
+        const res = await fetch(`${API_URL}/users/me`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          setProfile({
+            name: `${data.firstname || ''} ${data.lastname || ''}`.trim() || 'Guest User',
+            email: data.email || '',
+            password: '', 
+            department: data.department || '',
+            profilePicture: data.profile_picture_url || 'https://api.dicebear.com/7.x/micah/svg?seed=Alex&backgroundColor=cbd5e1'
+          });
+        } else {
+          onLogout();
+        }
+      } catch (error) {
+        console.error('Failed to fetch user:', error);
+      }
+    };
+    fetchUser();
+  }, [API_URL, onLogout]);
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfile({ ...profile, profilePicture: reader.result as string });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+
+      const formData = new FormData();
+      
+      const nameParts = profile.name.trim().split(' ');
+      const firstname = nameParts[0] || '';
+      const lastname = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+      
+      formData.append('firstname', firstname);
+      formData.append('lastname', lastname);
+      formData.append('department', profile.department);
+      if (profile.password) formData.append('password', profile.password);
+      if (selectedFile) formData.append('file', selectedFile);
+      
+      const res = await fetch(`${API_URL}/users/me`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: formData
+      });
+      
+      if (res.ok) {
+        const updatedUser = await res.json();
+        setProfile({
+          name: `${updatedUser.firstname || ''} ${updatedUser.lastname || ''}`.trim() || 'Guest User',
+          email: updatedUser.email || '',
+          password: '',
+          department: updatedUser.department || '',
+          profilePicture: updatedUser.profile_picture_url || profile.profilePicture
+        });
+        setSelectedFile(null);
+        setIsSaved(true);
+        setTimeout(() => setIsSaved(false), 3000);
+      } else {
+        console.error('Failed to save profile', await res.text());
+      }
+    } catch (error) {
+      console.error('Error saving profile', error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Speech Recognition & TTS States
+  const [isListening, setIsListening] = useState(false);
+  const [transcript, setTranscript] = useState('');
+  const [aiResponseText, setAiResponseText] = useState('');
+  const [isAiSpeaking, setIsAiSpeaking] = useState(false);
+  
+  const recognitionRef = React.useRef<any>(null);
+  const audioQueueRef = React.useRef<HTMLAudioElement[]>([]);
+  const isPlayingRef = React.useRef(false);
+
+  const transcriptRef = React.useRef('');
+  const isListeningRef = React.useRef(false);
+
+  useEffect(() => {
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      recognitionRef.current = new SpeechRecognition();
+      recognitionRef.current.continuous = true;
+      recognitionRef.current.interimResults = true;
+      recognitionRef.current.lang = 'en-US';
+
+      recognitionRef.current.onresult = (event: any) => {
+        let finalT = '';
+        let interimT = '';
+        // Safely map through all results from index 0 to eliminate compounding issues
+        for (let i = 0; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalT += event.results[i][0].transcript;
+          } else {
+            interimT += event.results[i][0].transcript;
+          }
+        }
+        const newTranscript = (finalT + ' ' + interimT).trim();
+        transcriptRef.current = newTranscript;
+        setTranscript(newTranscript);
+      };
+
+      recognitionRef.current.onend = () => {
+        setIsListening(false);
+        isListeningRef.current = false;
+        
+        // Auto-send if the browser natively stops and there is a transcript available
+        if (transcriptRef.current && transcriptRef.current.trim().length > 0) {
+           sendToGemini(transcriptRef.current);
+           transcriptRef.current = '';
+        }
+      };
+
+      recognitionRef.current.onerror = (event: any) => {
+         console.error('Speech recognition error:', event.error);
+         setIsListening(false);
+         isListeningRef.current = false;
+      };
+    } else {
+      console.warn('Speech Recognition API not supported in this browser.');
+    }
+    
+    return () => {
+      if (recognitionRef.current) recognitionRef.current.abort();
+    };
+  }, []);
+
+  const playNextAudio = () => {
+    if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
+    isPlayingRef.current = true;
+    setIsAiSpeaking(true);
+    const audio = audioQueueRef.current.shift();
+    if (audio) {
+      audio.play().catch(e => console.error("Audio play error", e));
+      audio.onended = () => {
+        isPlayingRef.current = false;
+        if (audioQueueRef.current.length === 0) {
+          setIsAiSpeaking(false);
+        } else {
+          playNextAudio();
+        }
+      };
+    }
+  };
+
+  const sendToGemini = async (text: string) => {
+    setAiResponseText('Thinking (Connecting to backend)...');
+    setIsAiSpeaking(true); 
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_URL}/gemini/generate`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ text })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        setAiResponseText(`Backend Error (${response.status}): ${errorText}`);
+        setIsAiSpeaking(false);
+        return;
+      }
+
+      if (!response.body) throw new Error('No response body');
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let hasReceivedFirstToken = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const messages = buffer.split('\n\n');
+        buffer = messages.pop() || ''; 
+
+        for (const message of messages) {
+          if (message.startsWith('event: ')) {
+            const lines = message.split('\n');
+            const eventType = lines[0].replace('event: ', '').trim();
+            const dataLine = lines.find(l => l.startsWith('data: '));
+            if (dataLine) {
+              const dataStr = dataLine.replace('data: ', '').trim();
+              if (dataStr && dataStr !== 'null') {
+                try {
+                  const data = JSON.parse(dataStr);
+                  
+                  if (!hasReceivedFirstToken && (eventType === 'text' || eventType === 'error')) {
+                    hasReceivedFirstToken = true;
+                    setAiResponseText(''); // Clear "Thinking..." on first real interaction
+                  }
+                  
+                  if (eventType === 'text' && data.text) {
+                    setAiResponseText(prev => prev + data.text);
+                  } else if (eventType === 'audio' && data.audio_base64) {
+                    const audioSrc = `data:audio/mp3;base64,${data.audio_base64}`;
+                    const audio = new Audio(audioSrc);
+                    audioQueueRef.current.push(audio);
+                    playNextAudio();
+                  } else if (eventType === 'error') {
+                     setAiResponseText(prev => prev + `\n\n[AI Error: ${data.error}]`);
+                  }
+                } catch (e) {
+                  console.error('Error parsing SSE data', e);
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error('Error sending to Gemini:', error);
+      setAiResponseText(`Network Error: ${error.message || 'Failed to connect to backend'}`);
+    } finally {
+      if (audioQueueRef.current.length === 0) {
+        setIsAiSpeaking(false);
+      }
+    }
+  };
+
+  const toggleListening = () => {
+    if (isListeningRef.current) {
+      // Just hit stop, native onend listener will accurately trigger the backend send.
+      recognitionRef.current?.stop();
+    } else {
+      setTranscript('');
+      transcriptRef.current = '';
+      setAiResponseText('');
+      
+      // Stop playing any active audio to prevent overlap
+      isPlayingRef.current = false;
+      setIsAiSpeaking(false);
+      audioQueueRef.current.forEach(a => a.pause());
+      audioQueueRef.current = [];
+
+      try { recognitionRef.current?.start(); } catch (e) { console.warn(e); }
+      setIsListening(true);
+      isListeningRef.current = true;
+    }
+  };
 
   const companyTypes = [
     { value: 'tech-startup', label: 'Tech Startup' },
@@ -42,7 +330,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50 flex overflow-hidden">
       {/* Sidebar */}
-      {activeTab !== 'new-interview' && activeTab !== 'interview-session' && (
+      {activeTab !== 'interview-type' && activeTab !== 'university-setup' && activeTab !== 'new-interview' && activeTab !== 'interview-session' && (
         <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col h-screen shrink-0">
           {/* Logo Area */}
           <div className="h-20 px-6 border-b border-slate-800 flex items-center shrink-0">
@@ -51,19 +339,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
           {/* Profile Area */}
           <div className="p-4 border-b border-slate-800">
-            <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-3 flex items-center gap-3">
+            <button 
+              onClick={() => setActiveTab('profile')}
+              className={`w-full text-left bg-slate-800/50 border ${activeTab === 'profile' ? 'border-sky-500 ring-1 ring-sky-500' : 'border-slate-700/50 hover:border-slate-600 hover:bg-slate-800/80'} rounded-xl p-3 flex items-center gap-3 transition-all duration-200`}
+            >
               <div className="w-10 h-10 rounded-full bg-slate-700 border border-slate-600 overflow-hidden shrink-0">
                 <img 
-                  src="https://api.dicebear.com/7.x/micah/svg?seed=Alex&backgroundColor=cbd5e1" 
+                  src={profile.profilePicture} 
                   alt="User" 
                   className="w-full h-full object-cover"
                 />
               </div>
               <div className="overflow-hidden">
-                <h3 className="font-medium text-sm text-slate-200 truncate">John Doe</h3>
-                <p className="text-xs text-sky-400 font-medium mt-0.5 truncate">CCIT</p>
+                <h3 className="font-medium text-sm text-slate-200 truncate">{profile.name}</h3>
+                <p className="text-xs text-sky-400 font-medium mt-0.5 truncate">{profile.department}</p>
               </div>
-            </div>
+            </button>
           </div>
 
           {/* Main Action */}
@@ -72,9 +363,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
               onClick={() => {
                 setSelectedCompanyType('');
                 setPosition('');
-                setActiveTab('new-interview');
+                setActiveTab('interview-type');
               }}
-              className={`w-full py-3 px-4 rounded-xl font-medium flex items-center justify-center gap-2 transition-colors shadow-lg ${activeTab === 'new-interview' ? 'bg-sky-600 text-white shadow-sky-600/20' : 'bg-sky-500 hover:bg-sky-400 text-white shadow-sky-500/20'}`}
+              className="w-full py-3 px-4 rounded-xl font-medium flex items-center justify-center gap-2 transition-colors shadow-lg bg-sky-500 hover:bg-sky-400 text-white shadow-sky-500/20"
             >
               <Plus className="w-5 h-5" />
               Start Interview
@@ -136,7 +427,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
               
               {/* Page Title */}
               <div>
-                <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Welcome back, John</h1>
+                <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Welcome back, {profile.name.split(' ')[0]}</h1>
                 <p className="text-lg text-slate-400 mt-2">Here's an overview of your interview progress.</p>
               </div>
 
@@ -199,10 +490,100 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
             </div>
           )}
 
-          {activeTab === 'new-interview' && (
+          {activeTab === 'interview-type' && (
             <div className="relative h-full">
               <button 
                 onClick={() => setActiveTab('dashboard')}
+                className="absolute top-0 left-0 flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors font-medium"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back
+              </button>
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="max-w-4xl mx-auto space-y-8 pt-12"
+              >
+                <div className="text-center">
+                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Choose Interview Type</h1>
+                  <p className="text-lg text-slate-400 mt-2">Select the type of interview you want to practice.</p>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
+                  <button
+                    onClick={() => setActiveTab('university-setup')}
+                    className="bg-slate-900 border border-slate-800 hover:border-sky-500 hover:ring-1 hover:ring-sky-500 rounded-2xl p-8 flex flex-col items-center text-center transition-all duration-300 group"
+                  >
+                    <div className="w-16 h-16 bg-sky-500/10 text-sky-400 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
+                      <GraduationCap className="w-8 h-8" />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-200 mb-2">University Enrollment</h3>
+                    <p className="text-slate-400 text-sm">PRMSU CASTI entrance interview practice.</p>
+                  </button>
+
+                  <button
+                    onClick={() => setActiveTab('new-interview')}
+                    className="bg-slate-900 border border-slate-800 hover:border-sky-500 hover:ring-1 hover:ring-sky-500 rounded-2xl p-8 flex flex-col items-center text-center transition-all duration-300 group"
+                  >
+                    <div className="w-16 h-16 bg-emerald-500/10 text-emerald-400 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
+                      <Briefcase className="w-8 h-8" />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-200 mb-2">Practice for Work</h3>
+                    <p className="text-slate-400 text-sm">Job interview practice tailored to a specific role and company.</p>
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {activeTab === 'university-setup' && (
+            <div className="relative h-full">
+              <button 
+                onClick={() => setActiveTab('interview-type')}
+                className="absolute top-0 left-0 flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors font-medium"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back
+              </button>
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="max-w-3xl mx-auto space-y-8 pt-12"
+              >
+                <div>
+                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">University Enrollment</h1>
+                  <p className="text-lg text-slate-400 mt-2">PRMSU CASTI Interview Setup</p>
+                </div>
+                
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-8">
+                  <div className="space-y-3">
+                    <label className="text-sm font-medium text-slate-300">What course are you applying for?</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. BS Computer Science, BS Information Technology..."
+                      className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 hover:shadow-md hover:shadow-black/20 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
+                    />
+                    <p className="text-xs text-slate-500">The AI will tailor questions based on your prospective course.</p>
+                  </div>
+                </div>
+
+                <div className="flex justify-center">
+                  <button 
+                    onClick={() => setActiveTab('interview-session')}
+                    className="px-8 py-4 bg-sky-500 hover:bg-sky-400 text-white rounded-xl font-medium flex items-center gap-2 transition-colors shadow-lg shadow-sky-500/20 text-lg"
+                  >
+                    Continue
+                    <ArrowRight className="w-5 h-5" />
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {activeTab === 'new-interview' && (
+            <div className="relative h-full">
+              <button 
+                onClick={() => setActiveTab('interview-type')}
                 className="absolute top-0 left-0 flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors font-medium"
               >
                 <ArrowLeft className="w-4 h-4" />
@@ -297,27 +678,42 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
               <motion.div 
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="w-full max-w-6xl mx-auto flex-1 bg-[#111827] rounded-2xl mb-6 mt-2 flex items-center justify-center overflow-hidden relative shadow-2xl"
+                className="w-full max-w-6xl mx-auto flex-1 bg-[#111827] rounded-2xl mb-6 mt-12 flex flex-col items-center justify-center overflow-hidden relative shadow-2xl p-8"
               >
-                <div className="flex flex-col items-center justify-center gap-8">
-                  <div className="flex items-center justify-center gap-2 h-32">
-                    {[1, 2, 3, 5, 8, 5, 3, 2, 1].map((val, i) => (
-                      <motion.div
-                        key={i}
-                        className="w-2 sm:w-3 bg-sky-400 rounded-full"
-                        animate={{
-                          height: [20, 20 + val * 10, 20],
-                        }}
-                        transition={{
-                          duration: 1.5,
-                          repeat: Infinity,
-                          ease: "easeInOut",
-                          delay: i * 0.1,
-                        }}
-                      />
-                    ))}
+                <div className="flex flex-col items-center justify-center gap-8 w-full max-w-3xl">
+                  
+                  {isAiSpeaking ? (
+                    <div className="flex items-center justify-center gap-2 h-32">
+                      {[1, 2, 3, 5, 8, 5, 3, 2, 1].map((val, i) => (
+                        <motion.div
+                          key={i}
+                          className="w-2 sm:w-3 bg-sky-400 rounded-full"
+                          animate={{ height: [20, 20 + val * 10, 20] }}
+                          transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut", delay: i * 0.1 }}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="h-32 flex items-center justify-center">
+                      <Mic className={`w-16 h-16 ${isListening ? 'text-emerald-400 animate-pulse' : 'text-slate-600'}`} />
+                    </div>
+                  )}
+                  
+                  <div className="w-full space-y-6 text-center">
+                    {aiResponseText && (
+                      <div className="p-6 bg-slate-800/50 border border-slate-700 rounded-2xl">
+                        <p className="text-slate-200 text-lg leading-relaxed">{aiResponseText}</p>
+                      </div>
+                    )}
+                    
+                    {transcript && (
+                      <p className="text-emerald-400 text-lg font-medium">"{transcript}"</p>
+                    )}
+                    
+                    {!transcript && !aiResponseText && (
+                      <p className="text-slate-400 text-lg font-medium">{isListening ? 'Listening...' : 'Click the microphone to start speaking'}</p>
+                    )}
                   </div>
-                  <p className="text-slate-400 text-lg font-medium animate-pulse">AI is listening...</p>
                 </div>
               </motion.div>
 
@@ -331,19 +727,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                   className="bg-[#171e2e] hover:bg-[#1e293b] text-slate-200 w-16 h-16 rounded-2xl transition-all duration-300 flex items-center justify-center shrink-0"
                   title="Add File"
                 >
-                  <svg viewBox="0 0 24 24" className="w-8 h-8" fill="currentColor">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z" />
-                  </svg>
+                  <Paperclip className="w-6 h-6" />
                 </button>
 
                 <button 
-                  className="bg-[#2a364d] hover:bg-[#364563] text-white w-24 h-24 rounded-[2rem] transition-all duration-300 flex items-center justify-center shrink-0"
-                  title="Toggle Microphone"
+                  onClick={toggleListening}
+                  className={`${isListening ? 'bg-rose-500 hover:bg-rose-600 shadow-rose-500/30' : 'bg-[#2a364d] hover:bg-[#364563] shadow-black/20'} text-white w-24 h-24 rounded-[2rem] transition-all duration-300 flex items-center justify-center shrink-0 shadow-lg`}
+                  title={isListening ? "Stop Microphone" : "Start Microphone"}
                 >
-                  <svg viewBox="0 0 24 24" className="w-12 h-12" fill="currentColor">
-                    <path d="M9 5a3 3 0 0 1 6 0v6a3 3 0 0 1-6 0V5z" />
-                    <path d="M5 9v2a7 7 0 0 0 6 6.93V22h2v-4.07A7 7 0 0 0 19 11V9h-2v2a5 5 0 0 1-10 0V9H5z" />
-                  </svg>
+                  {isListening ? (
+                    <div className="w-8 h-8 bg-white rounded-sm" /> 
+                  ) : (
+                    <Mic className="w-10 h-10" />
+                  )}
                 </button>
 
                 <button 
@@ -362,6 +758,113 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
             <div className="flex items-center justify-center h-full">
               <p className="text-slate-500 text-lg">This section is coming soon.</p>
             </div>
+          )}
+
+          {activeTab === 'profile' && (
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="max-w-4xl mx-auto space-y-8"
+            >
+              <div>
+                <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Profile</h1>
+                <p className="text-lg text-slate-400 mt-2">Manage your account details and profile picture.</p>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-8">
+                {/* Profile Picture */}
+                <div className="flex items-center gap-6">
+                  <div className="w-24 h-24 rounded-full bg-slate-800 border-2 border-slate-700 overflow-hidden shrink-0">
+                    <img 
+                      src={profile.profilePicture} 
+                      alt="Profile" 
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-medium text-slate-200">Profile Picture</h3>
+                    <p className="text-sm text-slate-400 mb-3">PNG, JPG up to 5MB</p>
+                    <label className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-sm font-medium transition-colors border border-slate-700 cursor-pointer inline-block">
+                      Change Picture
+                      <input 
+                        type="file" 
+                        accept="image/png, image/jpeg" 
+                        onChange={handleImageUpload} 
+                        className="hidden" 
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Name */}
+                  <div className="space-y-3">
+                    <label className="text-sm font-medium text-slate-300">Full Name</label>
+                    <input 
+                      type="text" 
+                      value={profile.name}
+                      onChange={(e) => setProfile({...profile, name: e.target.value})}
+                      className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
+                    />
+                  </div>
+
+                  {/* Email */}
+                  <div className="space-y-3">
+                    <label className="text-sm font-medium text-slate-300">Email Address <span className="text-slate-500 ml-1 font-normal">(Read only)</span></label>
+                    <input 
+                      type="email" 
+                      value={profile.email}
+                      readOnly
+                      title="Email address cannot be changed"
+                      className="w-full bg-slate-950/50 border border-slate-800 rounded-xl px-4 py-3 text-slate-500 cursor-not-allowed transition-all duration-300"
+                    />
+                  </div>
+
+                  {/* Password */}
+                  <div className="space-y-3">
+                    <label className="text-sm font-medium text-slate-300">Password</label>
+                    <input 
+                      type="password" 
+                      value={profile.password}
+                      onChange={(e) => setProfile({...profile, password: e.target.value})}
+                      className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
+                    />
+                  </div>
+
+                  {/* Department */}
+                  <div className="space-y-3">
+                    <label className="text-sm font-medium text-slate-300">Department</label>
+                    <input 
+                      type="text" 
+                      value={profile.department}
+                      onChange={(e) => setProfile({...profile, department: e.target.value})}
+                      className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-4 flex justify-end items-center gap-4">
+                  {isSaved && (
+                    <span className="text-emerald-400 text-sm font-medium animate-pulse">
+                      Settings saved successfully!
+                    </span>
+                  )}
+                  <button 
+                    onClick={() => setActiveTab('dashboard')}
+                    className="px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-medium transition-colors border border-slate-700"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={handleSave}
+                    disabled={isSaving}
+                    className="px-6 py-3 bg-sky-500 hover:bg-sky-400 text-white rounded-xl font-medium transition-colors shadow-lg shadow-sky-500/20 disabled:opacity-50"
+                  >
+                    {isSaving ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
           )}
 
         </div>
