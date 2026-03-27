@@ -46,7 +46,8 @@ async def generate_text_response(request: Request, body: GeminiRequest, current_
             """Streams text tokens from Gemini, splits sentences, and fires off TTS tasks."""
             tts_tasks = []
             try:
-                model = genai.GenerativeModel('gemini-2.5-flash')
+                # Use gemini-2.0-flash for ultra-low latency
+                model = genai.GenerativeModel('gemini-2.0-flash')
                 response_stream = await model.generate_content_async(body.text, stream=True)
                 
                 sentence_buffer = ""
@@ -61,21 +62,21 @@ async def generate_text_response(request: Request, body: GeminiRequest, current_
                         
                         sentence_buffer += chunk.text
                         
-                        # Very simple sentence boundaries
-                        for punctuation in ['. ', '! ', '? ', '.\n', '!\n', '?\n']:
+                        # Aggressive splitting for low latency
+                        delimiters = ['. ', '! ', '? ', '.\n', '!\n', '?\n', ': ', '; ', ', ', '\n']
+                        for punctuation in delimiters:
                             if punctuation in sentence_buffer:
                                 parts = sentence_buffer.split(punctuation)
-                                # The first part is the full sentence (reattach the punctuation mark)
+                                # Reattach punctuation
                                 text_to_speak = parts[0] + punctuation[0]
                                 sanitized_text = strip_markdown_for_tts(text_to_speak)
                                 
-                                # Send sentence to TTS asynchronously
-                                task = asyncio.create_task(process_tts(sanitized_text))
-                                tts_tasks.append(task)
-                                
-                                # Keep the remainder in the buffer
-                                sentence_buffer = punctuation.join(parts[1:])
-                                break
+                                # Send to TTS if it's the first chunk or long enough
+                                if len(sanitized_text.strip()) > 10 or len(tts_tasks) == 0:
+                                    task = asyncio.create_task(process_tts(sanitized_text))
+                                    tts_tasks.append(task)
+                                    sentence_buffer = punctuation.join(parts[1:])
+                                    break
                                 
                 # If there's any remaining text in the buffer after the stream completes
                 if sentence_buffer.strip():

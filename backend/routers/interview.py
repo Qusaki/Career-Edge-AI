@@ -107,13 +107,12 @@ async def interview_chat(session_id: int, request: Request, body: InterviewChatR
     db.add(user_msg)
     db.commit()
 
-    # 3. Fetch History
+    # 3. Fetch History (Gemini uses 'model' instead of 'ai')
     history = db.query(InterviewMessage).filter(InterviewMessage.session_id == session.id).order_by(InterviewMessage.timestamp.asc()).all()
-    
     system_prompt = get_interview_system_prompt(current_user.department)
-    messages_payload = [{"role": "user", "parts": [system_prompt]}]
+    
+    messages_payload = []
     for msg in history:
-        # Gemini uses 'model' instead of 'ai'
         gemini_role = "model" if msg.role == "ai" else "user"
         messages_payload.append({"role": gemini_role, "parts": [msg.content]})
 
@@ -129,27 +128,32 @@ async def interview_chat(session_id: int, request: Request, body: InterviewChatR
             tts_tasks = []
             full_ai_response = ""
             try:
-                model = genai.GenerativeModel('gemini-2.5-flash')
+                # Use gemini-2.0-flash for ultra-low latency & system_instruction for strict adherence
+                model = genai.GenerativeModel('gemini-2.0-flash', system_instruction=system_prompt)
                 response_stream = await model.generate_content_async(messages_payload, stream=True)
-                
                 sentence_buffer = ""
+
                 async for chunk in response_stream:
                     if chunk.text:
                         await queue.put({"event": "text", "data": json.dumps({"text": chunk.text})})
                         full_ai_response += chunk.text
                         sentence_buffer += chunk.text
                         
-                        for punctuation in ['. ', '! ', '? ', '.\n', '!\n', '?\n']:
+                        # Aggressive splitting for low latency (especially for the first audio chunk)
+                        # We trigger TTS on common punctuation OR a long sentence buffer
+                        delimiters = ['. ', '! ', '? ', '.\n', '!\n', '?\n', ': ', '; ', ', ', '\n']
+                        for punctuation in delimiters:
                             if punctuation in sentence_buffer:
                                 parts = sentence_buffer.split(punctuation)
                                 text_to_speak = parts[0] + punctuation[0]
                                 sanitized_text = strip_markdown_for_tts(text_to_speak)
                                 
-                                task = asyncio.create_task(process_tts(sanitized_text))
-                                tts_tasks.append(task)
-                                
-                                sentence_buffer = punctuation.join(parts[1:])
-                                break
+                                # Only send if it's substantial (unless it's the very first part)
+                                if len(sanitized_text.strip()) > 10 or len(tts_tasks) == 0:
+                                    task = asyncio.create_task(process_tts(sanitized_text))
+                                    tts_tasks.append(task)
+                                    sentence_buffer = punctuation.join(parts[1:])
+                                    break
                                 
                 if sentence_buffer.strip():
                     sanitized_remainder = strip_markdown_for_tts(sentence_buffer)

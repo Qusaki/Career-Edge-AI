@@ -201,14 +201,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         transcriptRef.current = newTranscript;
         setTranscript(newTranscript);
 
-        // Reset the 5-second silence timer every time speech is detected
+        // Reset the 2-second silence timer every time speech is detected
         if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = setTimeout(() => {
-          // 5s of silence — stop recognition which triggers onend → auto-sends
+          // 2s of silence — stop recognition which triggers onend → auto-sends
           if (isListeningRef.current) {
             recognitionRef.current?.stop();
           }
-        }, 5000);
+        }, 2000);
       };
 
       recognitionRef.current.onend = () => {
@@ -337,6 +337,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         sessionIdRef.current = data.id;
         setSessionId(data.id);
         setActiveTab('interview-session');
+
+        // Immediately trigger the AI's first greeting (AI speaks first)
+        setTimeout(() => {
+          sendToGemini("Hello, I am here for the interview. Please start.");
+        }, 800);
       } else {
         const errorText = await response.text();
         console.error("Failed to start interview:", errorText);
@@ -499,16 +504,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     }
   };
 
-  // Auto-start mic when entering the interview session
-  useEffect(() => {
-    if (activeTab === 'interview-session' && !isListeningRef.current) {
-      const timer = setTimeout(() => {
-        toggleListening();
-      }, 500);
-      return () => clearTimeout(timer);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
+  // Auto-start mic when entering the interview session - REMOVED for AI-initiated flow
+  // useEffect(() => {
+  //   if (activeTab === 'interview-session' && !isListeningRef.current) {
+  //     const timer = setTimeout(() => {
+  //       toggleListening();
+  //     }, 500);
+  //     return () => clearTimeout(timer);
+  //   }
+  // // eslint-disable-next-line react-hooks/exhaustive-deps
+  // }, [activeTab]);
 
   // Auto-restart mic after AI finishes speaking
   useEffect(() => {
