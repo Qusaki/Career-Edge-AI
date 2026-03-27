@@ -56,7 +56,7 @@ resource "aws_instance" "web" {
               aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
               
               # Run the Docker container exposing Port 80
-              docker run -d --restart always -p 80:8000 \
+              docker run -d --restart always --name backend-api-prod -p 80:8000 \
                 -e DATABASE_URL="postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.endpoint}/${aws_db_instance.postgres.db_name}" \
                 -e AWS_REGION=$REGION \
                 -e AWS_S3_BUCKET_NAME="${aws_s3_bucket.profile_pictures.bucket}" \

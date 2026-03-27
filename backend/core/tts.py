@@ -7,7 +7,14 @@ from google.oauth2 import service_account
 
 logger = logging.getLogger(__name__)
 
-async def generate_tts_base64_async(text: str) -> str | None:
+# Global singleton client cache
+_tts_client = None
+
+def get_tts_client() -> texttospeech.TextToSpeechAsyncClient | None:
+    global _tts_client
+    if _tts_client is not None:
+        return _tts_client
+        
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
     file_creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     
@@ -20,10 +27,20 @@ async def generate_tts_base64_async(text: str) -> str | None:
         if creds_json:
             creds_dict = json.loads(creds_json)
             credentials = service_account.Credentials.from_service_account_info(creds_dict)
-            client = texttospeech.TextToSpeechAsyncClient(credentials=credentials)
+            _tts_client = texttospeech.TextToSpeechAsyncClient(credentials=credentials)
         else:
-            client = texttospeech.TextToSpeechAsyncClient()
-            
+            _tts_client = texttospeech.TextToSpeechAsyncClient()
+        return _tts_client
+    except Exception as e:
+        logger.error(f"Failed to initialize TTS client: {e}")
+        return None
+
+async def generate_tts_base64_async(text: str) -> str | None:
+    client = get_tts_client()
+    if not client:
+        return None
+        
+    try:
         synthesis_input = texttospeech.SynthesisInput(text=text)
 
         voice = texttospeech.VoiceSelectionParams(
