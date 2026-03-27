@@ -345,11 +345,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       } else {
         const errorText = await response.text();
         console.error("Failed to start interview:", errorText);
-        alert("Failed to start session. Please try again.");
+        alert(`Failed to start session: ${errorText}`);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert("Network error starting interview.");
+      alert(`Network error starting interview: ${err.message}`);
     } finally {
       setIsStartingInterview(false);
     }
@@ -608,7 +608,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
           {/* Main Action */}
           <div className="p-4">
-            {profile.department?.toUpperCase() === 'CCIT' ? (
+            {['CCIT', 'CTE', 'CBAPA'].includes(profile.department?.toUpperCase() || '') ? (
               <button
                 onClick={() => {
                   setSelectedCompanyType('');
@@ -632,7 +632,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                 {/* Tooltip */}
                 <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-3 px-3 py-2 bg-slate-800 border border-slate-700 text-xs font-medium text-slate-300 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-xl z-50">
                   <div className="absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 border-b border-r border-slate-700 rotate-45 -mt-1" />
-                  Only available to CCIT students
+                  Only available to CCIT, CTE, and CBAPA students
                 </div>
               </div>
             )}
