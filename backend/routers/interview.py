@@ -36,6 +36,18 @@ Follow these strict rules:
 4. Be warm and encouraging, but ask challenging follow-up questions to test their critical thinking and readiness for teaching.
 5. Topics to cover: Subject matter foundation, teaching pedagogy, problem-solving in a classroom setting, and why they want to be a teacher.
 """
+    elif dep == "CBAPA":
+        return """
+You are an expert Professor in the College of Business, Accountancy, and Public Administration (CBAPA) interviewing an incoming college freshman.
+Your goal is to assess their business acumen, problem-solving skills, professionalism, and ethical decision-making.
+
+Follow these strict rules:
+1. As soon as the interview starts, warmly welcome the student and politely ask them what specific major or course they are choosing within CBAPA (e.g., Major in Accountancy, Business Administration, Public Administration, etc.). Wait for them to answer before proceeding.
+2. Keep the conversation flowing naturally. Ask exactly ONE question at a time based on their chosen major and general business fundamentals.
+3. Wait for the user to answer before moving to the next topic.
+4. Be warm and encouraging, but ask challenging follow-up questions to test their analytical thinking and entrepreneurial mindset.
+5. Topics to cover: Business fundamentals, problem-solving in a professional setting, leadership potential, and ethical decision-making.
+"""
     else:
         return """
 You are an expert Computer Science Professor interviewing an incoming college freshman for a prestigious CS program.
@@ -51,8 +63,8 @@ Follow these strict rules:
 @router.post("/start", response_model=InterviewSessionResponse)
 def start_interview(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Creates a new interview session."""
-    if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE"]:
-        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT and CTE students.")
+    if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
+        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT, CTE, and CBAPA students.")
         
     session = InterviewSession(user_id=current_user.id)
     db.add(session)
@@ -63,8 +75,8 @@ def start_interview(db: Session = Depends(get_db), current_user: User = Depends(
 @router.post("/{session_id}/chat")
 async def interview_chat(session_id: int, request: Request, body: InterviewChatRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Handles chat responses inside the specific interview session."""
-    if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE"]:
-        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT and CTE students.")
+    if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
+        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT, CTE, and CBAPA students.")
 
     # 1. Validate Session & Timer
     session = db.query(InterviewSession).filter(InterviewSession.id == session_id, InterviewSession.user_id == current_user.id).first()
@@ -175,6 +187,20 @@ Weights:
 6. Problem-Solving & Critical Thinking (5%)
 7. Leadership (5%)
 """
+    elif department and department.upper() == "CBAPA":
+        return """
+You are a strict grading algorithm evaluating a transcript of a mock College of Business, Accountancy, and Public Administration (CBAPA) freshman interview.
+You will extract 7 scores out of 100 based on the provided rubric. You must respond in STRICT JSON matching the schema.
+
+Weights:
+1. Business Fundamentals & Major Knowledge (25%)
+2. Analytical & Problem-Solving Skills (20%)
+3. Communication & Professionalism (15%)
+4. Entrepreneurial Mindset & Innovation (15%)
+5. Academic Preparedness (10%)
+6. Leadership & Teamwork Experiences (10%)
+7. Ethical Decision-Making (5%)
+"""
     else:
         return """
 You are a strict grading algorithm evaluating a transcript of a mock computer science freshman interview.
@@ -208,10 +234,20 @@ class CteInterviewEvaluation(typing_extensions.TypedDict):
     leadership_score: float
     feedback_summary: str
 
+class CbapaInterviewEvaluation(typing_extensions.TypedDict):
+    business_fundamentals_score: float
+    analytical_score: float
+    communication_score: float
+    entrepreneurial_score: float
+    academic_preparedness_score: float
+    leadership_score: float
+    ethical_score: float
+    feedback_summary: str
+
 @router.post("/{session_id}/complete", response_model=InterviewSessionResponse)
 def complete_interview(session_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE"]:
-        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT and CTE students.")
+    if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
+        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT, CTE, and CBAPA students.")
 
     session = db.query(InterviewSession).filter(InterviewSession.id == session_id, InterviewSession.user_id == current_user.id).first()
     if not session:
@@ -229,8 +265,13 @@ def complete_interview(session_id: int, db: Session = Depends(get_db), current_u
     
     # Send to Gemini with JSON Schema
     system_prompt = get_evaluation_system_prompt(current_user.department)
-    schema_to_use = CteInterviewEvaluation if current_user.department.upper() == "CTE" else InterviewEvaluation
-    
+    if current_user.department.upper() == "CTE":
+        schema_to_use = CteInterviewEvaluation
+    elif current_user.department.upper() == "CBAPA":
+        schema_to_use = CbapaInterviewEvaluation
+    else:
+        schema_to_use = InterviewEvaluation
+        
     model = genai.GenerativeModel('gemini-2.5-flash', system_instruction=system_prompt)
     
     response = model.generate_content(
@@ -263,6 +304,25 @@ def complete_interview(session_id: int, db: Session = Depends(get_db), current_u
                 (session.score_cte_problem_solving * 0.05) +
                 (session.score_cte_leadership * 0.05)
             )
+        elif current_user.department.upper() == "CBAPA":
+            session.score_cbapa_business = evaluation.get("business_fundamentals_score", 0)
+            session.score_cbapa_analytical = evaluation.get("analytical_score", 0)
+            session.score_cbapa_communication = evaluation.get("communication_score", 0)
+            session.score_cbapa_entrepreneurial = evaluation.get("entrepreneurial_score", 0)
+            session.score_cbapa_academic = evaluation.get("academic_preparedness_score", 0)
+            session.score_cbapa_leadership = evaluation.get("leadership_score", 0)
+            session.score_cbapa_ethical = evaluation.get("ethical_score", 0)
+            session.feedback_summary = evaluation.get("feedback_summary", "")
+            
+            total = (
+                (session.score_cbapa_business * 0.25) +
+                (session.score_cbapa_analytical * 0.20) +
+                (session.score_cbapa_communication * 0.15) +
+                (session.score_cbapa_entrepreneurial * 0.15) +
+                (session.score_cbapa_academic * 0.10) +
+                (session.score_cbapa_leadership * 0.10) +
+                (session.score_cbapa_ethical * 0.05)
+            )
         else:
             session.score_technical = evaluation.get("technical_score", 0)
             session.score_problem_solving = evaluation.get("problem_solving_score", 0)
@@ -294,8 +354,8 @@ def complete_interview(session_id: int, db: Session = Depends(get_db), current_u
 
 @router.get("/{session_id}", response_model=InterviewSessionWithMessagesResponse)
 def get_interview(session_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE"]:
-        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT and CTE students.")
+    if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
+        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT, CTE, and CBAPA students.")
 
     session = db.query(InterviewSession).filter(InterviewSession.id == session_id, InterviewSession.user_id == current_user.id).first()
     if not session:

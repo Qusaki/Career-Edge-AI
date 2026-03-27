@@ -32,6 +32,15 @@ class InterviewSessionResponse(BaseModel):
     score_cte_problem_solving: Optional[float] = None
     score_cte_leadership: Optional[float] = None
 
+    # CBAPA Scores
+    score_cbapa_business: Optional[float] = None
+    score_cbapa_analytical: Optional[float] = None
+    score_cbapa_communication: Optional[float] = None
+    score_cbapa_entrepreneurial: Optional[float] = None
+    score_cbapa_academic: Optional[float] = None
+    score_cbapa_leadership: Optional[float] = None
+    score_cbapa_ethical: Optional[float] = None
+
     total_score: Optional[float] = None
     passed: Optional[bool] = None
     feedback_summary: Optional[str] = None
