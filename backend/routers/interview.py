@@ -118,11 +118,21 @@ async def interview_chat(session_id: int, request: Request, body: InterviewChatR
 
     async def event_generator():
         queue = asyncio.Queue()
+        tts_result_queue = asyncio.Queue()
         
-        async def process_tts(text_to_speak: str):
-            audio_b64 = await generate_tts_base64_async(text_to_speak)
-            if audio_b64:
-                await queue.put({"event": "audio", "data": json.dumps({"audio_base64": audio_b64})})
+        async def tts_sender_worker():
+            while True:
+                task = await tts_result_queue.get()
+                if task is None:
+                    break
+                try:
+                    audio_b64 = await task
+                    if audio_b64:
+                        await queue.put({"event": "audio", "data": json.dumps({"audio_base64": audio_b64})})
+                except Exception as e:
+                    print(f"TTS sender error: {e}")
+
+        sender_task = asyncio.create_task(tts_sender_worker())
 
         async def process_gemini():
             tts_tasks = []
@@ -150,14 +160,16 @@ async def interview_chat(session_id: int, request: Request, body: InterviewChatR
                                 
                                 # Only send if it's substantial (unless it's the very first part)
                                 if len(sanitized_text.strip()) > 10 or len(tts_tasks) == 0:
-                                    task = asyncio.create_task(process_tts(sanitized_text))
+                                    task = asyncio.create_task(generate_tts_base64_async(sanitized_text))
+                                    await tts_result_queue.put(task)
                                     tts_tasks.append(task)
                                     sentence_buffer = punctuation.join(parts[1:])
                                     break
                                 
                 if sentence_buffer.strip():
                     sanitized_remainder = strip_markdown_for_tts(sentence_buffer)
-                    task = asyncio.create_task(process_tts(sanitized_remainder))
+                    task = asyncio.create_task(generate_tts_base64_async(sanitized_remainder))
+                    await tts_result_queue.put(task)
                     tts_tasks.append(task)
                     
             except Exception as e:
@@ -165,6 +177,10 @@ async def interview_chat(session_id: int, request: Request, body: InterviewChatR
             finally:
                 if tts_tasks:
                     await asyncio.gather(*tts_tasks, return_exceptions=True)
+                
+                # Signal sender worker to stop
+                await tts_result_queue.put(None)
+                await sender_task
                     
                 # Save the complete AI response to DB
                 if full_ai_response:
