@@ -7,6 +7,7 @@ bcrypt
 python-jose[cryptography]
 python-multipart
 google-generativeai
+google-genai
 google-cloud-texttospeech
 sse-starlette
 boto3

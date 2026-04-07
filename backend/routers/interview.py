@@ -3,13 +3,16 @@ import json
 import asyncio
 import re
 import datetime
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 import google.generativeai as genai
+from google import genai as new_genai
+from google.genai import types
+import base64
 
 from database import get_db
-from core.deps import get_current_user
+from core.deps import get_current_user, get_current_user_ws
 from core.tts import generate_tts_base64_async
 from models.user import User
 from models.interview import InterviewSession, InterviewMessage
@@ -82,125 +85,97 @@ def start_interview(db: Session = Depends(get_db), current_user: User = Depends(
     db.refresh(session)
     return session
 
-@router.post("/{session_id}/chat")
-async def interview_chat(session_id: int, request: Request, body: InterviewChatRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Handles chat responses inside the specific interview session."""
+@router.websocket("/{session_id}/chat")
+async def interview_chat_ws(
+    websocket: WebSocket,
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_ws)
+):
+    """Handles real-time bi-directional audio streaming with Gemini Live API."""
     if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
-        raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT, CTE, and CBAPA students.")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Forbidden: Department not authorized.")
+        return
 
-    # 1. Validate Session & Timer
+    # Validate Session & Timer
     session = db.query(InterviewSession).filter(InterviewSession.id == session_id, InterviewSession.user_id == current_user.id).first()
     if not session:
-        raise HTTPException(status_code=404, detail="Interview session not found.")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Interview session not found.")
+        return
         
     if session.status != "active":
-        raise HTTPException(status_code=400, detail=f"Interview is already {session.status}.")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=f"Interview is already {session.status}.")
+        return
         
     time_elapsed = datetime.datetime.utcnow() - session.start_time
     if time_elapsed.total_seconds() > 3600: # 1 hour
         session.status = "expired"
         db.commit()
-        raise HTTPException(status_code=400, detail="Interview time limit (1 hour) exceeded.")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Interview time limit (1 hour) exceeded.")
+        return
 
-    # 2. Save User Message
-    user_msg = InterviewMessage(session_id=session.id, role="user", content=body.text)
-    db.add(user_msg)
-    db.commit()
+    await websocket.accept()
 
-    # 3. Fetch History (Gemini uses 'model' instead of 'ai')
-    history = db.query(InterviewMessage).filter(InterviewMessage.session_id == session.id).order_by(InterviewMessage.timestamp.asc()).all()
     system_prompt = get_interview_system_prompt(current_user.department)
     
-    messages_payload = []
-    for msg in history:
-        gemini_role = "model" if msg.role == "ai" else "user"
-        messages_payload.append({"role": gemini_role, "parts": [msg.content]})
-
-    async def event_generator():
-        queue = asyncio.Queue()
-        tts_result_queue = asyncio.Queue()
-        
-        async def tts_sender_worker():
-            while True:
-                task = await tts_result_queue.get()
-                if task is None:
-                    break
+    # Initialize Google GenAI Client
+    api_key = os.environ.get("GEMINI_API_KEY")
+    client = new_genai.Client(api_key=api_key)
+    
+    config = types.LiveConnectConfig(
+        response_modalities=[types.LiveResponseModality.AUDIO],
+        system_instruction=types.Content(parts=[types.Part.from_text(text=system_prompt)])
+    )
+    
+    try:
+        async with client.aio.live.connect(model="gemini-2.0-flash-exp", config=config) as live_session:
+            
+            async def receive_from_client():
                 try:
-                    audio_b64 = await task
-                    if audio_b64:
-                        await queue.put({"event": "audio", "data": json.dumps({"audio_base64": audio_b64})})
+                    while True:
+                        msg = await websocket.receive()
+                        if "bytes" in msg:
+                            await live_session.send(input={"data": msg["bytes"], "mime_type": "audio/pcm;rate=16000"}, end_of_turn=False)
+                        elif "text" in msg:
+                            try:
+                                data = json.loads(msg["text"])
+                                if data.get("type") == "end_of_turn":
+                                    await live_session.send(end_of_turn=True)
+                            except:
+                                pass
+                except WebSocketDisconnect:
+                    pass
                 except Exception as e:
-                    print(f"TTS sender error: {e}")
+                    print(f"Receive from client error: {e}")
 
-        sender_task = asyncio.create_task(tts_sender_worker())
-
-        async def process_gemini():
-            tts_tasks = []
-            full_ai_response = ""
-            try:
-                # Use gemini-2.5-flash for ultra-low latency & system_instruction for strict adherence
-                model = genai.GenerativeModel('gemini-2.5-flash', system_instruction=system_prompt)
-                response_stream = await model.generate_content_async(messages_payload, stream=True)
-                sentence_buffer = ""
-
-                async for chunk in response_stream:
-                    if chunk.text:
-                        await queue.put({"event": "text", "data": json.dumps({"text": chunk.text})})
-                        full_ai_response += chunk.text
-                        sentence_buffer += chunk.text
+            async def send_to_client():
+                try:
+                    async for response in live_session.receive():
+                        server_content = response.server_content
+                        if server_content is not None:
+                            model_turn = server_content.model_turn
+                            if model_turn is not None:
+                                for part in model_turn.parts:
+                                    if part.text:
+                                        await websocket.send_json({"type": "text", "text": part.text})
+                                    if part.inline_data:
+                                        audio_b64 = base64.b64encode(part.inline_data.data).decode('utf-8')
+                                        await websocket.send_json({"type": "audio", "audio_b64": audio_b64})
                         
-                        # Aggressive splitting for low latency (especially for the first audio chunk)
-                        # We trigger TTS on common punctuation OR a long sentence buffer
-                        delimiters = ['. ', '! ', '? ', '.\n', '!\n', '?\n', ': ', '; ', ', ', '\n']
-                        for punctuation in delimiters:
-                            if punctuation in sentence_buffer:
-                                parts = sentence_buffer.split(punctuation)
-                                text_to_speak = parts[0] + punctuation[0]
-                                sanitized_text = strip_markdown_for_tts(text_to_speak)
-                                
-                                # Only send if it's substantial (unless it's the very first part)
-                                if len(sanitized_text.strip()) > 10 or len(tts_tasks) == 0:
-                                    task = asyncio.create_task(generate_tts_base64_async(sanitized_text))
-                                    await tts_result_queue.put(task)
-                                    tts_tasks.append(task)
-                                    sentence_buffer = punctuation.join(parts[1:])
-                                    break
-                                
-                if sentence_buffer.strip():
-                    sanitized_remainder = strip_markdown_for_tts(sentence_buffer)
-                    task = asyncio.create_task(generate_tts_base64_async(sanitized_remainder))
-                    await tts_result_queue.put(task)
-                    tts_tasks.append(task)
-                    
-            except Exception as e:
-                await queue.put({"event": "error", "data": json.dumps({"error": str(e)})})
-            finally:
-                if tts_tasks:
-                    await asyncio.gather(*tts_tasks, return_exceptions=True)
-                
-                # Signal sender worker to stop
-                await tts_result_queue.put(None)
-                await sender_task
-                    
-                # Save the complete AI response to DB
-                if full_ai_response:
-                    ai_msg = InterviewMessage(session_id=session.id, role="ai", content=full_ai_response)
-                    db.add(ai_msg)
-                    db.commit()
-                    
-                await queue.put(None) 
+                        if server_content and server_content.turn_complete:
+                            await websocket.send_json({"type": "turn_complete"})
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    print(f"Send to client error: {e}")
 
-        producer = asyncio.create_task(process_gemini())
-        while True:
-            if await request.is_disconnected():
-                producer.cancel()
-                break
-            msg = await queue.get()
-            if msg is None:
-                break
-            yield msg
-
-    return EventSourceResponse(event_generator())
+            await asyncio.gather(receive_from_client(), send_to_client())
+    except Exception as e:
+        print(f"Live API connection failed: {e}")
+        try:
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Failed to connect to AI.")
+        except Exception:
+            pass
 
 def get_evaluation_system_prompt(department: str) -> str:
     if department and department.upper() == "CTE":

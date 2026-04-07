@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Query, WebSocketException
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session
@@ -27,4 +27,18 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     user = db.query(User).filter(User.email == email).first()
     if user is None:
         raise credentials_exception
+    return user
+
+def get_current_user_ws(token: str = Query(...), db: Session = Depends(get_db)):
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Could not validate credentials")
+    except JWTError:
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Could not validate credentials")
+        
+    user = db.query(User).filter(User.email == email).first()
+    if user is None:
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Could not validate credentials")
     return user
