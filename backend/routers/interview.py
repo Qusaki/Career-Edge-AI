@@ -156,11 +156,8 @@ async def interview_chat_ws(
                             model_turn = server_content.model_turn
                             if model_turn is not None:
                                 for part in model_turn.parts:
-                                    if part.text:
-                                        await websocket.send_json({"type": "text", "text": part.text})
                                     if part.inline_data:
-                                        audio_b64 = base64.b64encode(part.inline_data.data).decode('utf-8')
-                                        await websocket.send_json({"type": "audio", "audio_b64": audio_b64})
+                                        await websocket.send_bytes(part.inline_data.data)
                         
                         if server_content and server_content.turn_complete:
                             await websocket.send_json({"type": "turn_complete"})
