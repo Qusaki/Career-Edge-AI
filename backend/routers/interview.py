@@ -127,7 +127,12 @@ async def interview_chat_ws(
                         msg = await websocket.receive()
                         if "bytes" in msg:
                             try:
-                                await live_session.send(input={"data": msg["bytes"], "mime_type": "audio/pcm;rate=16000"}, end_of_turn=False)
+                                # Do NOT pass end_of_turn here — that forces the SDK to wrap
+                                # audio as LiveClientContent (a discrete turn), which disables
+                                # Gemini's server-side Voice Activity Detection.
+                                # Without end_of_turn, the SDK packages it as
+                                # LiveClientRealtimeInput, enabling automatic turn detection.
+                                await live_session.send(input={"data": msg["bytes"], "mime_type": "audio/pcm;rate=16000"})
                             except Exception as e:
                                 print(f"[DEBUG] Error sending audio chunk to Gemini: {e}")
                         elif "text" in msg:

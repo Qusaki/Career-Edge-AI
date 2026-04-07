@@ -156,6 +156,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const recognitionRef = React.useRef<any>(null);
   const audioQueueRef = React.useRef<string[]>([]);
   const isPlayingRef = React.useRef(false);
+  const isAiSpeakingRef = React.useRef(false);
   const audioPlayerRef = React.useRef<HTMLAudioElement | null>(null);
   const audioContextRef = React.useRef<AudioContext | null>(null);
   const analyserRef = React.useRef<AnalyserNode | null>(null);
@@ -260,6 +261,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   // PCM playback for Gemini Live Connect
   const playPCM = async (arrayBuffer: ArrayBuffer) => {
     setIsAiSpeaking(true);
+    isAiSpeakingRef.current = true;
     if (!audioContextRef.current) {
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       analyserRef.current = audioContextRef.current.createAnalyser();
@@ -329,13 +331,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         wsRef.current = ws;
 
         ws.onopen = () => {
-          // Send an initial kick-off text to reliably trigger the AI
+          // Send an initial kick-off text to reliably trigger the AI's introduction.
+          // Do NOT start the mic here — we wait for the AI to finish its intro first,
+          // otherwise the mic picks up the AI's own voice (echo) and confuses Gemini's VAD.
           ws.send(JSON.stringify({ text: "Hello! I am here and ready to begin the interview.", end_of_turn: true }));
-          
-          // Automatically start microphone when connected
-          if (!isListeningRef.current) {
-            toggleListening();
-          }
         };
 
         ws.onmessage = async (event) => {
@@ -348,6 +347,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
               const msg = JSON.parse(event.data);
               if (msg.type === 'turn_complete') {
                 setIsAiSpeaking(false);
+                isAiSpeakingRef.current = false;
+                // Start the mic after the AI finishes speaking (e.g., after intro)
+                if (!isListeningRef.current) {
+                  toggleListening();
+                }
               } else if (msg.text) {
                 setAiResponseText(prev => prev + msg.text);
               }
@@ -519,16 +523,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         processor.onaudioprocess = (e) => {
           if (!isListeningRef.current) return;
           
+          // CRITICAL: Do NOT send mic audio while the AI is speaking.
+          // The mic would capture the AI's voice from the speakers and send it
+          // back to Gemini, creating an echo loop that confuses its VAD.
+          if (isAiSpeakingRef.current) return;
+          
           const inputData = e.inputBuffer.getChannelData(0);
           const pcm16 = new Int16Array(inputData.length);
           
           for (let i = 0; i < inputData.length; i++) {
-            // Compress Float32 float to Int16 explicitly
             pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 32767;
           }
           
-          // Fire raw binary arraybuffer precisely across the open websocket
-          // We no longer manually calculate RMS silence here; we leave it to Gemini server VAD.
+          // Stream raw PCM to the websocket. Gemini's server-side VAD handles turn detection.
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.send(pcm16.buffer);
           }
