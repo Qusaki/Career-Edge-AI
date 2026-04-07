@@ -53,7 +53,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://54.179.46.220';
+  const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://127.0.0.1:8000';
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -159,6 +159,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const audioPlayerRef = React.useRef<HTMLAudioElement | null>(null);
   const audioContextRef = React.useRef<AudioContext | null>(null);
   const analyserRef = React.useRef<AnalyserNode | null>(null);
+  const nextPlayTimeRef = React.useRef<number>(0);
   const animationRef = React.useRef<number>(0);
   const [audioData, setAudioData] = useState<number[]>(new Array(15).fill(20));
 
@@ -351,7 +352,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     const source = audioCtx.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(analyserRef.current!);
-    source.start();
+    
+    // Smooth scheduling to prevent overlapping/choppy playback
+    const currentTime = audioCtx.currentTime;
+    if (nextPlayTimeRef.current < currentTime) {
+      nextPlayTimeRef.current = currentTime;
+    }
+    
+    source.start(nextPlayTimeRef.current);
+    nextPlayTimeRef.current += audioBuffer.duration;
     
     source.onended = () => {
        isPlayingRef.current = false;
@@ -385,7 +394,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         wsRef.current = ws;
 
         ws.onopen = () => {
-          // Immediately trigger the AI's first greeting (AI speaks first)
+          // Send an initial kick-off text to reliably trigger the AI
+          ws.send(JSON.stringify({ text: "Hello! I am ready to begin the interview. Please formally introduce yourself and ask your first question." }));
           ws.send(JSON.stringify({ type: 'end_of_turn' }));
         };
 
@@ -441,6 +451,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       wsRef.current.close();
       wsRef.current = null;
     }
+    nextPlayTimeRef.current = 0;
     try {
       recognitionRef.current?.stop();
     } catch (e) { }

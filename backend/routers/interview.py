@@ -120,15 +120,18 @@ async def interview_chat_ws(
     
     # Initialize Google GenAI Client
     api_key = os.environ.get("GEMINI_API_KEY")
-    client = new_genai.Client(api_key=api_key)
+    client = new_genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(api_version="v1beta")
+    )
     
     config = types.LiveConnectConfig(
-        response_modalities=[types.LiveResponseModality.AUDIO],
+        response_modalities=["AUDIO"],
         system_instruction=types.Content(parts=[types.Part.from_text(text=system_prompt)])
     )
     
     try:
-        async with client.aio.live.connect(model="gemini-2.0-flash-exp", config=config) as live_session:
+        async with client.aio.live.connect(model="models/gemini-2.5-flash-native-audio-latest", config=config) as live_session:
             
             async def receive_from_client():
                 try:
