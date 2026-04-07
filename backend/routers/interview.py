@@ -141,6 +141,8 @@ async def interview_chat_ws(
                                 data = json.loads(msg["text"])
                                 if data.get("type") == "end_of_turn":
                                     await live_session.send(end_of_turn=True)
+                                elif data.get("text"):
+                                    await live_session.send(input=data["text"], end_of_turn=False)
                             except:
                                 pass
                 except WebSocketDisconnect:

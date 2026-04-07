@@ -39,6 +39,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const sessionIdRef = React.useRef<number | null>(null);
+  const wsRef = React.useRef<WebSocket | null>(null);
   const [isStartingInterview, setIsStartingInterview] = useState(false);
   const [isFinishingInterview, setIsFinishingInterview] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -320,6 +321,43 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     }
   };
 
+  // PCM playback for Gemini Live Connect
+  const playPCM = async (arrayBuffer: ArrayBuffer) => {
+    setIsAiSpeaking(true);
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      analyserRef.current = audioContextRef.current.createAnalyser();
+      analyserRef.current.fftSize = 64;
+      analyserRef.current.connect(audioContextRef.current.destination);
+      updateAudioData();
+    }
+    const audioCtx = audioContextRef.current;
+    if (audioCtx.state === 'suspended') {
+      try { await audioCtx.resume(); } catch (e) { }
+    }
+    
+    isPlayingRef.current = true;
+    
+    // Convert 16-bit PCM to Float32
+    const int16Array = new Int16Array(arrayBuffer);
+    const float32Array = new Float32Array(int16Array.length);
+    for (let i = 0; i < int16Array.length; i++) {
+        float32Array[i] = int16Array[i] / 32768.0;
+    }
+    
+    const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 24000);
+    audioBuffer.getChannelData(0).set(float32Array);
+    
+    const source = audioCtx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(analyserRef.current!);
+    source.start();
+    
+    source.onended = () => {
+       isPlayingRef.current = false;
+    };
+  };
+
   const startInterviewSession = async () => {
     setIsStartingInterview(true);
     try {
@@ -338,10 +376,44 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         setSessionId(data.id);
         setActiveTab('interview-session');
 
-        // Immediately trigger the AI's first greeting (AI speaks first)
-        setTimeout(() => {
-          sendToGemini("Hello, I am here for the interview. Please start.");
-        }, 800);
+        // Connect WebSocket natively
+        const protocol = API_URL.startsWith('https') ? 'wss:' : 'ws:';
+        const host = API_URL.replace(/^https?:\/\//, '');
+        const wsUrl = `${protocol}//${host}/interview/${data.id}/chat?token=${token}`;
+        
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          // Immediately trigger the AI's first greeting (AI speaks first)
+          ws.send(JSON.stringify({ type: 'end_of_turn' }));
+        };
+
+        ws.onmessage = async (event) => {
+          if (event.data instanceof Blob) {
+            // Live API raw 16-bit PCM at 24kHz
+            const arrayBuffer = await event.data.arrayBuffer();
+            playPCM(arrayBuffer);
+          } else {
+            try {
+              const msg = JSON.parse(event.data);
+              if (msg.type === 'turn_complete') {
+                setIsAiSpeaking(false);
+              }
+            } catch(e) {}
+          }
+        };
+
+        ws.onerror = (e) => {
+           console.error("WebSocket Error:", e);
+           setAiResponseText("Connection to AI failed.");
+           setIsAiSpeaking(false);
+        };
+        
+        ws.onclose = () => {
+           setIsAiSpeaking(false);
+        };
+
       } else {
         const errorText = await response.text();
         console.error("Failed to start interview:", errorText);
@@ -364,6 +436,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     if (audioPlayerRef.current) {
       audioPlayerRef.current.pause();
       audioPlayerRef.current.src = "";
+    }
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
     }
     try {
       recognitionRef.current?.stop();
@@ -389,6 +465,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         setIsAiSpeaking(false);
         setIsListening(false);
         if (audioPlayerRef.current) audioPlayerRef.current.pause();
+        if (wsRef.current) {
+          wsRef.current.close();
+          wsRef.current = null;
+        }
         try { recognitionRef.current?.abort(); } catch (e) { }
         setActiveTab('interview-result');
       } else {
@@ -403,104 +483,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   };
 
   const sendToGemini = async (text: string) => {
-    setAiResponseText(''); // Clear any previous errors
-    setIsAiSpeaking(true); // Automatically triggers the sound wave visualizer to indicate loading
-    try {
-      if (!sessionIdRef.current) {
-        setAiResponseText("Error: Interview session not initialized.");
-        setIsAiSpeaking(false);
-        return;
-      }
-
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/interview/${sessionIdRef.current}/chat`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ text })
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        setAiResponseText(`Backend Error (${response.status}): ${errorText}`);
-        setIsAiSpeaking(false);
-        return;
-      }
-
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('text/event-stream')) {
-        const rawText = await response.text();
-        setAiResponseText(`Server returned invalid Content-Type: ${contentType}. (It might be returning HTML/JSON instead of a stream). First 100 chars: ${rawText.substring(0, 100)}`);
-        setIsAiSpeaking(false);
-        return;
-      }
-
-      if (!response.body) throw new Error('No response body');
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let hasReceivedFirstToken = false;
-
-      while (true) {
-        const { done, value } = await reader.read();
-
-        if (value) {
-          buffer += decoder.decode(value, { stream: true });
-          // Use regex to strictly split on both \n\n and \r\n\r\n
-          const messages = buffer.split(/\r?\n\r?\n/);
-          buffer = messages.pop() || '';
-
-          for (const message of messages) {
-            if (message.startsWith('event: ')) {
-              const lines = message.split(/\r?\n/);
-              const eventType = lines[0].replace('event: ', '').trim();
-              const dataLine = lines.find(l => l.startsWith('data: '));
-              if (dataLine) {
-                const dataStr = dataLine.replace('data: ', '').trim();
-                if (dataStr && dataStr !== 'null') {
-                  try {
-                    const data = JSON.parse(dataStr);
-
-                    if (!hasReceivedFirstToken && (eventType === 'text' || eventType === 'error')) {
-                      hasReceivedFirstToken = true;
-                      setAiResponseText(''); // Clear "Thinking..." on first real interaction
-                    }
-
-                    if (eventType === 'text' && data.text) {
-                      setAiResponseText(prev => prev + data.text);
-                    } else if (eventType === 'audio' && data.audio_base64) {
-                      const audioSrc = `data:audio/mp3;base64,${data.audio_base64}`;
-                      audioQueueRef.current.push(audioSrc);
-                      playNextAudio();
-                    } else if (eventType === 'error') {
-                      setAiResponseText(prev => prev + `\n\n[AI Error: ${data.error}]`);
-                    }
-                  } catch (e) {
-                    console.error('Error parsing SSE data', e);
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        if (done) {
-          if (!hasReceivedFirstToken) {
-            setAiResponseText('Stream closed unexpectedly by the server without sending any data. (Check AWS proxy settings)!');
-          }
-          break;
-        }
-      }
-    } catch (error: any) {
-      console.error('Error sending to Gemini:', error);
-      setAiResponseText(`Network Error: ${error.message || 'Failed to connect to backend'}`);
-    } finally {
-      if (audioQueueRef.current.length === 0) {
-        setIsAiSpeaking(false);
-      }
+    setAiResponseText(''); 
+    setIsAiSpeaking(true); 
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ text }));
+      wsRef.current.send(JSON.stringify({ type: 'end_of_turn' }));
+    } else {
+      setAiResponseText('Connection error. WebSocket dropped.');
+      setIsAiSpeaking(false);
     }
   };
 
