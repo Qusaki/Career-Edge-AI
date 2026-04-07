@@ -53,7 +53,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://127.0.0.1:8000';
+  const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://54.179.46.220';
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -180,7 +180,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const [isMicTransitioning, setIsMicTransitioning] = useState(false);
 
   const processorRef = React.useRef<ScriptProcessorNode | null>(null);
-  const silenceFramesRef = React.useRef<number>(0);
 
 
 
@@ -332,6 +331,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         ws.onopen = () => {
           // Send an initial kick-off text to reliably trigger the AI
           ws.send(JSON.stringify({ text: "Hello! I am here and ready to begin the interview.", end_of_turn: true }));
+          
+          // Automatically start microphone when connected
+          if (!isListeningRef.current) {
+            toggleListening();
+          }
         };
 
         ws.onmessage = async (event) => {
@@ -437,29 +441,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     }
   };
 
-  // Auto-start mic when entering the interview session - REMOVED for AI-initiated flow
-  // useEffect(() => {
-  //   if (activeTab === 'interview-session' && !isListeningRef.current) {
-  //     const timer = setTimeout(() => {
-  //       toggleListening();
-  //     }, 500);
-  //     return () => clearTimeout(timer);
-  //   }
-  // // eslint-disable-next-line react-hooks/exhaustive-deps
-  // }, [activeTab]);
-
-  // Auto-restart mic after AI finishes speaking
-  useEffect(() => {
-    if (!isAiSpeaking && activeTab === 'interview-session' && !isListeningRef.current) {
-      setIsMicTransitioning(true);
-      const timer = setTimeout(() => {
-        toggleListening();
-        setIsMicTransitioning(false);
-      }, 600);
-      return () => clearTimeout(timer);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAiSpeaking]);
+  // Keep the mic on continuously for the duration of the interview
+  // Removed the auto-stop and auto-restart client-side silence logic 
+  // to allow Gemini's server-side Voice Activity Detection to operate.
 
   const stopListening = () => {
     setIsListening(false);
@@ -505,10 +489,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
       setIsListening(true);
       isListeningRef.current = true;
-      silenceFramesRef.current = 0;
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+           audio: {
+             echoCancellation: true,
+             noiseSuppression: true,
+             autoGainControl: true
+           } 
+        });
         userMediaStreamRef.current = stream;
         
         // Native 16000Hz sampling strictly required for Live API parity
@@ -532,30 +521,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
           
           const inputData = e.inputBuffer.getChannelData(0);
           const pcm16 = new Int16Array(inputData.length);
-          let sumSquares = 0;
           
           for (let i = 0; i < inputData.length; i++) {
             // Compress Float32 float to Int16 explicitly
             pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 32767;
-            sumSquares += inputData[i] * inputData[i];
           }
           
           // Fire raw binary arraybuffer precisely across the open websocket
+          // We no longer manually calculate RMS silence here; we leave it to Gemini server VAD.
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.send(pcm16.buffer);
-          }
-          
-          // Math.sqrt calculates dynamic acoustic force to evaluate raw silence thresholds natively
-          const rms = Math.sqrt(sumSquares / inputData.length);
-          if (rms < 0.01) {
-             silenceFramesRef.current++;
-          } else {
-             silenceFramesRef.current = 0;
-          }
-          
-          // Exactly 15 silent processing chunks roughly maps to exactly 3.5 seconds
-          if (silenceFramesRef.current > 15 && isListeningRef.current) {
-             stopListening();
           }
         };
         

@@ -137,12 +137,8 @@ async def interview_chat_ws(
                                     turn_complete = data.get("end_of_turn", False)
                                     print(f"\n[DEBUG] Sending to Gemini: '{data['text']}' | end_of_turn={turn_complete}")
                                     
-                                    # Explicitly construct the LiveClientContent payload to prevent SDK serialization bugs
-                                    client_content = types.LiveClientContent(
-                                        turns=[types.Content(role="user", parts=[types.Part.from_text(text=data["text"])])],
-                                        turn_complete=turn_complete
-                                    )
-                                    await live_session.send(input=client_content)
+                                    # Send text directly, passing turn_complete to end_of_turn
+                                    await live_session.send(input=data["text"], end_of_turn=turn_complete)
                                     
                                     print("[DEBUG] Successfully dispatched to Gemini!")
                                 elif data.get("type") == "end_of_turn":
