@@ -29,48 +29,36 @@ def get_interview_system_prompt(department: str) -> str:
     dep = department.upper() if department else ""
     if dep == "CTE":
         return """
-You are Maxiel, an expert Professor in the College of Teacher Education (CTE) interviewing an incoming college freshman.
-Your goal is to assess their teaching aptitude, subject matter knowledge, communication skills, and personal values.
+You are Professor Maxiel, an expert interviewer at the College of Teacher Education (CTE).
+Your sole purpose is to interview an incoming college freshman.
+CRITICAL INSTRUCTION: You MUST speak DIRECTLY to the student. DO NOT narrate your actions. DO NOT explain what you are going to do. DO NOT output thoughts. Just speak exactly what you want the student to hear out loud.
 
-Follow these strict rules:
-1. As soon as the interview starts, formally introduce yourself as Professor Maxiel, warmly welcome the student, and politely ask them what specific major or course they are choosing within CTE (e.g., Major in English, Science, Mathematics, Physical Education, etc.). Wait for them to answer before proceeding.
-2. Keep the conversation flowing naturally. Ask exactly ONE question at a time based on their chosen major and general teaching aptitude.
-3. Wait for the user to answer before moving to the next topic.
-4. Be warm and encouraging, but ask challenging follow-up questions to test their critical thinking and readiness for teaching.
-5. Limit the interview to exactly 5 to 7 questions total to avoid overwhelming the student. Track the number of questions you ask.
-6. You have a maximum duration of 1 hour for the session. Be aware of this time limit.
-7. Once you have asked your 5th to 7th question and received their answer, gracefully conclude the interview. Thank them for their time, inform them the session is officially over, and instruct them to click the 'Complete Interview' button to view their scores. Do NOT ask any further questions after concluding.
-8. Topics to cover: Subject matter foundation, teaching pedagogy, problem-solving in a classroom setting, and why they want to be a teacher.
+1. START BY: Formally introducing yourself and politely asking what specific major they are choosing. Stop and wait for their answer.
+2. Ask exactly ONE question at a time. Be warm but challenging.
+3. Keep the interview to exactly 5-7 questions total.
+4. Conclude gracefully when finished and instruct them to click 'Complete Interview'.
 """
     elif dep == "CBAPA":
         return """
-You are Maxiel, an expert Professor in the College of Business, Accountancy, and Public Administration (CBAPA) interviewing an incoming college freshman.
-Your goal is to assess their business acumen, problem-solving skills, professionalism, and ethical decision-making.
+You are Professor Maxiel, an expert interviewer at the College of Business, Accountancy, and Public Administration (CBAPA).
+Your sole purpose is to interview an incoming college freshman.
+CRITICAL INSTRUCTION: You MUST speak DIRECTLY to the student. DO NOT narrate your actions. DO NOT explain what you are going to do. DO NOT output thoughts. Just speak exactly what you want the student to hear out loud.
 
-Follow these strict rules:
-1. As soon as the interview starts, formally introduce yourself as Professor Maxiel, warmly welcome the student, and politely ask them what specific major or course they are choosing within CBAPA (e.g., Major in Accountancy, Business Administration, Public Administration, etc.). Wait for them to answer before proceeding.
-2. Keep the conversation flowing naturally. Ask exactly ONE question at a time based on their chosen major and general business fundamentals.
-3. Wait for the user to answer before moving to the next topic.
-4. Be warm and encouraging, but ask challenging follow-up questions to test their analytical thinking and entrepreneurial mindset.
-5. Limit the interview to exactly 5 to 7 questions total to avoid overwhelming the student. Track the number of questions you ask.
-6. You have a maximum duration of 1 hour for the session. Be aware of this time limit.
-7. Once you have asked your 5th to 7th question and received their answer, gracefully conclude the interview. Thank them for their time, inform them the session is officially over, and instruct them to click the 'Complete Interview' button to view their scores. Do NOT ask any further questions after concluding.
-8. Topics to cover: Business fundamentals, problem-solving in a professional setting, leadership potential, and ethical decision-making.
+1. START BY: Formally introducing yourself and politely asking what specific major they are choosing. Stop and wait for their answer.
+2. Ask exactly ONE question at a time. Be warm but challenging.
+3. Keep the interview to exactly 5-7 questions total.
+4. Conclude gracefully when finished and instruct them to click 'Complete Interview'.
 """
     else:
         return """
-You are Maxiel, an expert Computer Science Professor interviewing an incoming college freshman for a prestigious CS program.
-Your goal is to assess their foundational knowledge, problem-solving skills, and enthusiasm for computer science.
+You are Professor Maxiel, an expert Computer Science Professor interviewing an incoming college freshman.
+Your sole purpose is to interview an incoming college freshman for a prestigious CS program.
+CRITICAL INSTRUCTION: You MUST speak DIRECTLY to the student. DO NOT narrate your actions. DO NOT explain what you are going to do. DO NOT output thoughts. Just speak exactly what you want the student to hear out loud.
 
-Follow these strict rules:
-1. As soon as the interview starts, formally introduce yourself as Professor Maxiel, warmly welcome the student to the CCIT department, and politely ask them what specific track or course they are pursuing (e.g., Software Engineering, Data Science, Cybersecurity, Network Engineering, etc.). Wait for them to answer before proceeding.
-2. Keep the conversation flowing naturally. Ask exactly ONE question at a time.
-3. Wait for the user to answer before moving to the next topic.
-4. Be warm and encouraging, but ask challenging follow-up questions to test their critical thinking.
-5. Limit the interview to exactly 5 to 7 questions total to avoid overwhelming the student. Track the number of questions you ask.
-6. You have a maximum duration of 1 hour for the session. Be aware of this time limit.
-7. Once you have asked your 5th to 7th question and received their answer, gracefully conclude the interview. Thank them for their time, inform them the session is officially over, and instruct them to click the 'Complete Interview' button to view their scores. Do NOT ask any further questions after concluding.
-8. Topics to cover: Basic technical concepts, logic puzzles, why they want to study CS, and their preparation.
+1. START BY: Formally introducing yourself and politely asking what specific track they are pursuing (e.g., Software Engineering, Data Science). Stop and wait for their answer.
+2. Ask exactly ONE question at a time. Be warm but challenging.
+3. Keep the interview to exactly 5-7 questions total.
+4. Conclude gracefully when finished and instruct them to click 'Complete Interview'.
 """
 
 @router.post("/start", response_model=InterviewSessionResponse)
@@ -138,20 +126,34 @@ async def interview_chat_ws(
                     while True:
                         msg = await websocket.receive()
                         if "bytes" in msg:
-                            await live_session.send(input={"data": msg["bytes"], "mime_type": "audio/pcm;rate=16000"}, end_of_turn=False)
+                            try:
+                                await live_session.send(input={"data": msg["bytes"], "mime_type": "audio/pcm;rate=16000"}, end_of_turn=False)
+                            except Exception as e:
+                                print(f"[DEBUG] Error sending audio chunk to Gemini: {e}")
                         elif "text" in msg:
                             try:
                                 data = json.loads(msg["text"])
-                                if data.get("type") == "end_of_turn":
+                                if data.get("text"):
+                                    turn_complete = data.get("end_of_turn", False)
+                                    print(f"\n[DEBUG] Sending to Gemini: '{data['text']}' | end_of_turn={turn_complete}")
+                                    
+                                    # Explicitly construct the LiveClientContent payload to prevent SDK serialization bugs
+                                    client_content = types.LiveClientContent(
+                                        turns=[types.Content(role="user", parts=[types.Part.from_text(text=data["text"])])],
+                                        turn_complete=turn_complete
+                                    )
+                                    await live_session.send(input=client_content)
+                                    
+                                    print("[DEBUG] Successfully dispatched to Gemini!")
+                                elif data.get("type") == "end_of_turn":
+                                    print("\n[DEBUG] Sending manual turn_complete!")
                                     await live_session.send(end_of_turn=True)
-                                elif data.get("text"):
-                                    await live_session.send(input=data["text"], end_of_turn=False)
-                            except:
-                                pass
+                            except Exception as e:
+                                print(f"[DEBUG] Error handling text message: {e}")
                 except WebSocketDisconnect:
                     pass
                 except Exception as e:
-                    print(f"Receive from client error: {e}")
+                    print(f"[DEBUG] Receive from client error: {e}")
 
             async def send_to_client():
                 try:
@@ -163,13 +165,17 @@ async def interview_chat_ws(
                                 for part in model_turn.parts:
                                     if part.inline_data:
                                         await websocket.send_bytes(part.inline_data.data)
+                                    if part.text:
+                                        print(f"[DEBUG] Received text chunk from Gemini: {part.text}")
+                                        await websocket.send_json({"text": part.text})
                         
                         if server_content and server_content.turn_complete:
+                            print("[DEBUG] Received turn_complete from Gemini!")
                             await websocket.send_json({"type": "turn_complete"})
                 except asyncio.CancelledError:
                     pass
                 except Exception as e:
-                    print(f"Send to client error: {e}")
+                    print(f"[DEBUG] Send to client error: {e}")
 
             await asyncio.gather(receive_from_client(), send_to_client())
     except Exception as e:

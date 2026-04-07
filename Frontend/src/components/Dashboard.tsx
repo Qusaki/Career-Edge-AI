@@ -178,75 +178,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
   const [isMicTransitioning, setIsMicTransitioning] = useState(false);
-  const silenceTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = true;
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = 'en-US';
+  const processorRef = React.useRef<ScriptProcessorNode | null>(null);
+  const silenceFramesRef = React.useRef<number>(0);
 
-      recognitionRef.current.onresult = (event: any) => {
-        let finalT = '';
-        let interimT = '';
-        // Safely map through all results from index 0 to eliminate compounding issues
-        for (let i = 0; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalT += event.results[i][0].transcript;
-          } else {
-            interimT += event.results[i][0].transcript;
-          }
-        }
-        const newTranscript = (finalT + ' ' + interimT).trim();
-        transcriptRef.current = newTranscript;
-        setTranscript(newTranscript);
 
-        // Reset the 2-second silence timer every time speech is detected
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        silenceTimerRef.current = setTimeout(() => {
-          // 2s of silence — stop recognition which triggers onend → auto-sends
-          if (isListeningRef.current) {
-            recognitionRef.current?.stop();
-          }
-        }, 2000);
-      };
-
-      recognitionRef.current.onend = () => {
-        // Clear any pending silence timer
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-
-        setIsListening(false);
-        isListeningRef.current = false;
-
-        cancelAnimationFrame(userAnimationRef.current);
-        setUserAudioData([8, 8, 8]);
-        if (userMediaStreamRef.current) {
-          userMediaStreamRef.current.getTracks().forEach(track => track.stop());
-          userMediaStreamRef.current = null;
-        }
-
-        // Auto-send if the browser natively stops and there is a transcript available
-        if (transcriptRef.current && transcriptRef.current.trim().length > 0) {
-          sendToGemini(transcriptRef.current);
-          transcriptRef.current = '';
-        }
-      };
-
-      recognitionRef.current.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
-        setIsListening(false);
-        isListeningRef.current = false;
-      };
-    } else {
-      console.warn('Speech Recognition API not supported in this browser.');
-    }
-
-    return () => {
-      if (recognitionRef.current) recognitionRef.current.abort();
-    };
-  }, []);
 
   const updateUserAudioData = () => {
     if (userAnalyserRef.current && isListeningRef.current) {
@@ -395,8 +331,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
         ws.onopen = () => {
           // Send an initial kick-off text to reliably trigger the AI
-          ws.send(JSON.stringify({ text: "Hello! I am ready to begin the interview. Please formally introduce yourself and ask your first question." }));
-          ws.send(JSON.stringify({ type: 'end_of_turn' }));
+          ws.send(JSON.stringify({ text: "Hello! I am here and ready to begin the interview.", end_of_turn: true }));
         };
 
         ws.onmessage = async (event) => {
@@ -409,6 +344,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
               const msg = JSON.parse(event.data);
               if (msg.type === 'turn_complete') {
                 setIsAiSpeaking(false);
+              } else if (msg.text) {
+                setAiResponseText(prev => prev + msg.text);
               }
             } catch(e) {}
           }
@@ -452,9 +389,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       wsRef.current = null;
     }
     nextPlayTimeRef.current = 0;
-    try {
-      recognitionRef.current?.stop();
-    } catch (e) { }
     setActiveTab('dashboard');
   };
 
@@ -480,7 +414,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
           wsRef.current.close();
           wsRef.current = null;
         }
-        try { recognitionRef.current?.abort(); } catch (e) { }
         setActiveTab('interview-result');
       } else {
         alert("Failed to grade interview. Please try again.");
@@ -497,8 +430,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     setAiResponseText(''); 
     setIsAiSpeaking(true); 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ text }));
-      wsRef.current.send(JSON.stringify({ type: 'end_of_turn' }));
+      wsRef.current.send(JSON.stringify({ text, end_of_turn: true }));
     } else {
       setAiResponseText('Connection error. WebSocket dropped.');
       setIsAiSpeaking(false);
@@ -529,16 +461,41 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAiSpeaking]);
 
+  const stopListening = () => {
+    setIsListening(false);
+    isListeningRef.current = false;
+    
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
+    
+    if (userMediaStreamRef.current) {
+      userMediaStreamRef.current.getTracks().forEach(track => track.stop());
+      userMediaStreamRef.current = null;
+    }
+    
+    if (userAudioContextRef.current) {
+      userAudioContextRef.current.close();
+      userAudioContextRef.current = null;
+    }
+    
+    cancelAnimationFrame(userAnimationRef.current);
+    setUserAudioData([8, 8, 8]);
+    
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+       wsRef.current.send(JSON.stringify({ type: 'end_of_turn' }));
+    }
+  };
+
   const toggleListening = async () => {
     if (isListeningRef.current) {
-      // Just hit stop, native onend listener will accurately trigger the backend send.
-      recognitionRef.current?.stop();
+      stopListening();
     } else {
       setTranscript('');
       transcriptRef.current = '';
       setAiResponseText('');
 
-      // Stop playing any active audio to prevent overlap
       isPlayingRef.current = false;
       setIsAiSpeaking(false);
       cancelAnimationFrame(animationRef.current);
@@ -546,23 +503,71 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       if (audioPlayerRef.current) audioPlayerRef.current.pause();
       audioQueueRef.current = [];
 
-      try { recognitionRef.current?.start(); } catch (e) { console.warn(e); }
       setIsListening(true);
       isListeningRef.current = true;
+      silenceFramesRef.current = 0;
 
-      // Start User Audio Analysis
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         userMediaStreamRef.current = stream;
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        
+        // Native 16000Hz sampling strictly required for Live API parity
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
         userAudioContextRef.current = ctx;
+        
         userAnalyserRef.current = ctx.createAnalyser();
         userAnalyserRef.current.fftSize = 64;
+        
         const source = ctx.createMediaStreamSource(stream);
         source.connect(userAnalyserRef.current);
+        
+        const processor = ctx.createScriptProcessor(4096, 1, 1);
+        processorRef.current = processor;
+        
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = 0; // Mute the sink so it doesn't echo out the user's speakers
+        
+        processor.onaudioprocess = (e) => {
+          if (!isListeningRef.current) return;
+          
+          const inputData = e.inputBuffer.getChannelData(0);
+          const pcm16 = new Int16Array(inputData.length);
+          let sumSquares = 0;
+          
+          for (let i = 0; i < inputData.length; i++) {
+            // Compress Float32 float to Int16 explicitly
+            pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 32767;
+            sumSquares += inputData[i] * inputData[i];
+          }
+          
+          // Fire raw binary arraybuffer precisely across the open websocket
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(pcm16.buffer);
+          }
+          
+          // Math.sqrt calculates dynamic acoustic force to evaluate raw silence thresholds natively
+          const rms = Math.sqrt(sumSquares / inputData.length);
+          if (rms < 0.01) {
+             silenceFramesRef.current++;
+          } else {
+             silenceFramesRef.current = 0;
+          }
+          
+          // Exactly 15 silent processing chunks roughly maps to exactly 3.5 seconds
+          if (silenceFramesRef.current > 15 && isListeningRef.current) {
+             stopListening();
+          }
+        };
+        
+        source.connect(processor);
+        processor.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        
         updateUserAudioData();
       } catch (err) {
-        console.error("Could not capture local audio for visualizer:", err);
+        console.error("Could not capture local audio for streaming:", err);
+        setIsListening(false);
+        isListeningRef.current = false;
       }
     }
   };
