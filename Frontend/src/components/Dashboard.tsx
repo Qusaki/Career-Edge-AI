@@ -339,23 +339,32 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
         ws.onmessage = async (event) => {
           if (event.data instanceof Blob) {
-            // Live API raw 16-bit PCM at 24kHz
             const arrayBuffer = await event.data.arrayBuffer();
             playPCM(arrayBuffer);
           } else {
             try {
               const msg = JSON.parse(event.data);
               if (msg.type === 'turn_complete') {
-                setIsAiSpeaking(false);
-                isAiSpeakingRef.current = false;
-                // Start the mic after the AI finishes speaking (e.g., after intro)
-                if (!isListeningRef.current) {
-                  toggleListening();
-                }
+                console.log('[Interview] AI turn_complete received');
+                // Wait for all scheduled audio buffers to finish playing
+                const remaining = audioContextRef.current 
+                  ? (nextPlayTimeRef.current - audioContextRef.current.currentTime) * 1000
+                  : 0;
+                const delay = Math.max(remaining, 500); // at least 500ms buffer
+                console.log(`[Interview] Waiting ${delay}ms for playback to finish`);
+                setTimeout(() => {
+                  setIsAiSpeaking(false);
+                  isAiSpeakingRef.current = false;
+                  isPlayingRef.current = false;
+                  if (!isListeningRef.current) {
+                    console.log('[Interview] Starting mic after AI finished');
+                    toggleListening();
+                  }
+                }, delay);
               } else if (msg.text) {
                 setAiResponseText(prev => prev + msg.text);
               }
-            } catch(e) {}
+            } catch(e) { console.error('[Interview] WS parse error:', e); }
           }
         };
 
@@ -507,6 +516,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         // Native 16000Hz sampling strictly required for Live API parity
         const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
         userAudioContextRef.current = ctx;
+        // CRITICAL: Resume context — it may be suspended if not triggered by user gesture
+        if (ctx.state === 'suspended') {
+          console.log('[Interview] AudioContext suspended, resuming...');
+          await ctx.resume();
+          console.log('[Interview] AudioContext resumed:', ctx.state);
+        }
         
         userAnalyserRef.current = ctx.createAnalyser();
         userAnalyserRef.current.fftSize = 64;
@@ -538,6 +553,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
           // Stream raw PCM to the websocket. Gemini's server-side VAD handles turn detection.
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.send(pcm16.buffer);
+          } else {
+            console.warn('[Interview] WS not open, cannot send audio');
           }
         };
         

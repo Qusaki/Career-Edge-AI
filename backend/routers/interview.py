@@ -121,30 +121,29 @@ async def interview_chat_ws(
     try:
         async with client.aio.live.connect(model="models/gemini-2.5-flash-native-audio-latest", config=config) as live_session:
             
+            audio_chunk_count = 0
+            
             async def receive_from_client():
+                nonlocal audio_chunk_count
                 try:
                     while True:
                         msg = await websocket.receive()
                         if "bytes" in msg:
+                            audio_chunk_count += 1
+                            chunk_size = len(msg["bytes"])
+                            if audio_chunk_count <= 3 or audio_chunk_count % 50 == 0:
+                                print(f"[DEBUG] Audio chunk #{audio_chunk_count}: {chunk_size} bytes")
                             try:
-                                # Do NOT pass end_of_turn here — that forces the SDK to wrap
-                                # audio as LiveClientContent (a discrete turn), which disables
-                                # Gemini's server-side Voice Activity Detection.
-                                # Without end_of_turn, the SDK packages it as
-                                # LiveClientRealtimeInput, enabling automatic turn detection.
                                 await live_session.send(input={"data": msg["bytes"], "mime_type": "audio/pcm;rate=16000"})
                             except Exception as e:
-                                print(f"[DEBUG] Error sending audio chunk to Gemini: {e}")
+                                print(f"[DEBUG] Error sending audio chunk #{audio_chunk_count} to Gemini: {e}")
                         elif "text" in msg:
                             try:
                                 data = json.loads(msg["text"])
                                 if data.get("text"):
                                     turn_complete = data.get("end_of_turn", False)
                                     print(f"\n[DEBUG] Sending to Gemini: '{data['text']}' | end_of_turn={turn_complete}")
-                                    
-                                    # Send text directly, passing turn_complete to end_of_turn
                                     await live_session.send(input=data["text"], end_of_turn=turn_complete)
-                                    
                                     print("[DEBUG] Successfully dispatched to Gemini!")
                                 elif data.get("type") == "end_of_turn":
                                     print("\n[DEBUG] Sending manual turn_complete!")
@@ -152,7 +151,7 @@ async def interview_chat_ws(
                             except Exception as e:
                                 print(f"[DEBUG] Error handling text message: {e}")
                 except WebSocketDisconnect:
-                    pass
+                    print(f"[DEBUG] Client disconnected. Total audio chunks received: {audio_chunk_count}")
                 except Exception as e:
                     print(f"[DEBUG] Receive from client error: {e}")
 
@@ -170,9 +169,15 @@ async def interview_chat_ws(
                                         print(f"[DEBUG] Received text chunk from Gemini: {part.text}")
                                         await websocket.send_json({"text": part.text})
                         
-                        if server_content and server_content.turn_complete:
-                            print("[DEBUG] Received turn_complete from Gemini!")
-                            await websocket.send_json({"type": "turn_complete"})
+                            if server_content.turn_complete:
+                                print("[DEBUG] Received turn_complete from Gemini!")
+                                await websocket.send_json({"type": "turn_complete"})
+                            
+                            if hasattr(server_content, 'interrupted') and server_content.interrupted:
+                                print("[DEBUG] Gemini turn was INTERRUPTED!")
+                        else:
+                            # Log any non-content responses (setup, errors, etc.)
+                            print(f"[DEBUG] Non-content response from Gemini: {type(response)}")
                 except asyncio.CancelledError:
                     pass
                 except Exception as e:
