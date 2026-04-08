@@ -129,8 +129,12 @@ async def interview_chat_ws(
                         msg = await websocket.receive()
                         if "bytes" in msg:
                             try:
-                                await live_session.send_realtime_input(
-                                    audio=types.Blob(mime_type="audio/pcm;rate=16000", data=msg["bytes"])
+                                await live_session.send(
+                                    input=types.LiveClientRealtimeInput(
+                                        media_chunks=[
+                                            types.Blob(mime_type="audio/pcm;rate=16000", data=msg["bytes"])
+                                        ]
+                                    )
                                 )
                             except Exception as e:
                                 print(f"[DEBUG] Error sending audio chunk to Gemini: {e}")
