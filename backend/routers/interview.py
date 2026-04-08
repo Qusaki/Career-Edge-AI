@@ -124,37 +124,35 @@ async def interview_chat_ws(
             audio_chunk_count = 0
             
             async def receive_from_client():
-                nonlocal audio_chunk_count
                 try:
                     while True:
                         msg = await websocket.receive()
                         if "bytes" in msg:
-                            audio_chunk_count += 1
-                            chunk_size = len(msg["bytes"])
-                            if audio_chunk_count <= 3 or audio_chunk_count % 50 == 0:
-                                print(f"[DEBUG] Audio chunk #{audio_chunk_count}: {chunk_size} bytes")
                             try:
-                                realtime_input = types.LiveClientRealtimeInput(
-                                    media_chunks=[types.Blob(mime_type="audio/pcm;rate=16000", data=msg["bytes"])]
+                                await live_session.send_realtime_input(
+                                    audio=types.Blob(mime_type="audio/pcm;rate=16000", data=msg["bytes"])
                                 )
-                                await live_session.send(input=realtime_input)
                             except Exception as e:
-                                print(f"[DEBUG] Error sending audio chunk #{audio_chunk_count} to Gemini: {e}")
+                                print(f"[DEBUG] Error sending audio chunk to Gemini: {e}")
                         elif "text" in msg:
                             try:
                                 data = json.loads(msg["text"])
                                 if data.get("text"):
                                     turn_complete = data.get("end_of_turn", False)
                                     print(f"\n[DEBUG] Sending to Gemini: '{data['text']}' | end_of_turn={turn_complete}")
-                                    await live_session.send(input=data["text"], end_of_turn=turn_complete)
+                                    
+                                    await live_session.send_client_content(
+                                        turns=[types.Content(role="user", parts=[types.Part.from_text(text=data["text"])])],
+                                        turn_complete=turn_complete
+                                    )
                                     print("[DEBUG] Successfully dispatched to Gemini!")
                                 elif data.get("type") == "end_of_turn":
                                     print("\n[DEBUG] Sending manual turn_complete!")
-                                    await live_session.send(end_of_turn=True)
+                                    await live_session.send_client_content(turn_complete=True)
                             except Exception as e:
                                 print(f"[DEBUG] Error handling text message: {e}")
                 except WebSocketDisconnect:
-                    print(f"[DEBUG] Client disconnected. Total audio chunks received: {audio_chunk_count}")
+                    print(f"[DEBUG] Client disconnected.")
                 except Exception as e:
                     print(f"[DEBUG] Receive from client error: {e}")
 
