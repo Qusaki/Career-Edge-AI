@@ -134,7 +134,10 @@ async def interview_chat_ws(
                             if audio_chunk_count <= 3 or audio_chunk_count % 50 == 0:
                                 print(f"[DEBUG] Audio chunk #{audio_chunk_count}: {chunk_size} bytes")
                             try:
-                                await live_session.send(input={"data": msg["bytes"], "mime_type": "audio/pcm;rate=16000"})
+                                realtime_input = types.LiveClientRealtimeInput(
+                                    media_chunks=[types.Blob(mime_type="audio/pcm;rate=16000", data=msg["bytes"])]
+                                )
+                                await live_session.send(input=realtime_input)
                             except Exception as e:
                                 print(f"[DEBUG] Error sending audio chunk #{audio_chunk_count} to Gemini: {e}")
                         elif "text" in msg:
