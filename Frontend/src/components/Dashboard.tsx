@@ -361,6 +361,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                     toggleListening();
                   }
                 }, delay);
+              } else if (msg.audio_base64) {
+                 audioQueueRef.current.push(`data:audio/wav;base64,${msg.audio_base64}`);
+                 playNextAudio();
               } else if (msg.text) {
                 setAiResponseText(prev => prev + msg.text);
               }
@@ -462,6 +465,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     setIsListening(false);
     isListeningRef.current = false;
     
+    if (recognitionRef.current) {
+        recognitionRef.current.stop();
+    }
+    
     if (processorRef.current) {
       processorRef.current.disconnect();
       processorRef.current = null;
@@ -479,10 +486,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     
     cancelAnimationFrame(userAnimationRef.current);
     setUserAudioData([8, 8, 8]);
-    
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-       wsRef.current.send(JSON.stringify({ type: 'end_of_turn' }));
-    }
   };
 
   const toggleListening = async () => {
@@ -504,23 +507,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       isListeningRef.current = true;
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-           audio: {
-             echoCancellation: true,
-             noiseSuppression: true,
-             autoGainControl: true
-           } 
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         userMediaStreamRef.current = stream;
         
-        // Native 16000Hz sampling strictly required for Live API parity
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+        // Native 16000Hz sampling purely for cosmetic visualization context
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
         userAudioContextRef.current = ctx;
-        // CRITICAL: Resume context — it may be suspended if not triggered by user gesture
         if (ctx.state === 'suspended') {
-          console.log('[Interview] AudioContext suspended, resuming...');
           await ctx.resume();
-          console.log('[Interview] AudioContext resumed:', ctx.state);
         }
         
         userAnalyserRef.current = ctx.createAnalyser();
@@ -529,40 +523,45 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         const source = ctx.createMediaStreamSource(stream);
         source.connect(userAnalyserRef.current);
         
-        const processor = ctx.createScriptProcessor(4096, 1, 1);
-        processorRef.current = processor;
-        
-        const gainNode = ctx.createGain();
-        gainNode.gain.value = 0; // Mute the sink so it doesn't echo out the user's speakers
-        
-        processor.onaudioprocess = (e) => {
-          if (!isListeningRef.current) return;
-          
-          // CRITICAL: Do NOT send mic audio while the AI is speaking.
-          // The mic would capture the AI's voice from the speakers and send it
-          // back to Gemini, creating an echo loop that confuses its VAD.
-          if (isAiSpeakingRef.current) return;
-          
-          const inputData = e.inputBuffer.getChannelData(0);
-          const pcm16 = new Int16Array(inputData.length);
-          
-          for (let i = 0; i < inputData.length; i++) {
-            pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 32767;
-          }
-          
-          // Stream raw PCM to the websocket. Gemini's server-side VAD handles turn detection.
-          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            wsRef.current.send(pcm16.buffer);
-          } else {
-            console.warn('[Interview] WS not open, cannot send audio');
-          }
-        };
-        
-        source.connect(processor);
-        processor.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        
         updateUserAudioData();
+
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (SpeechRecognition) {
+            const recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+            
+            recognition.onresult = (e: any) => {
+               if (isAiSpeakingRef.current) return;
+               let finalTranscript = '';
+               for (let i = e.resultIndex; i < e.results.length; i++) {
+                  if (e.results[i].isFinal) {
+                     finalTranscript += e.results[i][0].transcript;
+                  }
+               }
+               
+               if (finalTranscript) {
+                  setTranscript(prev => prev + " " + finalTranscript);
+                  if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                     wsRef.current.send(JSON.stringify({ text: finalTranscript.trim(), end_of_turn: true }));
+                  }
+                  stopListening();
+               }
+            };
+            
+            recognition.onerror = (e: any) => console.error("STT Error", e);
+            recognition.onend = () => {
+               if (isListeningRef.current) {
+                  recognition.start();
+               }
+            }
+            
+            recognitionRef.current = recognition;
+            recognition.start();
+        } else {
+            console.warn("Speech Recognition not supported in this browser.");
+        }
       } catch (err) {
         console.error("Could not capture local audio for streaming:", err);
         setIsListening(false);

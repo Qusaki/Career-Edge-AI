@@ -3,13 +3,15 @@ import json
 import asyncio
 import re
 import datetime
+import wave
+import io
+import base64
 from fastapi import APIRouter, HTTPException, Depends, Request, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 import google.generativeai as genai
 from google import genai as new_genai
 from google.genai import types
-import base64
 
 from database import get_db
 from core.deps import get_current_user, get_current_user_ws
@@ -127,32 +129,21 @@ async def interview_chat_ws(
                 try:
                     while True:
                         msg = await websocket.receive()
-                        if "bytes" in msg:
-                            try:
-                                await live_session.send(
-                                    input=types.LiveClientRealtimeInput(
-                                        media_chunks=[
-                                            types.Blob(mime_type="audio/pcm;rate=16000", data=msg["bytes"])
-                                        ]
-                                    )
-                                )
-                            except Exception as e:
-                                print(f"[DEBUG] Error sending audio chunk to Gemini: {e}")
-                        elif "text" in msg:
+                        if "text" in msg:
                             try:
                                 data = json.loads(msg["text"])
                                 if data.get("text"):
                                     turn_complete = data.get("end_of_turn", False)
                                     print(f"\n[DEBUG] Sending to Gemini: '{data['text']}' | end_of_turn={turn_complete}")
                                     
-                                    await live_session.send_client_content(
-                                        turns=[types.Content(role="user", parts=[types.Part.from_text(text=data["text"])])],
-                                        turn_complete=turn_complete
+                                    await live_session.send(
+                                        input=data["text"],
+                                        end_of_turn=turn_complete
                                     )
                                     print("[DEBUG] Successfully dispatched to Gemini!")
                                 elif data.get("type") == "end_of_turn":
                                     print("\n[DEBUG] Sending manual turn_complete!")
-                                    await live_session.send_client_content(turn_complete=True)
+                                    await live_session.send(input="", end_of_turn=True)
                             except Exception as e:
                                 print(f"[DEBUG] Error handling text message: {e}")
                 except WebSocketDisconnect:
@@ -162,27 +153,29 @@ async def interview_chat_ws(
 
             async def send_to_client():
                 try:
-                    async for response in live_session.receive():
-                        server_content = response.server_content
-                        if server_content is not None:
-                            model_turn = server_content.model_turn
-                            if model_turn is not None:
-                                for part in model_turn.parts:
-                                    if part.inline_data:
-                                        await websocket.send_bytes(part.inline_data.data)
-                                    if part.text:
-                                        print(f"[DEBUG] Received text chunk from Gemini: {part.text}")
-                                        await websocket.send_json({"text": part.text})
-                        
-                            if server_content.turn_complete:
-                                print("[DEBUG] Received turn_complete from Gemini!")
-                                await websocket.send_json({"type": "turn_complete"})
+                    while True:
+                        async for response in live_session.receive():
+                            server_content = response.server_content
+                            if server_content is not None:
+                                model_turn = server_content.model_turn
+                                if model_turn is not None:
+                                    for part in model_turn.parts:
+                                        if part.inline_data:
+                                            await websocket.send_bytes(part.inline_data.data)
+                                        if part.text:
+                                            print(f"[DEBUG] Received text chunk from Gemini: {part.text}")
+                                            await websocket.send_json({"text": part.text})
                             
-                            if hasattr(server_content, 'interrupted') and server_content.interrupted:
-                                print("[DEBUG] Gemini turn was INTERRUPTED!")
-                        else:
-                            # Log any non-content responses (setup, errors, etc.)
-                            print(f"[DEBUG] Non-content response from Gemini: {type(response)}")
+                                if server_content.turn_complete:
+                                    print("[DEBUG] Received turn_complete from Gemini!")
+                                    await websocket.send_json({"type": "turn_complete"})
+                                
+                                if hasattr(server_content, 'interrupted') and server_content.interrupted:
+                                    print("[DEBUG] Gemini turn was INTERRUPTED!")
+                            else:
+                                # Log any non-content responses (setup, errors, etc.)
+                                print(f"[DEBUG] Non-content response from Gemini: {type(response)}")
+                        print("[DEBUG] live_session.receive() iterator ended. Restarting...")
                 except asyncio.CancelledError:
                     pass
                 except Exception as e:
