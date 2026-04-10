@@ -9,7 +9,9 @@ from schemas.gemini import GeminiRequest
 from dotenv import load_dotenv
 from core.deps import get_current_user
 from core.tts import generate_tts_base64_async
+from core.rhubarb import rhubarb_syncer
 from models.user import User
+import base64
 
 load_dotenv(override=True)
 
@@ -34,12 +36,23 @@ async def generate_text_response(request: Request, body: GeminiRequest, current_
         queue = asyncio.Queue()
         
         async def process_tts(text_to_speak: str):
-            """Generates TTS and puts the audio chunk into the queue."""
+            """Generates TTS and corresponding lip sync, then puts the chunk into the queue."""
             audio_b64 = await generate_tts_base64_async(text_to_speak)
             if audio_b64:
+                try:
+                    # Run Rhubarb in a thread pool so it doesn't block FastAPI
+                    audio_bytes = base64.b64decode(audio_b64)
+                    lip_sync = await asyncio.to_thread(rhubarb_syncer.process_mp3_audio, audio_bytes)
+                except Exception as e:
+                    print(f"Failed to generate lip sync: {e}")
+                    lip_sync = {"mouthCues": []} # Fallback empty cues
+                    
                 await queue.put({
                     "event": "audio",
-                    "data": json.dumps({"audio_base64": audio_b64})
+                    "data": json.dumps({
+                        "audio_base64": audio_b64,
+                        "lip_sync": lip_sync
+                    })
                 })
 
         async def process_gemini():

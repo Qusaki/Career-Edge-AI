@@ -16,7 +16,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="Career Edge AI Backend API",
     description="Career Edge AI Platform Backend",
-    version="1.0.1",
+    version="1.0.2",
 )
 
 # Add CORS Middleware to allow frontend to connect
