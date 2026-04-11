@@ -169,6 +169,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const [mouthValue, setMouthValue] = useState(0);
   const mouthValueRef = React.useRef(0);
   const lipSyncAnimFrameRef = React.useRef<number>(0);
+  const [mouthCues, setMouthCues] = useState<any[] | null>(null);
+  const [currentAudioStartTime, setCurrentAudioStartTime] = useState(0);
 
   useEffect(() => {
     // Mount the single persistent audio tag safely
@@ -300,9 +302,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   };
 
   // PCM playback for Gemini Live Connect
-  const playPCM = async (arrayBuffer: ArrayBuffer) => {
+  const playPCM = async (arrayBuffer: ArrayBuffer, lipSync?: any) => {
     setIsAiSpeaking(true);
     isAiSpeakingRef.current = true;
+    if (lipSync && lipSync.mouthCues) {
+      setMouthCues(lipSync.mouthCues);
+    } else {
+      setMouthCues(null);
+    }
     if (!audioContextRef.current) {
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       analyserRef.current = audioContextRef.current.createAnalyser();
@@ -338,6 +345,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     }
     
     source.start(nextPlayTimeRef.current);
+    setCurrentAudioStartTime(nextPlayTimeRef.current);
     nextPlayTimeRef.current += audioBuffer.duration;
     
     // Restart the lip sync loop for each chunk to keep it alive
@@ -406,8 +414,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                   }
                 }, delay);
               } else if (msg.audio_base64) {
-                 audioQueueRef.current.push(`data:audio/wav;base64,${msg.audio_base64}`);
-                 playNextAudio();
+                 const binaryString = window.atob(msg.audio_base64);
+                 const bytes = new Uint8Array(binaryString.length);
+                 for (let i = 0; i < binaryString.length; i++) {
+                   bytes[i] = binaryString.charCodeAt(i);
+                 }
+                 playPCM(bytes.buffer, msg.lip_sync);
               } else if (msg.text) {
                 setAiResponseText(prev => prev + msg.text);
               }
@@ -965,7 +977,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                           <directionalLight position={[5, 10, 5]} intensity={1.5} />
                           <Environment preset="city" />
                           <OrbitControls enableZoom={false} enablePan={false} maxPolarAngle={Math.PI / 2} minPolarAngle={Math.PI / 2} target={[0, 0, 0]} />
-                          <ProfessorModel isSpeaking={isAiSpeaking} analyserNode={analyserRef.current} />
+                          <ProfessorModel 
+                            isSpeaking={isAiSpeaking} 
+                            analyserNode={analyserRef.current} 
+                            mouthCues={mouthCues}
+                            currentAudioTime={currentAudioStartTime}
+                          />
                         </Canvas>
                       </div>
                     )}

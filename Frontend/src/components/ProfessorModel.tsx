@@ -6,12 +6,16 @@ import * as THREE from 'three';
 interface ProfessorModelProps {
   isSpeaking: boolean;
   analyserNode?: AnalyserNode | null;
+  mouthCues?: any[] | null;
+  currentAudioTime?: number;
   [key: string]: any;
 }
 
 export function ProfessorModel({
   isSpeaking,
   analyserNode,
+  mouthCues,
+  currentAudioTime = 0,
   ...props
 }: ProfessorModelProps) {
   const groupRef = useRef<THREE.Group>(null);
@@ -66,12 +70,33 @@ export function ProfessorModel({
     }
   }, [scene]);
 
-  // Pre-calculate animation to avoid heavy logic in render loop
+  // 1. Phoneme to Morph Mapping
+  const PHONEME_MAP: any = {
+    A: { 'mouth-a': 0.2 }, // Closed/Almost closed
+    B: { 'mouth-a': 0.4 }, // M, P, B
+    C: { 'mouth-e': 0.8 }, // E, AE
+    D: { 'mouth-a': 1.0 }, // I, AI
+    E: { 'mouth-o': 0.8 }, // O, AW
+    F: { 'mouth-u': 0.8 }, // U, OW
+    G: { 'mouth-ch': 0.6 }, // F, V
+    H: { 'mouth-ch': 0.4 }, // L, N, T
+    X: {},                 // Silence
+  };
+
   useFrame((state) => {
     const t = state.clock.elapsedTime;
+    let targetMorphs: any = {};
 
-    let rawMouth = 0;
-    if (isSpeaking && analyserNode) {
+    // 2. High-Fidelity Rhubarb Lip Sync (If cues are provided)
+    if (isSpeaking && mouthCues && mouthCues.length > 0 && currentAudioTime > 0) {
+      const elapsed = state.clock.getElapsedTime() - currentAudioTime;
+      const currentCue = mouthCues.find(cue => elapsed >= cue.start && elapsed <= cue.end);
+      if (currentCue) {
+        targetMorphs = PHONEME_MAP[currentCue.value] || {};
+      }
+    } 
+    // 3. Fallback: Audio Amplitude Lip Sync
+    else if (isSpeaking && analyserNode) {
       if (!dataArrayRef.current || dataArrayRef.current.length !== analyserNode.frequencyBinCount) {
         dataArrayRef.current = new Uint8Array(analyserNode.frequencyBinCount);
       }
@@ -82,18 +107,26 @@ export function ProfessorModel({
       for (let i = 1; i < bins; i++) {
         sum += dataArrayRef.current[i];
       }
-      rawMouth = Math.min(sum / (bins * 120), 1.0);
+      const rawMouth = Math.min(sum / (bins * 100), 1.0);
+      const intensity = Math.max(rawMouth, 0.35);
+      targetMorphs = { 'mouth-a': intensity };
     }
 
-    const targetMouth = isSpeaking ? Math.max(rawMouth, 0.35) : 0;
-    smoothMouthRef.current += (targetMouth - smoothMouthRef.current) * 0.25;
-    const v = smoothMouthRef.current;
+    // 4. Smoothing and Application
+    if (headMeshRef.current && headMeshRef.current.morphTargetDictionary && headMeshRef.current.morphTargetInfluences) {
+      const dict = headMeshRef.current.morphTargetDictionary;
+      const influences = headMeshRef.current.morphTargetInfluences;
 
-    // Apply true lip sync via morph targets
-    if (headMeshRef.current && mouthMorphIndexRef.current !== -1) {
-      if (headMeshRef.current.morphTargetInfluences) {
-        headMeshRef.current.morphTargetInfluences[mouthMorphIndexRef.current] = v;
-      }
+      // We smoothly interpolate each tracked morph target
+      const trackedTargets = ['mouth-a', 'mouth-o', 'mouth-u', 'mouth-e', 'mouth-ch'];
+      trackedTargets.forEach(targetName => {
+        const index = dict[targetName];
+        if (index !== undefined) {
+          const targetValue = targetMorphs[targetName] || 0;
+          // Smooth Lerp
+          influences[index] += (targetValue - influences[index]) * 0.25;
+        }
+      });
     }
   });
 

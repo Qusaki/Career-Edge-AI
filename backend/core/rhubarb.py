@@ -100,5 +100,6 @@ class RhubarbLipSync:
             if os.path.exists(temp_wav_path):
                 os.remove(temp_wav_path)
 
-# Example global instance
-rhubarb_syncer = RhubarbLipSync()
+# Updated global instance to use local installed binary
+RHUBARB_EXE = r"C:\Users\John Marcel Aleman\Desktop\Career-Edge-AI\backend\bin\Rhubarb-Lip-Sync-1.13.0-Windows\rhubarb.exe"
+rhubarb_syncer = RhubarbLipSync(rhubarb_path=RHUBARB_EXE)
