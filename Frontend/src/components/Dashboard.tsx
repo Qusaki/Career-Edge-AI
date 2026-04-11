@@ -982,6 +982,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                             analyserNode={analyserRef.current} 
                             mouthCues={mouthCues}
                             currentAudioTime={currentAudioStartTime}
+                            audioContext={audioContextRef.current}
                           />
                         </Canvas>
                       </div>

@@ -8,6 +8,7 @@ interface ProfessorModelProps {
   analyserNode?: AnalyserNode | null;
   mouthCues?: any[] | null;
   currentAudioTime?: number;
+  audioContext?: AudioContext | null;
   [key: string]: any;
 }
 
@@ -16,6 +17,7 @@ export function ProfessorModel({
   analyserNode,
   mouthCues,
   currentAudioTime = 0,
+  audioContext,
   ...props
 }: ProfessorModelProps) {
   const groupRef = useRef<THREE.Group>(null);
@@ -88,8 +90,9 @@ export function ProfessorModel({
     let targetMorphs: any = {};
 
     // 2. High-Fidelity Rhubarb Lip Sync (If cues are provided)
-    if (isSpeaking && mouthCues && mouthCues.length > 0 && currentAudioTime > 0) {
-      const elapsed = state.clock.getElapsedTime() - currentAudioTime;
+    if (isSpeaking && mouthCues && mouthCues.length > 0 && currentAudioTime > 0 && audioContext) {
+      // Use the master audio hardware clock for perfect synchronization
+      const elapsed = audioContext.currentTime - currentAudioTime;
       const currentCue = mouthCues.find(cue => elapsed >= cue.start && elapsed <= cue.end);
       if (currentCue) {
         targetMorphs = PHONEME_MAP[currentCue.value] || {};

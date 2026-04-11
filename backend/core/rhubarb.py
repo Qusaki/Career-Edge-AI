@@ -100,6 +100,17 @@ class RhubarbLipSync:
             if os.path.exists(temp_wav_path):
                 os.remove(temp_wav_path)
 
-# Updated global instance to use local installed binary
-RHUBARB_EXE = r"C:\Users\John Marcel Aleman\Desktop\Career-Edge-AI\backend\bin\Rhubarb-Lip-Sync-1.13.0-Windows\rhubarb.exe"
+import platform
+
+# Updated global instance to use platform-aware binary path
+def get_rhubarb_path():
+    if platform.system() == "Windows":
+        # Local Windows path (fallback to "rhubarb" if not found)
+        local_path = r"C:\Users\John Marcel Aleman\Desktop\Career-Edge-AI\backend\bin\Rhubarb-Lip-Sync-1.13.0-Windows\rhubarb.exe"
+        return local_path if os.path.exists(local_path) else "rhubarb"
+    else:
+        # Production Linux path (installed via Docker in /usr/local/bin)
+        return "rhubarb"
+
+RHUBARB_EXE = get_rhubarb_path()
 rhubarb_syncer = RhubarbLipSync(rhubarb_path=RHUBARB_EXE)
