@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
+import { Canvas } from '@react-three/fiber';
+import { Environment, OrbitControls } from '@react-three/drei';
+import { ProfessorModel } from './ProfessorModel';
 import {
   LayoutDashboard,
   Video,
@@ -163,6 +166,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const nextPlayTimeRef = React.useRef<number>(0);
   const animationRef = React.useRef<number>(0);
   const [audioData, setAudioData] = useState<number[]>(new Array(15).fill(20));
+  const [mouthValue, setMouthValue] = useState(0);
+  const mouthValueRef = React.useRef(0);
+  const lipSyncAnimFrameRef = React.useRef<number>(0);
 
   useEffect(() => {
     // Mount the single persistent audio tag safely
@@ -214,9 +220,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         return 20 + (val / 255) * 80; // Scale dynamically from 20px (min) to ~100px (max)
       });
       setAudioData(bars);
+
+      // Compute mouth openness from voice-frequency amplitude (bins 1-10)
+      let sum = 0;
+      for (let i = 1; i <= 10; i++) {
+        sum += dataArray[i] || 0;
+      }
+      const avg = sum / 10;
+      const mouth = Math.min(avg / 180, 1.0); // Normalize to 0-1
+      mouthValueRef.current = mouth;
+      setMouthValue(mouth);
+
       animationRef.current = requestAnimationFrame(updateAudioData);
     } else {
       setAudioData(new Array(15).fill(20));
+      mouthValueRef.current = 0;
+      setMouthValue(0);
     }
   };
 
@@ -258,6 +277,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     }
   };
 
+  // Lip sync: poll the analyser continuously while AI is speaking
+  const startLipSyncLoop = () => {
+    const loop = () => {
+      if (analyserRef.current && isAiSpeakingRef.current) {
+        const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+        analyserRef.current.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 1; i <= 10; i++) {
+          sum += dataArray[i] || 0;
+        }
+        const avg = sum / 10;
+        const mouth = Math.min(avg / 150, 1.0);
+        setMouthValue(mouth);
+        lipSyncAnimFrameRef.current = requestAnimationFrame(loop);
+      } else {
+        setMouthValue(0);
+      }
+    };
+    cancelAnimationFrame(lipSyncAnimFrameRef.current);
+    lipSyncAnimFrameRef.current = requestAnimationFrame(loop);
+  };
+
   // PCM playback for Gemini Live Connect
   const playPCM = async (arrayBuffer: ArrayBuffer) => {
     setIsAiSpeaking(true);
@@ -267,7 +308,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       analyserRef.current = audioContextRef.current.createAnalyser();
       analyserRef.current.fftSize = 64;
       analyserRef.current.connect(audioContextRef.current.destination);
-      updateAudioData();
+      startLipSyncLoop();
     }
     const audioCtx = audioContextRef.current;
     if (audioCtx.state === 'suspended') {
@@ -298,6 +339,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     
     source.start(nextPlayTimeRef.current);
     nextPlayTimeRef.current += audioBuffer.duration;
+    
+    // Restart the lip sync loop for each chunk to keep it alive
+    startLipSyncLoop();
     
     source.onended = () => {
        isPlayingRef.current = false;
@@ -909,36 +953,23 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
               >
                 <div className="flex flex-col items-center justify-center gap-8 w-full max-w-3xl">
 
-                  {isAiSpeaking ? (
-                    <div className="flex items-center justify-center gap-[4px] sm:gap-[6px] h-40">
-                      {audioData.map((height, i) => (
-                        <motion.div
-                          key={i}
-                          className="w-2 sm:w-3 bg-sky-400 rounded-full"
-                          animate={{ height: `${height}px` }}
-                          transition={{ duration: 0.1, ease: "linear" }}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="h-40 flex items-center justify-center">
-                      {isListening ? (
+                  <div className="w-full h-[500px] relative rounded-2xl overflow-hidden shadow-inner flex items-center justify-center">
+                    {isListening ? (
+                      <div className="absolute inset-0 flex items-center justify-center">
                         <Mic className="w-20 h-20 text-emerald-400 animate-pulse" />
-                      ) : isMicTransitioning || isAiSpeaking ? (
-                        <div className="flex items-center gap-3">
-                          {[0, 1, 2].map(i => (
-                            <div key={i} className="w-3 h-3 rounded-full bg-sky-400/60" style={{ animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite` }} />
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-3">
-                          {[0, 1, 2].map(i => (
-                            <div key={i} className="w-3 h-3 rounded-full bg-slate-700" />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                      </div>
+                    ) : (
+                      <div className="absolute inset-0 w-full h-full">
+                        <Canvas camera={{ position: [0, 0, 4], fov: 25 }}>
+                          <ambientLight intensity={0.6} />
+                          <directionalLight position={[5, 10, 5]} intensity={1.5} />
+                          <Environment preset="city" />
+                          <OrbitControls enableZoom={false} enablePan={false} maxPolarAngle={Math.PI / 2} minPolarAngle={Math.PI / 2} target={[0, 0, 0]} />
+                          <ProfessorModel isSpeaking={isAiSpeaking} analyserNode={analyserRef.current} />
+                        </Canvas>
+                      </div>
+                    )}
+                  </div>
 
                   <div className="w-full space-y-6 text-center">
                     {(() => {
