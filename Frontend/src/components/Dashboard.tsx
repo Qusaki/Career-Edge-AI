@@ -171,6 +171,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const lipSyncAnimFrameRef = React.useRef<number>(0);
   const [mouthCues, setMouthCues] = useState<any[] | null>(null);
   const [currentAudioStartTime, setCurrentAudioStartTime] = useState(0);
+  const [activeAnalyser, setActiveAnalyser] = useState<AnalyserNode | null>(null);
 
   useEffect(() => {
     // Mount the single persistent audio tag safely
@@ -315,6 +316,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       analyserRef.current = audioContextRef.current.createAnalyser();
       analyserRef.current.fftSize = 256;
       analyserRef.current.connect(audioContextRef.current.destination);
+      setActiveAnalyser(analyserRef.current);
+      console.log("[Interview] Audio Analyser stabilized and activated.");
       startLipSyncLoop();
     }
     const audioCtx = audioContextRef.current;
@@ -966,27 +969,30 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                 <div className="flex flex-col items-center justify-center gap-8 w-full max-w-3xl">
 
                   <div className="w-full h-[500px] relative rounded-2xl overflow-hidden shadow-inner flex items-center justify-center">
-                    {isListening ? (
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <Mic className="w-20 h-20 text-emerald-400 animate-pulse" />
+                    {/* Permanent 3D Canvas to prevent Context Lost crashes */}
+                    <div className={`absolute inset-0 w-full h-full transition-opacity duration-1000 ${isListening ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+                      <Canvas shadows camera={{ position: [0, 0.5, 3], fov: 35 }}>
+                        <ambientLight intensity={0.8} />
+                        <pointLight position={[10, 10, 10]} intensity={1} />
+                        <directionalLight position={[5, 10, 5]} intensity={2.0} castShadow />
+                        <Environment preset="city" />
+                        <OrbitControls enableZoom={false} enablePan={false} maxPolarAngle={Math.PI / 2} minPolarAngle={Math.PI / 2} target={[0, 0, 0]} />
+                        <ProfessorModel 
+                          isSpeaking={isAiSpeaking} 
+                          analyserNode={activeAnalyser} 
+                          mouthCues={mouthCues}
+                          currentAudioTime={currentAudioStartTime}
+                          audioContext={audioContextRef.current}
+                        />
+                      </Canvas>
+                    </div>
+
+                    {/* Microphone overlay with smooth fade */}
+                    <div className={`absolute inset-0 flex items-center justify-center transition-opacity duration-500 ${isListening ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none'}`}>
+                      <div className="bg-emerald-500/10 p-12 rounded-full border border-emerald-500/20 backdrop-blur-sm animate-pulse">
+                        <Mic className="w-24 h-24 text-emerald-400" />
                       </div>
-                    ) : (
-                      <div className="absolute inset-0 w-full h-full">
-                        <Canvas camera={{ position: [0, 0, 4], fov: 25 }}>
-                          <ambientLight intensity={0.6} />
-                          <directionalLight position={[5, 10, 5]} intensity={1.5} />
-                          <Environment preset="city" />
-                          <OrbitControls enableZoom={false} enablePan={false} maxPolarAngle={Math.PI / 2} minPolarAngle={Math.PI / 2} target={[0, 0, 0]} />
-                          <ProfessorModel 
-                            isSpeaking={isAiSpeaking} 
-                            analyserNode={analyserRef.current} 
-                            mouthCues={mouthCues}
-                            currentAudioTime={currentAudioStartTime}
-                            audioContext={audioContextRef.current}
-                          />
-                        </Canvas>
-                      </div>
-                    )}
+                    </div>
                   </div>
 
                   <div className="w-full space-y-6 text-center">
