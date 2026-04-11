@@ -313,7 +313,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     if (!audioContextRef.current) {
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       analyserRef.current = audioContextRef.current.createAnalyser();
-      analyserRef.current.fftSize = 64;
+      analyserRef.current.fftSize = 256;
       analyserRef.current.connect(audioContextRef.current.destination);
       startLipSyncLoop();
     }

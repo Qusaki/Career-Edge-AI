@@ -19,7 +19,6 @@ from core.tts import generate_tts_base64_async
 from models.user import User
 from models.interview import InterviewSession, InterviewMessage
 from schemas.interview import InterviewSessionResponse, InterviewSessionWithMessagesResponse, InterviewChatRequest
-from core.rhubarb import rhubarb_syncer
 
 router = APIRouter()
 
@@ -162,20 +161,7 @@ async def interview_chat_ws(
                                 if model_turn is not None:
                                     for part in model_turn.parts:
                                         if part.inline_data:
-                                            # Process audio through Rhubarb for high-fidelity lip sync
-                                            # We run this in a thread to prevent blocking the async loop
-                                            try:
-                                                audio_bytes = part.inline_data.data
-                                                lip_sync = await asyncio.to_thread(rhubarb_syncer.process_pcm_audio, audio_bytes)
-                                            except Exception as e:
-                                                print(f"[DEBUG] Rhubarb sync failed: {e}")
-                                                lip_sync = {"mouthCues": []}
-
-                                            audio_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
-                                            await websocket.send_json({
-                                                "audio_base64": audio_b64,
-                                                "lip_sync": lip_sync
-                                            })
+                                            await websocket.send_bytes(part.inline_data.data)
                                         if part.text:
                                             print(f"[DEBUG] Received text chunk from Gemini: {part.text}")
                                             await websocket.send_json({"text": part.text})

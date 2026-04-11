@@ -43,8 +43,8 @@ export function ProfessorModel({
       box.getCenter(center);
 
       // Balance the zoom level to show both the full head and the chest
-      const scaleFactor = 6.5 / size.y; 
-      
+      const scaleFactor = 6.5 / size.y;
+
       if (modelWrapperRef.current) {
         modelWrapperRef.current.scale.setScalar(scaleFactor);
         // Position it to frame the upper body balanced in the center
@@ -57,7 +57,7 @@ export function ProfessorModel({
       scene.traverse((child: any) => {
         if (child.isMesh && child.morphTargetDictionary) {
           const possibleNames = [
-            'mouth-a', 'mouth-o', 'mouth-u', 'mouth-e', 'mouth-ch', 
+            'mouth-a', 'mouth-o', 'mouth-u', 'mouth-e', 'mouth-ch',
             'vrc.v_aa', 'mouthOpen', 'MouthOpen', 'jawOpen', 'A', 'a', 'ah', 'Ah'
           ];
           for (const name of possibleNames) {
@@ -72,72 +72,71 @@ export function ProfessorModel({
     }
   }, [scene]);
 
-  // 1. Phoneme to Morph Mapping
-  const PHONEME_MAP: any = {
-    A: { 'mouth-a': 0.2 }, // Closed/Almost closed
-    B: { 'mouth-a': 0.4 }, // M, P, B
-    C: { 'mouth-e': 0.8 }, // E, AE
-    D: { 'mouth-a': 1.0 }, // I, AI
-    E: { 'mouth-o': 0.8 }, // O, AW
-    F: { 'mouth-u': 0.8 }, // U, OW
-    G: { 'mouth-ch': 0.6 }, // F, V
-    H: { 'mouth-ch': 0.4 }, // L, N, T
-    X: {},                 // Silence
-  };
+  useFrame(() => {
+    if (!headMeshRef.current || !headMeshRef.current.morphTargetDictionary || !headMeshRef.current.morphTargetInfluences) return;
 
-  useFrame((state) => {
-    const t = state.clock.elapsedTime;
+    const dict = headMeshRef.current.morphTargetDictionary;
+    const influences = headMeshRef.current.morphTargetInfluences;
+
     let targetMorphs: any = {};
 
-    // 2. High-Fidelity Rhubarb Lip Sync (If cues are provided)
-    if (isSpeaking && mouthCues && mouthCues.length > 0 && currentAudioTime > 0 && audioContext) {
-      // Use the master audio hardware clock for perfect synchronization
-      const elapsed = audioContext.currentTime - currentAudioTime;
-      const currentCue = mouthCues.find(cue => elapsed >= cue.start && elapsed <= cue.end);
-      if (currentCue) {
-        targetMorphs = PHONEME_MAP[currentCue.value] || {};
-      }
-    } 
-    // 3. Fallback: Audio Amplitude Lip Sync
-    else if (isSpeaking && analyserNode) {
+    // --- ADVANCED SPECTRAL ANALYSIS (Frontend Only) ---
+    if (isSpeaking && analyserNode) {
       if (!dataArrayRef.current || dataArrayRef.current.length !== analyserNode.frequencyBinCount) {
         dataArrayRef.current = new Uint8Array(analyserNode.frequencyBinCount);
       }
       analyserNode.getByteFrequencyData(dataArrayRef.current as any);
 
-      let sum = 0;
-      const bins = Math.min(dataArrayRef.current.length, 12);
-      for (let i = 1; i < bins; i++) {
-        sum += dataArrayRef.current[i];
+      // We analyze frequency energy across surgical bands
+      let low = 0;   // 0-400Hz (Jaw movement / Ah)
+      let midO = 0;  // 400-1100Hz (O, U shapes)
+      let midE = 0;  // 1100-2600Hz (E, I shapes)
+      let high = 0;  // 2600Hz+ (Fricatives, S, T, Ch)
+
+      for (let i = 1; i <= 4; i++) low += dataArrayRef.current[i] || 0;
+      for (let i = 5; i <= 12; i++) midO += dataArrayRef.current[i] || 0;
+      for (let i = 13; i <= 28; i++) midE += dataArrayRef.current[i] || 0;
+      for (let i = 29; i <= 60; i++) high += dataArrayRef.current[i] || 0;
+
+      // Normalize levels (0.0 to 1.0)
+      const lowLevel = low / (4 * 255);
+      const midOLevel = midO / (8 * 255);
+      const midELevel = midE / (16 * 255);
+      const highLevel = high / (32 * 255);
+
+      // Drive morph targets with mathematical curves for natural movement
+      targetMorphs['mouth-a'] = Math.pow(lowLevel, 0.7) * 1.3;
+      targetMorphs['mouth-o'] = Math.pow(midOLevel, 1.1) * 1.5;
+      targetMorphs['mouth-e'] = Math.pow(midELevel, 1.0) * 1.2;
+      targetMorphs['mouth-u'] = (midOLevel * 0.8) + (lowLevel * 0.3);
+      targetMorphs['mouth-ch'] = highLevel * 0.9;
+
+      // Smoothing & Minimum thresholds
+      if (lowLevel > 0.04) {
+        targetMorphs['mouth-a'] = Math.max(targetMorphs['mouth-a'], 0.2);
+      } else {
+        targetMorphs['mouth-a'] = 0;
       }
-      const rawMouth = Math.min(sum / (bins * 100), 1.0);
-      const intensity = Math.max(rawMouth, 0.35);
-      targetMorphs = { 'mouth-a': intensity };
     }
 
-    // 4. Smoothing and Application
-    if (headMeshRef.current && headMeshRef.current.morphTargetDictionary && headMeshRef.current.morphTargetInfluences) {
-      const dict = headMeshRef.current.morphTargetDictionary;
-      const influences = headMeshRef.current.morphTargetInfluences;
-
-      // We smoothly interpolate each tracked morph target
-      const trackedTargets = ['mouth-a', 'mouth-o', 'mouth-u', 'mouth-e', 'mouth-ch'];
-      trackedTargets.forEach(targetName => {
-        const index = dict[targetName];
-        if (index !== undefined) {
-          const targetValue = targetMorphs[targetName] || 0;
-          // Smooth Lerp
-          influences[index] += (targetValue - influences[index]) * 0.25;
-        }
-      });
-    }
+    // --- INTERPOLATION & APPLICATION ---
+    const trackedTargets = ['mouth-a', 'mouth-o', 'mouth-u', 'mouth-e', 'mouth-ch'];
+    trackedTargets.forEach(targetName => {
+      const index = dict[targetName];
+      if (index !== undefined) {
+        const targetValue = targetMorphs[targetName] || 0;
+        const clampedValue = Math.max(0, Math.min(1, targetValue));
+        
+        // Attack is fast (0.4), decay is gentle (0.15) for fluid speech
+        const lerpFactor = clampedValue > influences[index] ? 0.4 : 0.15;
+        influences[index] += (clampedValue - influences[index]) * lerpFactor;
+      }
+    });
   });
 
   return (
     <group {...props} dispose={null}>
-      {/* Outer group for rotations */}
       <group ref={groupRef}>
-        {/* Inner wrapper for auto-scaling and centering offsets */}
         <group ref={modelWrapperRef}>
           <primitive object={scene} />
         </group>
