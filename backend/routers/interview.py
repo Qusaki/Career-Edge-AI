@@ -75,6 +75,14 @@ def start_interview(db: Session = Depends(get_db), current_user: User = Depends(
     db.refresh(session)
     return session
 
+from typing import List
+
+@router.get("/", response_model=List[InterviewSessionResponse])
+def get_user_interviews(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Fetches all past interview sessions for the authenticated user."""
+    sessions = db.query(InterviewSession).filter(InterviewSession.user_id == current_user.id).order_by(InterviewSession.start_time.desc()).all()
+    return sessions
+
 @router.websocket("/{session_id}/chat")
 async def interview_chat_ws(
     websocket: WebSocket,
