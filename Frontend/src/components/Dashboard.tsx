@@ -970,7 +970,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
                   <div className="w-full h-[500px] relative rounded-2xl overflow-hidden shadow-inner flex items-center justify-center">
                     {/* Permanent 3D Canvas to prevent Context Lost crashes */}
-                    <div className={`absolute inset-0 w-full h-full transition-opacity duration-1000 ${isListening ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+                    <div className="absolute inset-0 w-full h-full transition-opacity duration-1000 opacity-100">
                       <Canvas shadows camera={{ position: [0, 0.5, 3], fov: 35 }}>
                         <ambientLight intensity={0.8} />
                         <pointLight position={[10, 10, 10]} intensity={1} />
@@ -985,13 +985,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                           audioContext={audioContextRef.current}
                         />
                       </Canvas>
-                    </div>
-
-                    {/* Microphone overlay with smooth fade */}
-                    <div className={`absolute inset-0 flex items-center justify-center transition-opacity duration-500 ${isListening ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none'}`}>
-                      <div className="bg-emerald-500/10 p-12 rounded-full border border-emerald-500/20 backdrop-blur-sm animate-pulse">
-                        <Mic className="w-24 h-24 text-emerald-400" />
-                      </div>
                     </div>
                   </div>
 
