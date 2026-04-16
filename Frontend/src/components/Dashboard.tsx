@@ -16,6 +16,7 @@ import {
   ArrowRight,
   ArrowLeft,
   ChevronDown,
+  ChevronRight,
   Mic,
   MicOff,
   Send,
@@ -34,6 +35,7 @@ interface DashboardProps {
 
 export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'history' | 'analytics' | 'profile' | 'settings' | 'interview-type' | 'university-setup' | 'new-interview' | 'interview-session' | 'interview-result'>('dashboard');
+  const [prevTab, setPrevTab] = useState<string>('dashboard');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [selectedCompanyType, setSelectedCompanyType] = useState('');
   const [position, setPosition] = useState('');
@@ -57,6 +59,92 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     department: '',
     profilePicture: 'https://api.dicebear.com/7.x/micah/svg?seed=Alex&backgroundColor=cbd5e1'
   });
+
+  // Calculate statistics once for reuse
+  const stats = (() => {
+    // Only count interviews that have been completed with a score > 0
+    const scoredHistory = interviewHistory.filter(item => (item.total_score || 0) > 0);
+    const totalInterviews = scoredHistory.length;
+    const scoredCount = scoredHistory.length;
+    
+    const avgScore = scoredCount > 0 
+      ? parseFloat((scoredHistory.reduce((acc, curr) => acc + (curr.total_score || 0), 0) / scoredCount).toFixed(2))
+      : 0;
+    
+    let performance = "N/A";
+    let perfColor = "text-slate-400";
+    let perfMsg = "Complete interviews to see performance";
+    if (scoredCount > 0) {
+        if (avgScore >= 90) { performance = "Excellent"; perfColor = "text-sky-400"; perfMsg = "Keep up the great work!"; }
+        else if (avgScore >= 75) { performance = "Good"; perfColor = "text-emerald-400"; perfMsg = "Solid understanding."; }
+        else if (avgScore >= 60) { performance = "Passing"; perfColor = "text-amber-400"; perfMsg = "You're getting warmer."; }
+        else { performance = "Needs Practice"; perfColor = "text-rose-400"; perfMsg = "Keep practicing!"; }
+    }
+    
+    // Calculate skill breakdown averages based on scored interviews only
+    const dep = profile.department?.toUpperCase();
+    let skillBreakdown = [];
+    
+    if (scoredCount > 0) {
+      if (dep === 'CTE') {
+        skillBreakdown = [
+          { label: "Subject Matter", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cte_subject_matter || 0), 0) / scoredCount), color: 'bg-sky-500' },
+          { label: "Teaching Apt.", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cte_teaching || 0), 0) / scoredCount), color: 'bg-emerald-500' },
+          { label: "Motivation", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cte_motivation || 0), 0) / scoredCount), color: 'bg-indigo-500' },
+          { label: "Problem Solving", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cte_problem_solving || 0), 0) / scoredCount), color: 'bg-amber-500' },
+          { label: "Communication", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cte_communication || 0), 0) / scoredCount), color: 'bg-rose-500' },
+        ];
+      } else if (dep === 'CBAPA') {
+        skillBreakdown = [
+          { label: "Business Fund.", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cbapa_business || 0), 0) / scoredCount), color: 'bg-sky-500' },
+          { label: "Analytical", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cbapa_analytical || 0), 0) / scoredCount), color: 'bg-emerald-500' },
+          { label: "Leadership", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cbapa_leadership || 0), 0) / scoredCount), color: 'bg-indigo-500' },
+          { label: "Ethical", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cbapa_ethical || 0), 0) / scoredCount), color: 'bg-amber-500' },
+          { label: "Communication", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cbapa_communication || 0), 0) / scoredCount), color: 'bg-rose-500' },
+        ];
+      } else {
+        skillBreakdown = [
+          { label: "Technical", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_technical || 0), 0) / scoredCount), color: 'bg-sky-500' },
+          { label: "Problem Solving", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_problem_solving || 0), 0) / scoredCount), color: 'bg-emerald-500' },
+          { label: "Coding Basics", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_coding || 0), 0) / scoredCount), color: 'bg-indigo-500' },
+          { label: "Soft Skills", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_soft_skills || 0), 0) / scoredCount), color: 'bg-amber-500' },
+          { label: "Communication", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_communication || 0), 0) / scoredCount), color: 'bg-rose-500' },
+        ];
+      }
+    } else {
+      // Defaults if no history with scores
+      const labels = dep === 'CTE' ? ["Subject Matter", "Teaching Apt.", "Motivation", "Problem Solving", "Communication"] : dep === 'CBAPA' ? ["Business Fund.", "Analytical", "Leadership", "Ethical", "Communication"] : ["Technical", "Problem Solving", "Coding Basics", "Soft Skills", "Communication"];
+      skillBreakdown = labels.map((label, i) => ({ label, value: 0, color: ['bg-sky-500', 'bg-emerald-500', 'bg-indigo-500', 'bg-amber-500', 'bg-rose-500'][i] }));
+    }
+
+    return { totalInterviews, avgScore, performance, perfColor, perfMsg, skillBreakdown };
+  })();
+
+  const renderStatCards = (delay = 0) => (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: delay + 0.1 }} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between">
+        <h3 className="text-slate-400 font-medium">Total Interviews</h3>
+        <div className="mt-4">
+          <span className="text-4xl font-bold text-slate-100">{stats.totalInterviews}</span>
+          <p className="text-sm mt-2 font-medium text-sky-400">Total lifetime</p>
+        </div>
+      </motion.div>
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: delay + 0.2 }} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between">
+        <h3 className="text-slate-400 font-medium">Average Score</h3>
+        <div className="mt-4">
+          <span className="text-4xl font-bold text-slate-100">{stats.avgScore}%</span>
+          <p className="text-sm mt-2 font-medium text-emerald-400">Overall average</p>
+        </div>
+      </motion.div>
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: delay + 0.3 }} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between">
+        <h3 className="text-slate-400 font-medium">Performance</h3>
+        <div className="mt-4">
+          <span className="text-4xl font-bold text-slate-100">{stats.performance}</span>
+          <p className={`text-sm mt-2 font-medium ${stats.perfColor}`}>{stats.perfMsg}</p>
+        </div>
+      </motion.div>
+    </div>
+  );
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://54.179.46.220';
@@ -480,7 +568,35 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     }
   };
 
+  const stopListening = () => {
+    setIsListening(false);
+    isListeningRef.current = false;
+    
+    if (recognitionRef.current) {
+        recognitionRef.current.stop();
+    }
+    
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
+    
+    if (userMediaStreamRef.current) {
+      userMediaStreamRef.current.getTracks().forEach(track => track.stop());
+      userMediaStreamRef.current = null;
+    }
+    
+    if (userAudioContextRef.current) {
+      userAudioContextRef.current.close();
+      userAudioContextRef.current = null;
+    }
+    
+    cancelAnimationFrame(userAnimationRef.current);
+    setUserAudioData([8, 8, 8]);
+  };
+
   const exitInterview = () => {
+    stopListening();
     setIsLeaveModalOpen(false);
     setIsAiSpeaking(false);
     setIsListening(false);
@@ -517,6 +633,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       if (response.ok) {
         const data = await response.json();
         setInterviewResult(data);
+        stopListening();
         setIsLeaveModalOpen(false);
         setIsAiSpeaking(false);
         setIsListening(false);
@@ -552,33 +669,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   // Keep the mic on continuously for the duration of the interview
   // Removed the auto-stop and auto-restart client-side silence logic 
   // to allow Gemini's server-side Voice Activity Detection to operate.
-
-  const stopListening = () => {
-    setIsListening(false);
-    isListeningRef.current = false;
-    
-    if (recognitionRef.current) {
-        recognitionRef.current.stop();
-    }
-    
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-      processorRef.current = null;
-    }
-    
-    if (userMediaStreamRef.current) {
-      userMediaStreamRef.current.getTracks().forEach(track => track.stop());
-      userMediaStreamRef.current = null;
-    }
-    
-    if (userAudioContextRef.current) {
-      userAudioContextRef.current.close();
-      userAudioContextRef.current = null;
-    }
-    
-    cancelAnimationFrame(userAnimationRef.current);
-    setUserAudioData([8, 8, 8]);
-  };
 
   const toggleListening = async () => {
     if (isListeningRef.current) {
@@ -790,94 +880,68 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
           {activeTab === 'dashboard' && (
             <div className="max-w-6xl mx-auto space-y-8">
-
               {/* Page Title */}
               <div>
                 <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Welcome back, {profile.name.split(' ')[0]}</h1>
                 <p className="text-lg text-slate-400 mt-2">Here's an overview of your interview progress.</p>
               </div>
 
-              {/* Top 3 Cards and History */}
-              {(() => {
-                 const totalInterviews = interviewHistory.length;
-                 const avgScore = totalInterviews > 0 
-                    ? Math.round(interviewHistory.reduce((acc, curr) => acc + (curr.total_score || 0), 0) / totalInterviews) 
-                    : 0;
-                 
-                 let performance = "N/A";
-                 let perfColor = "text-slate-400";
-                 let perfMsg = "Complete interviews to see performance";
-                 if (totalInterviews > 0) {
-                     if (avgScore >= 90) { performance = "Excellent"; perfColor = "text-sky-400"; perfMsg = "Keep up the great work!"; }
-                     else if (avgScore >= 75) { performance = "Good"; perfColor = "text-emerald-400"; perfMsg = "Solid understanding."; }
-                     else if (avgScore >= 60) { performance = "Passing"; perfColor = "text-amber-400"; perfMsg = "You're getting warmer."; }
-                     else { performance = "Needs Practice"; perfColor = "text-rose-400"; perfMsg = "Keep practicing!"; }
-                 }
+              {renderStatCards()}
 
-                 return (
-                   <>
-                     {/* Top 3 Cards */}
-                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between">
-                         <h3 className="text-slate-400 font-medium">Total Interviews</h3>
-                         <div className="mt-4">
-                           <span className="text-4xl font-bold text-slate-100">{totalInterviews}</span>
-                           <p className="text-sm mt-2 font-medium text-sky-400">Total lifetime</p>
-                         </div>
-                       </motion.div>
-                       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between">
-                         <h3 className="text-slate-400 font-medium">Average Score</h3>
-                         <div className="mt-4">
-                           <span className="text-4xl font-bold text-slate-100">{avgScore}%</span>
-                           <p className="text-sm mt-2 font-medium text-emerald-400">Overall average</p>
-                         </div>
-                       </motion.div>
-                       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between">
-                         <h3 className="text-slate-400 font-medium">Performance</h3>
-                         <div className="mt-4">
-                           <span className="text-4xl font-bold text-slate-100">{performance}</span>
-                           <p className={`text-sm mt-2 font-medium ${perfColor}`}>{perfMsg}</p>
-                         </div>
-                       </motion.div>
-                     </div>
-
-                     {/* Bottom Row History */}
-                     <div className="space-y-4">
-                       <h2 className="text-lg font-semibold text-slate-200 mb-4">History</h2>
-                       {interviewHistory.length === 0 ? (
-                          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center">
-                             <p className="text-slate-400">No interviews completed yet.</p>
+              {/* History List */}
+              <div className="mt-8 space-y-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-lg font-bold text-slate-100 italic tracking-tight">Recent Sessions</h2>
+                  {interviewHistory.length > 5 && (
+                    <button 
+                      onClick={() => setActiveTab('history')}
+                      className="text-xs font-bold text-sky-400 hover:text-sky-300 transition-colors uppercase tracking-widest"
+                    >
+                      View All
+                    </button>
+                  )}
+                </div>
+                
+                {interviewHistory.filter(item => (item.total_score || 0) > 0).length === 0 ? (
+                   <div className="bg-slate-900/50 border border-slate-800 rounded-3xl p-10 text-center backdrop-blur-sm">
+                      <p className="text-slate-500 text-sm">No interviews completed yet.</p>
+                      <button onClick={() => setActiveTab('interview-type')} className="mt-4 text-sky-400 text-sm font-bold hover:underline">Start your first interview</button>
+                   </div>
+                ) : (
+                  <div className="space-y-3">
+                    {interviewHistory.filter(item => (item.total_score || 0) > 0).slice(0, 5).map((item, i, filteredList) => (
+                      <motion.div
+                        key={item.id || i}
+                        onClick={() => {
+                          setInterviewResult(item);
+                          setPrevTab(activeTab);
+                          setActiveTab('interview-result');
+                        }}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 0.1 + (i * 0.05) }}
+                        className="bg-slate-900/40 border border-slate-800/60 hover:border-sky-500/30 rounded-2xl p-4 flex items-center justify-between hover:bg-slate-800/80 transition-all cursor-pointer group backdrop-blur-sm"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-slate-400 group-hover:text-sky-400 group-hover:bg-sky-500/10 transition-all">
+                            <Video className="w-5 h-5" />
                           </div>
-                       ) : (
-                         interviewHistory.map((item, i) => (
-                           <motion.div
-                             key={item.id || i}
-                             initial={{ opacity: 0, x: -20 }}
-                             animate={{ opacity: 1, x: 0 }}
-                             transition={{ delay: 0.3 + (i * 0.1 > 1 ? 1 : i * 0.1) }}
-                             className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex items-center justify-between hover:bg-slate-800/50 transition-colors cursor-pointer group"
-                           >
-                             <div className="flex items-center gap-4">
-                               <div className="w-12 h-12 rounded-xl bg-slate-800 flex items-center justify-center text-slate-400 group-hover:text-sky-400 group-hover:bg-sky-500/10 transition-colors">
-                                 <Video className="w-6 h-6" />
-                               </div>
-                               <div>
-                                 <h4 className="font-semibold text-slate-200">Interview #{interviewHistory.length - i}</h4>
-                                 <p className="text-sm text-slate-400 uppercase">{profile.department || 'General'} Assessment • {new Date(item.start_time).toLocaleDateString()}</p>
-                               </div>
-                             </div>
-                             <div className="text-right">
-                               <span className="text-lg font-bold text-emerald-400">{item.total_score || 0}%</span>
-                               <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">Score</p>
-                             </div>
-                           </motion.div>
-                         ))
-                       )}
-                     </div>
-                   </>
-                 );
-              })()}
-
+                          <div>
+                            <h4 className="font-bold text-sm text-slate-200 group-hover:text-sky-400 transition-colors">Interview #{filteredList.length - i}</h4>
+                            <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">{new Date(item.start_time).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <div className="text-right">
+                            <span className={`text-lg font-black ${item.total_score >= 70 ? 'text-emerald-400' : 'text-sky-400'}`}>{item.total_score || 0}%</span>
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-sky-400 group-hover:translate-x-1 transition-all" />
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -1122,7 +1186,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                         )}
                         
                         <button onClick={exitInterview} className="w-full mt-4 py-3 bg-slate-800 hover:bg-slate-700 text-white text-sm rounded-xl font-bold transition-colors shadow-lg shrink-0">
-                          Return to Home
+                          Go to Dashboard
                         </button>
                       </div>
                     </div>
@@ -1168,9 +1232,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                              return (
                                <button
                                  onClick={finishInterviewSession}
-                                 className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-bold transition-all shadow-lg shadow-emerald-500/20 text-sm tracking-wide animate-fade-in"
+                                 disabled={isFinishingInterview}
+                                 className={`w-full py-3 ${isFinishingInterview ? 'bg-slate-500 cursor-not-allowed' : 'bg-emerald-500 hover:bg-emerald-400'} text-white rounded-xl font-bold transition-all shadow-lg shadow-emerald-500/20 text-sm tracking-wide animate-fade-in`}
                                >
-                                 Complete Interview
+                                 {isFinishingInterview ? 'Grading...' : 'Complete Interview'}
                                </button>
                              );
                            }
@@ -1187,62 +1252,64 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
               </div>
 
               {/* BOTTOM ROW: CONTROLS (Floating below everything) */}
-              <div className="flex items-center justify-center gap-6 w-full max-w-lg mx-auto pb-4 shrink-0">
-                    <div className="relative">
-                      <button
-                        onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
-                        className="bg-[#171e2e] hover:bg-[#1e293b] border border-slate-800 text-slate-300 hover:text-white w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
-                        title="Add File"
-                      >
-                        <Plus className={`w-5 h-5 transition-transform duration-300 ${isAddMenuOpen ? 'rotate-45' : 'group-hover:scale-110'}`} />
-                      </button>
-
-                      {/* Attachment Popover */}
-                      {isAddMenuOpen && (
-                        <motion.div
-                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                          animate={{ opacity: 1, scale: 1, y: 0 }}
-                          className="absolute bottom-[calc(100%+16px)] left-1/2 -translate-x-1/2 w-48 bg-slate-800 border border-slate-700/80 rounded-2xl shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] overflow-hidden z-[100]"
+              {!interviewResult && (
+                <div className="flex items-center justify-center gap-6 w-full max-w-lg mx-auto pb-4 shrink-0">
+                      <div className="relative">
+                        <button
+                          onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
+                          className="bg-[#171e2e] hover:bg-[#1e293b] border border-slate-800 text-slate-300 hover:text-white w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
+                          title="Add File"
                         >
-                          <div className="flex flex-col p-1.5 space-y-1">
-                            <button onClick={() => setIsAddMenuOpen(false)} className="flex items-center gap-3 w-full p-2.5 text-left hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all">
-                              <div className="w-7 h-7 rounded-lg bg-sky-500/10 flex items-center justify-center shrink-0">
-                                <Folder className="w-3.5 h-3.5 text-sky-400" />
-                              </div>
-                              <span className="text-xs font-semibold tracking-wide">Local Disk</span>
-                            </button>
-                            <button onClick={() => setIsAddMenuOpen(false)} className="flex items-center gap-3 w-full p-2.5 text-left hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all">
-                              <div className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
-                                <Cloud className="w-3.5 h-3.5 text-emerald-400" />
-                              </div>
-                              <span className="text-xs font-semibold tracking-wide">Drive</span>
-                            </button>
+                          <Plus className={`w-5 h-5 transition-transform duration-300 ${isAddMenuOpen ? 'rotate-45' : 'group-hover:scale-110'}`} />
+                        </button>
+
+                        {/* Attachment Popover */}
+                        {isAddMenuOpen && (
+                          <motion.div
+                            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            className="absolute bottom-[calc(100%+16px)] left-1/2 -translate-x-1/2 w-48 bg-slate-800 border border-slate-700/80 rounded-2xl shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] overflow-hidden z-[100]"
+                          >
+                            <div className="flex flex-col p-1.5 space-y-1">
+                              <button onClick={() => setIsAddMenuOpen(false)} className="flex items-center gap-3 w-full p-2.5 text-left hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all">
+                                <div className="w-7 h-7 rounded-lg bg-sky-500/10 flex items-center justify-center shrink-0">
+                                  <Folder className="w-3.5 h-3.5 text-sky-400" />
+                                </div>
+                                <span className="text-xs font-semibold tracking-wide">Local Disk</span>
+                              </button>
+                              <button onClick={() => setIsAddMenuOpen(false)} className="flex items-center gap-3 w-full p-2.5 text-left hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all">
+                                <div className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
+                                  <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+                                </div>
+                                <span className="text-xs font-semibold tracking-wide">Drive</span>
+                              </button>
+                            </div>
+                          </motion.div>
+                        )}
+                      </div>
+
+                      <div className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800 shadow-slate-900/40'} text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl`}>
+                        {isListening ? (
+                          <div className="flex items-center justify-center gap-1.5 h-8 w-full relative z-10 px-4">
+                            {[...userAudioData, ...Array.from(userAudioData).reverse()].map((height, i) => (
+                              <motion.div key={`w-${i}`} className="w-[3px] bg-white rounded-full" animate={{ height: `${height * 0.7}px` }} transition={{ duration: 0.1, ease: 'linear' }} />
+                            ))}
                           </div>
-                        </motion.div>
-                      )}
-                    </div>
+                        ) : (
+                          <Mic className={`w-8 h-8 relative z-10 ${isMicTransitioning ? 'text-sky-400' : 'text-slate-400'}`} />
+                        )}
+                        {isListening && <span className="absolute inset-0 rounded-[2rem] border-4 border-emerald-400 opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }} />}
+                      </div>
 
-                    <div className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800 shadow-slate-900/40'} text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl`}>
-                      {isListening ? (
-                        <div className="flex items-center justify-center gap-1.5 h-8 w-full relative z-10 px-4">
-                          {[...userAudioData, ...Array.from(userAudioData).reverse()].map((height, i) => (
-                            <motion.div key={`w-${i}`} className="w-[3px] bg-white rounded-full" animate={{ height: `${height * 0.7}px` }} transition={{ duration: 0.1, ease: 'linear' }} />
-                          ))}
-                        </div>
-                      ) : (
-                        <Mic className={`w-8 h-8 relative z-10 ${isMicTransitioning ? 'text-sky-400' : 'text-slate-400'}`} />
-                      )}
-                      {isListening && <span className="absolute inset-0 rounded-[2rem] border-4 border-emerald-400 opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }} />}
-                    </div>
-
-                    <button
-                      onClick={() => setIsLeaveModalOpen(true)}
-                      className="bg-[#171e2e] hover:bg-rose-500/10 border border-slate-800 hover:border-rose-500/30 text-slate-300 hover:text-rose-500 w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
-                      title="Leave/End Session"
-                    >
-                      <LogOut className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                    </button>
-                  </div>
+                      <button
+                        onClick={() => setIsLeaveModalOpen(true)}
+                        className="bg-[#171e2e] hover:bg-rose-500/10 border border-slate-800 hover:border-rose-500/30 text-slate-300 hover:text-rose-500 w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
+                        title="Leave/End Session"
+                      >
+                        <LogOut className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                      </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -1279,11 +1346,220 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
             </div>
           )}
 
-          {/* Placeholders for other tabs */}
-          {(activeTab === 'history' || activeTab === 'analytics' || activeTab === 'settings') && (
+          {/* History Tab */}
+          {activeTab === 'history' && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="max-w-4xl mx-auto space-y-8"
+            >
+              <div>
+                <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Interview History</h1>
+                <p className="text-lg text-slate-400 mt-2">Relive your past sessions and track your progress over time.</p>
+              </div>
+
+              <div className="space-y-4">
+                {interviewHistory.filter(item => (item.total_score || 0) > 0).length === 0 ? (
+                  <div className="bg-slate-900/50 border border-slate-800 rounded-3xl p-16 text-center backdrop-blur-sm">
+                    <div className="w-20 h-20 bg-slate-800/50 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-600">
+                      <Video className="w-10 h-10" />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-200">No interviews yet</h3>
+                    <p className="text-slate-500 mt-2 max-w-sm mx-auto">Start your first interview session to see your performance history here.</p>
+                    <button 
+                      onClick={() => setActiveTab('dashboard')}
+                      className="mt-8 px-6 py-3 bg-sky-500 hover:bg-sky-400 text-white rounded-xl font-bold transition-all shadow-lg shadow-sky-500/20"
+                    >
+                      Start Practicing
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-4 pb-12">
+                    {interviewHistory.filter(item => (item.total_score || 0) > 0).map((item, i, filteredList) => (
+                      <motion.div
+                        key={item.id || i}
+                        onClick={() => {
+                          setInterviewResult(item);
+                          setPrevTab(activeTab);
+                          setActiveTab('interview-result');
+                        }}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: i * 0.05 }}
+                        className="bg-slate-900 border border-slate-800/50 rounded-2xl p-6 flex items-center justify-between hover:bg-slate-800/80 hover:border-sky-500/30 transition-all cursor-pointer group shadow-xl backdrop-blur-sm"
+                      >
+                        <div className="flex items-center gap-6">
+                          <div className="w-14 h-14 rounded-2xl bg-slate-800 flex items-center justify-center text-slate-400 group-hover:text-sky-400 group-hover:bg-sky-500/10 transition-all duration-300">
+                            <Video className="w-7 h-7" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-3">
+                              <h4 className="font-bold text-xl text-slate-100 tracking-tight group-hover:text-sky-400 transition-colors">Interview #{filteredList.length - i}</h4>
+                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest ${item.passed ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                                {item.passed ? 'PASSED' : 'NOT PASSED'}
+                              </span>
+                            </div>
+                            <p className="text-sm text-slate-500 mt-1 font-medium italic">
+                              {profile.department || 'General'} Assessment • {new Date(item.start_time).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-8">
+                          <div className="text-right min-w-[100px]">
+                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em] mb-1">Final Score</p>
+                            <span className={`text-3xl font-black ${item.total_score >= 75 ? 'text-emerald-400' : item.total_score >= 50 ? 'text-sky-400' : 'text-rose-400'}`}>
+                              {item.total_score || 0}%
+                            </span>
+                          </div>
+                          <div className="w-10 h-10 rounded-full flex items-center justify-center bg-slate-800 text-slate-500 group-hover:bg-sky-500 group-hover:text-white transition-all duration-300 shadow-inner">
+                            <ChevronRight className="w-6 h-6" />
+                          </div>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {/* Analytics Tab */}
+          {activeTab === 'analytics' && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="max-w-4xl mx-auto space-y-8"
+            >
+              <div>
+                <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Analytics</h1>
+                <p className="text-lg text-slate-400 mt-2">In-depth overview of your overall interview performance.</p>
+              </div>
+
+              {renderStatCards()}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-xl backdrop-blur-sm">
+                  <h3 className="text-xl font-bold text-slate-100 mb-6 italic tracking-tight">Skill Breakdown</h3>
+                  <div className="space-y-6">
+                    {stats.skillBreakdown.map((skill, idx) => (
+                      <div key={idx} className="space-y-2">
+                        <div className="flex justify-between text-xs font-bold uppercase tracking-wider text-slate-400">
+                          <span>{skill.label}</span>
+                          <span className="text-slate-200">{skill.value}%</span>
+                        </div>
+                        <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
+                          <motion.div 
+                            initial={{ width: 0 }} 
+                            animate={{ width: `${skill.value}%` }} 
+                            transition={{ duration: 1, delay: 0.5 + (idx * 0.1) }}
+                            className={`h-full ${skill.color} rounded-full`} 
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-xl backdrop-blur-sm flex flex-col justify-center items-center text-center space-y-4">
+                   <div className="w-16 h-16 rounded-2xl bg-sky-500/10 flex items-center justify-center text-sky-400">
+                      <BarChart2 className="w-8 h-8" />
+                   </div>
+                   <h3 className="text-xl font-bold text-slate-100 italic tracking-tight">Insight Generator</h3>
+                   <p className="text-slate-400 text-sm leading-relaxed px-4 italic">
+                      "Your communication clarity is improving! Focus on structural answers for coding sessions to reach 'Excellent' status."
+                   </p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Placeholders for settings tab */}
+          {activeTab === 'settings' && (
             <div className="flex items-center justify-center h-full">
               <p className="text-slate-500 text-lg">This section is coming soon.</p>
             </div>
+          )}
+
+          {activeTab === 'interview-result' && interviewResult && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="max-w-3xl mx-auto space-y-6"
+            >
+              <div className="text-center">
+                <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Past Evaluation</h1>
+                <p className="text-lg text-slate-400 mt-2">Detailed performance breakdown</p>
+              </div>
+
+              <div className="bg-[#1e293b]/80 backdrop-blur-md rounded-[2rem] p-8 shadow-xl border border-slate-800/80">
+                <div className="text-center space-y-3 mb-8">
+                  <div className={`mx-auto inline-flex items-center justify-center w-24 h-24 rounded-full mb-2 border-4 ${interviewResult.passed ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
+                    <span className="text-3xl font-black">{interviewResult.total_score || 0}%</span>
+                  </div>
+                  <h2 className="text-2xl font-bold text-slate-100 tracking-tight">
+                    {interviewResult.passed ? 'Passed 🎉' : 'Needs Practice 💡'}
+                  </h2>
+                </div>
+
+                <div className="space-y-6">
+                  <h3 className="text-sm font-bold text-slate-200 border-b border-slate-700/50 pb-2">Performance Breakdown</h3>
+                  
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {(() => {
+                      const dep = profile.department?.toUpperCase();
+                      let breakdown = [];
+                      if (dep === 'CTE') {
+                        breakdown = [
+                          { label: "Subject Matter", score: interviewResult.score_cte_subject_matter },
+                          { label: "Teaching Apt.", score: interviewResult.score_cte_teaching },
+                          { label: "Motivation", score: interviewResult.score_cte_motivation },
+                          { label: "Acad. Prepared.", score: interviewResult.score_cte_academic },
+                          { label: "Problem Solving", score: interviewResult.score_cte_problem_solving },
+                          { label: "Leadership", score: interviewResult.score_cte_leadership },
+                          { label: "Communication", score: interviewResult.score_cte_communication },
+                        ];
+                      } else if (dep === 'CBAPA') {
+                        breakdown = [
+                          { label: "Business Fund.", score: interviewResult.score_cbapa_business },
+                          { label: "Analytical", score: interviewResult.score_cbapa_analytical },
+                          { label: "Entrepreneurial", score: interviewResult.score_cbapa_entrepreneurial },
+                          { label: "Acad. Prepared.", score: interviewResult.score_cbapa_academic },
+                          { label: "Leadership", score: interviewResult.score_cbapa_leadership },
+                          { label: "Ethical", score: interviewResult.score_cbapa_ethical },
+                          { label: "Communication", score: interviewResult.score_cbapa_communication },
+                        ];
+                      } else {
+                        breakdown = [
+                          { label: "Technical", score: interviewResult.score_technical },
+                          { label: "Problem Solving", score: interviewResult.score_problem_solving },
+                          { label: "Coding Basics", score: interviewResult.score_coding },
+                          { label: "Soft Skills", score: interviewResult.score_soft_skills },
+                          { label: "Communication", score: interviewResult.score_communication },
+                        ];
+                      }
+
+                      return breakdown.map((item, idx) => (
+                        <div key={idx} className={`bg-slate-900 p-4 rounded-2xl border border-slate-800/50 text-center ${breakdown.length % 3 !== 0 && idx === breakdown.length - 1 ? 'sm:col-span-3' : ''}`}>
+                          <p className="text-xs text-slate-400 mb-1 uppercase tracking-wider">{item.label}</p>
+                          <p className="text-2xl font-black text-sky-400">{item.score || 0}<span className="text-xs text-slate-600 font-medium ml-1">/100</span></p>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+
+                  {interviewResult.feedback_summary && (
+                    <div className="bg-indigo-500/10 border border-indigo-500/20 p-6 rounded-2xl mt-6 text-left">
+                      <h4 className="text-sm uppercase tracking-wider font-bold text-indigo-400 mb-3">AI Feedback Summary</h4>
+                      <p className="text-sm text-slate-300 leading-relaxed">{interviewResult.feedback_summary}</p>
+                    </div>
+                  )}
+                  
+                  <button onClick={() => { setInterviewResult(null); setActiveTab(prevTab as any); }} className="w-full mt-6 py-4 bg-slate-800 hover:bg-slate-700 text-white text-base rounded-xl font-bold transition-colors shadow-lg">
+                    Back
+                  </button>
+                </div>
+              </div>
+            </motion.div>
           )}
 
           {activeTab === 'profile' && (
