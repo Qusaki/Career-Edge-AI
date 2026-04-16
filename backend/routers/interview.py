@@ -18,7 +18,7 @@ from core.deps import get_current_user, get_current_user_ws
 from core.tts import generate_tts_base64_async
 from models.user import User
 from models.interview import InterviewSession, InterviewMessage
-from schemas.interview import InterviewSessionResponse, InterviewSessionWithMessagesResponse, InterviewChatRequest
+from schemas.interview import InterviewSessionResponse, InterviewSessionWithMessagesResponse, InterviewChatRequest, CompleteInterviewRequest
 
 router = APIRouter()
 
@@ -37,7 +37,7 @@ CRITICAL INSTRUCTION: You MUST speak DIRECTLY to the student. DO NOT narrate you
 
 1. START BY: Formally introducing yourself and politely asking what specific major they are choosing. Stop and wait for their answer.
 2. Ask exactly ONE question at a time. Be warm but challenging.
-3. Keep the interview to exactly 5-7 questions total.
+3. Keep the interview to exactly 5 questions total.
 4. Conclude gracefully when finished and instruct them to click 'Complete Interview'.
 """
     elif dep == "CBAPA":
@@ -48,7 +48,7 @@ CRITICAL INSTRUCTION: You MUST speak DIRECTLY to the student. DO NOT narrate you
 
 1. START BY: Formally introducing yourself and politely asking what specific major they are choosing. Stop and wait for their answer.
 2. Ask exactly ONE question at a time. Be warm but challenging.
-3. Keep the interview to exactly 5-7 questions total.
+3. Keep the interview to exactly 5 questions total.
 4. Conclude gracefully when finished and instruct them to click 'Complete Interview'.
 """
     else:
@@ -59,7 +59,7 @@ CRITICAL INSTRUCTION: You MUST speak DIRECTLY to the student. DO NOT narrate you
 
 1. START BY: Formally introducing yourself and politely asking what specific track they are pursuing (e.g., Software Engineering, Data Science). Stop and wait for their answer.
 2. Ask exactly ONE question at a time. Be warm but challenging.
-3. Keep the interview to exactly 5-7 questions total.
+3. Keep the interview to exactly 5 questions total.
 4. Conclude gracefully when finished and instruct them to click 'Complete Interview'.
 """
 
@@ -270,7 +270,7 @@ class CbapaInterviewEvaluation(typing_extensions.TypedDict):
     feedback_summary: str
 
 @router.post("/{session_id}/complete", response_model=InterviewSessionResponse)
-def complete_interview(session_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def complete_interview(session_id: int, request: CompleteInterviewRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
         raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT, CTE, and CBAPA students.")
 
@@ -283,10 +283,16 @@ def complete_interview(session_id: int, db: Session = Depends(get_db), current_u
         
     # Build Transcript
     history = db.query(InterviewMessage).filter(InterviewMessage.session_id == session.id).order_by(InterviewMessage.timestamp.asc()).all()
-    if not history:
+    if history:
+        transcript = "\n".join([f"{msg.role.upper()}: {msg.content}" for msg in history])
+    elif request.conversation:
+        transcript = "\n".join([f"{msg.sender.upper()}: {msg.text}" for msg in request.conversation])
+        for item in request.conversation:
+            new_msg = InterviewMessage(session_id=session.id, role=item.sender, content=item.text)
+            db.add(new_msg)
+        db.commit()
+    else:
         raise HTTPException(status_code=400, detail="Cannot grade an empty interview.")
-        
-    transcript = "\\n".join([f"{msg.role.upper()}: {msg.content}" for msg in history])
     
     # Send to Gemini with JSON Schema
     system_prompt = get_evaluation_system_prompt(current_user.department)

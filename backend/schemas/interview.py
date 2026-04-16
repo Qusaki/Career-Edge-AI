@@ -53,3 +53,11 @@ class InterviewSessionWithMessagesResponse(InterviewSessionResponse):
 
 class InterviewChatRequest(BaseModel):
     text: str
+
+class ConversationSpeaker(BaseModel):
+    sender: str
+    text: str
+
+class CompleteInterviewRequest(BaseModel):
+    conversation: List[ConversationSpeaker] = []
+

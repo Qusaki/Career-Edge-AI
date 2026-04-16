@@ -509,8 +509,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       const response = await fetch(`${API_URL}/interview/${sessionId}/complete`, {
         method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
-        }
+        },
+        body: JSON.stringify({ conversation: conversationLog })
       });
       if (response.ok) {
         const data = await response.json();
