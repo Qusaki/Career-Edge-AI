@@ -984,8 +984,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                     <div className="w-16 h-16 bg-emerald-500/10 text-emerald-400 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
                       <Briefcase className="w-8 h-8" />
                     </div>
-                    <h3 className="text-xl font-bold text-slate-200 mb-2">Practice for Work</h3>
-                    <p className="text-slate-400 text-sm">Job interview practice tailored to a specific role and company.</p>
+                    <h3 className="text-xl font-bold text-slate-200 mb-2">Thesis Interview</h3>
+                    <p className="text-slate-400 text-sm">Thesis Interview for students defending their thesis title or the project they've developed.</p>
                   </button>
                 </div>
               </motion.div>
@@ -1172,7 +1172,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                             return breakdown.map((item, idx) => (
                               <div key={idx} className={`bg-slate-900 p-3 rounded-xl border border-slate-800/50 ${breakdown.length % 2 !== 0 && idx === breakdown.length - 1 ? 'col-span-2 text-center' : ''}`}>
                                 <p className="text-[10px] text-slate-400 mb-1 uppercase tracking-wider overflow-hidden text-ellipsis whitespace-nowrap" title={item.label}>{item.label}</p>
-                                <p className="text-xl font-black text-sky-400">{item.score || 0}<span className="text-[10px] text-slate-600 font-medium ml-1">/100</span></p>
+                                <p className="text-xl font-black text-sky-400">{item.score || 0}</p>
                               </div>
                             ));
                           })()}
@@ -1541,7 +1541,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                       return breakdown.map((item, idx) => (
                         <div key={idx} className={`bg-slate-900 p-4 rounded-2xl border border-slate-800/50 text-center ${breakdown.length % 3 !== 0 && idx === breakdown.length - 1 ? 'sm:col-span-3' : ''}`}>
                           <p className="text-xs text-slate-400 mb-1 uppercase tracking-wider">{item.label}</p>
-                          <p className="text-2xl font-black text-sky-400">{item.score || 0}<span className="text-xs text-slate-600 font-medium ml-1">/100</span></p>
+                          <p className="text-2xl font-black text-sky-400">{item.score || 0}</p>
                         </div>
                       ));
                     })()}
