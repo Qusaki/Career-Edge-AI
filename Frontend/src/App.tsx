@@ -582,7 +582,7 @@ export default function App() {
                   </div>
                   <div>
                     <h4 className="text-sm font-bold text-slate-200 mb-1">Address</h4>
-                    <p className="text-xs text-slate-400 leading-relaxed">Balaybay, San Nicolas,<br />Castillejos, Zambales 2208</p>
+                    <p className="text-xs text-slate-400 leading-relaxed">San Nicolas, Sitio Baring,<br />Castillejos, Zambales</p>
                   </div>
                 </div>
                 <div className="flex gap-4 items-start p-4 rounded-xl bg-slate-900/50 border border-slate-800/50">
