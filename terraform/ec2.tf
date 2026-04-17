@@ -60,6 +60,7 @@ resource "aws_instance" "web" {
                 -e DATABASE_URL="postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.endpoint}/${aws_db_instance.postgres.db_name}" \
                 -e AWS_REGION=$REGION \
                 -e AWS_S3_BUCKET_NAME="${aws_s3_bucket.profile_pictures.bucket}" \
+                -e AWS_S3_ABSTRACTS_BUCKET_NAME="${aws_s3_bucket.abstracts.bucket}" \
                 -e GEMINI_API_KEY="${var.gemini_api_key}" \
                 -e GOOGLE_CREDENTIALS_JSON='${var.google_credentials_json}' \
                 $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/fastapi-backend:latest
