@@ -53,6 +53,9 @@ jobs:
         script: |
           set -e # Ensure the pipeline fails if any command fails!
           
+          echo "Waiting for EC2 provisioning scripts to finish..."
+          cloud-init status --wait || true
+          
           # Login to ECR on the EC2 instance
           aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
           
