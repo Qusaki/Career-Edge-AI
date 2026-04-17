@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, useMotionValue, useSpring, useTransform } from 'motion/react';
-import { Mic, FileText, CheckCircle, BarChart, Play, ArrowRight, Github, Twitter, Linkedin, Sparkles, BrainCircuit, Target, Menu, X, MessageSquare, Video, Plus, Send, MousePointer2, Paperclip } from 'lucide-react';
+import { Mic, FileText, CheckCircle, BarChart, Play, ArrowRight, Github, Twitter, Linkedin, Sparkles, BrainCircuit, Target, GraduationCap, Menu, X, MessageSquare, Video, Plus, Send, MousePointer2, Paperclip, LogOut, MapPin, Phone, Mail, Globe } from 'lucide-react';
 import { AuthPage } from './components/AuthPage';
 import { Dashboard } from './components/Dashboard';
 
@@ -51,7 +51,7 @@ const MorphingGraphic = () => {
   };
 
   const resumeStates = [];
-  
+
   // 16 Background Bars
   for (let i = 0; i < 16; i++) {
     resumeStates.push({
@@ -70,24 +70,24 @@ const MorphingGraphic = () => {
     { x: 40, y: 50, w: 60, h: 60, r: "30px", color: "#38bdf8" }, // Avatar
     { x: 120, y: 60, w: 140, h: 14, r: "4px", color: "#f1f5f9" }, // Name
     { x: 120, y: 85, w: 80, h: 8, r: "4px", color: "#64748b" }, // Title
-    
+
     { x: 40, y: 140, w: 240, h: 6, r: "3px", color: "#64748b" },
     { x: 40, y: 160, w: 220, h: 6, r: "3px", color: "#64748b" },
     { x: 40, y: 180, w: 190, h: 6, r: "3px", color: "#64748b" },
-    
+
     { x: 40, y: 230, w: 90, h: 10, r: "4px", color: "#f1f5f9" },
     { x: 40, y: 255, w: 240, h: 6, r: "3px", color: "#64748b" },
     { x: 40, y: 275, w: 230, h: 6, r: "3px", color: "#64748b" },
     { x: 40, y: 295, w: 200, h: 6, r: "3px", color: "#64748b" },
-    
+
     { x: 40, y: 345, w: 90, h: 10, r: "4px", color: "#f1f5f9" },
     { x: 40, y: 370, w: 240, h: 6, r: "3px", color: "#64748b" },
     { x: 40, y: 390, w: 210, h: 6, r: "3px", color: "#64748b" },
     { x: 40, y: 410, w: 160, h: 6, r: "3px", color: "#64748b" },
-    
+
     { x: 40, y: 450, w: 100, h: 6, r: "3px", color: "#64748b" },
   ];
-  
+
   resumeStates.push(...content);
 
   return (
@@ -127,12 +127,12 @@ const MorphingGraphic = () => {
           {resumeStates.map((resState, i) => {
             const waveX = i * 10 + 5;
             const waveW = 6;
-            
+
             const progress = i / 30;
             const envelope = Math.sin(progress * Math.PI);
             const baseH = 10 + 20 * envelope;
             const maxH = baseH + (100 + Math.sin(i * 1.2) * 40 + Math.cos(i * 0.7) * 20) * envelope;
-            
+
             return (
               <motion.div
                 key={i}
@@ -141,53 +141,53 @@ const MorphingGraphic = () => {
                 animate={
                   isResume
                     ? {
-                        x: resState.x,
-                        y: resState.y,
-                        width: resState.w,
-                        height: resState.h,
-                        borderRadius: resState.r,
-                        backgroundColor: resState.color,
-                        z: resState.isBg ? 0 : 30,
-                        opacity: 1,
-                      }
+                      x: resState.x,
+                      y: resState.y,
+                      width: resState.w,
+                      height: resState.h,
+                      borderRadius: resState.r,
+                      backgroundColor: resState.color,
+                      z: resState.isBg ? 0 : 30,
+                      opacity: 1,
+                    }
                     : {
-                        x: waveX,
-                        y: [250 - baseH / 2, 250 - maxH / 2, 250 - baseH / 2],
-                        width: waveW,
-                        height: [baseH, maxH, baseH],
-                        borderRadius: "6px",
-                        backgroundColor: "#38bdf8",
-                        z: 0, // Set to 0 to prevent 3D clipping during morph transition
-                        opacity: 0.8,
-                      }
+                      x: waveX,
+                      y: [250 - baseH / 2, 250 - maxH / 2, 250 - baseH / 2],
+                      width: waveW,
+                      height: [baseH, maxH, baseH],
+                      borderRadius: "6px",
+                      backgroundColor: "#38bdf8",
+                      z: 0, // Set to 0 to prevent 3D clipping during morph transition
+                      opacity: 0.8,
+                    }
                 }
                 transition={
                   isResume
                     ? {
-                        duration: 0.8,
-                        ease: [0.25, 1, 0.5, 1],
-                        delay: i * 0.015,
-                      }
+                      duration: 0.8,
+                      ease: [0.25, 1, 0.5, 1],
+                      delay: i * 0.015,
+                    }
                     : {
-                        y: { duration: 1.5, repeat: Infinity, ease: "easeInOut", delay: i * 0.05 },
-                        height: { duration: 1.5, repeat: Infinity, ease: "easeInOut", delay: i * 0.05 },
-                        x: { duration: 0.8, ease: [0.25, 1, 0.5, 1] },
-                        width: { duration: 0.8, ease: [0.25, 1, 0.5, 1] },
-                        backgroundColor: { duration: 0.8 },
-                        borderRadius: { duration: 0.8 },
-                        z: { duration: 0.8, ease: [0.25, 1, 0.5, 1] },
-                        opacity: { duration: 0.8 },
-                      }
+                      y: { duration: 1.5, repeat: Infinity, ease: "easeInOut", delay: i * 0.05 },
+                      height: { duration: 1.5, repeat: Infinity, ease: "easeInOut", delay: i * 0.05 },
+                      x: { duration: 0.8, ease: [0.25, 1, 0.5, 1] },
+                      width: { duration: 0.8, ease: [0.25, 1, 0.5, 1] },
+                      backgroundColor: { duration: 0.8 },
+                      borderRadius: { duration: 0.8 },
+                      z: { duration: 0.8, ease: [0.25, 1, 0.5, 1] },
+                      opacity: { duration: 0.8 },
+                    }
                 }
               />
             );
           })}
         </div>
       </motion.div>
-      
+
       {/* Label indicating state */}
       <div className="absolute -bottom-16 left-0 right-0 flex flex-col items-center gap-2 pointer-events-none">
-        <motion.div 
+        <motion.div
           className="px-4 py-1.5 rounded-full bg-slate-800/80 border border-slate-700/50 text-xs font-medium text-sky-400 backdrop-blur-md shadow-lg"
           layout
         >
@@ -220,296 +220,152 @@ const LaptopMockup = ({ children }: { children: React.ReactNode }) => (
 );
 
 const InterviewMockup = () => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const videoRef = useRef<HTMLDivElement>(null);
-  const micRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLDivElement>(null);
-  const plusRef = useRef<HTMLDivElement>(null);
-  const resumeRef = useRef<HTMLButtonElement>(null);
-  const sendRef = useRef<HTMLDivElement>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [responses, setResponses] = useState<string[]>([]);
+  const [isListening, setIsListening] = useState(false);
 
-  const [videoEnabled, setVideoEnabled] = useState(false);
-  const [micEnabled, setMicEnabled] = useState(false);
-  const [inputText, setInputText] = useState("");
-  const [showMenu, setShowMenu] = useState(false);
-  const [hasAttachment, setHasAttachment] = useState(false);
-  const [cursorPos, setCursorPos] = useState({ x: 150, y: 150 });
-  const [isClicking, setIsClicking] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [showCursor, setShowCursor] = useState(false);
+  const sampleResponses = [
+    "I am applying for the CCIT program because I have a strong passion for technology and software development.",
+    "My academic background includes strong grades in Mathematics and Computer subjects throughout high school.",
+    "I see myself contributing to the field through research in artificial intelligence and data systems.",
+  ];
+
+  useEffect(() => {
+    const timer = setInterval(() => setElapsedSeconds(s => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
     const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-
-    const getPos = (ref: React.RefObject<HTMLElement | null>) => {
-      if (!ref.current || !containerRef.current) return null;
-      const rect = ref.current.getBoundingClientRect();
-      const containerRect = containerRef.current.getBoundingClientRect();
-      return {
-        x: rect.left - containerRect.left + rect.width / 2,
-        y: rect.top - containerRect.top + rect.height / 2
-      };
-    };
-
-    const moveCursor = async (ref: React.RefObject<HTMLElement | null>) => {
-      const pos = getPos(ref);
-      if (pos) {
-        setCursorPos(pos);
-        await sleep(600); // Wait for movement
-      }
-    };
-
-    const click = async () => {
-      setIsClicking(true);
-      await sleep(150);
-      setIsClicking(false);
-      await sleep(150);
-    };
-
-    const runSequence = async () => {
-      await sleep(1000); // Initial delay
-      if (!isMounted) return;
-      setShowCursor(true);
-
-      while (isMounted) {
-        // Reset
-        setVideoEnabled(false);
-        setMicEnabled(false);
-        setInputText("");
-        setShowMenu(false);
-        setHasAttachment(false);
-        setIsExpanded(false);
-        
-        // Move cursor to center initially
-        if (containerRef.current) {
-          setCursorPos({
-            x: containerRef.current.offsetWidth / 2,
-            y: containerRef.current.offsetHeight / 2
-          });
-        }
-        await sleep(1000);
+    const run = async () => {
+      await sleep(1500);
+      for (const resp of sampleResponses) {
         if (!isMounted) break;
-
-        setIsExpanded(true);
-        await sleep(1000); // Wait for expansion
-
-        // 1. Click Video
-        await moveCursor(videoRef);
-        if (!isMounted) break;
-        await click();
-        setVideoEnabled(true);
-        await sleep(400);
-
-        // 2. Click Mic
-        await moveCursor(micRef);
-        if (!isMounted) break;
-        await click();
-        setMicEnabled(true);
-        await sleep(400);
-
-        // 3. Click Input
-        await moveCursor(inputRef);
-        if (!isMounted) break;
-        await click();
-        
-        // Type
-        const text = "Here is my resume";
-        for (let i = 0; i <= text.length; i++) {
-          if (!isMounted) break;
-          setInputText(text.slice(0, i));
-          await sleep(80);
-        }
-        await sleep(400);
-
-        // 4. Click Plus
-        await moveCursor(plusRef);
-        if (!isMounted) break;
-        await click();
-        setShowMenu(true);
-        await sleep(600); // Wait for menu to animate in
-
-        // 5. Click Resume
-        await moveCursor(resumeRef);
-        if (!isMounted) break;
-        await click();
-        setShowMenu(false);
-        setHasAttachment(true);
-        await sleep(400);
-
-        // 6. Click Send
-        await moveCursor(sendRef);
-        if (!isMounted) break;
-        await click();
-        setInputText("");
-        setHasAttachment(false);
-        
-        // Wait before restarting
+        setIsListening(true);
         await sleep(2000);
+        if (!isMounted) break;
+        setIsListening(false);
+        await sleep(300);
+        setResponses(prev => [...prev.slice(-2), resp]);
+        await sleep(3500);
       }
+      // reset loop
+      await sleep(1000);
+      if (isMounted) setResponses([]);
+      run();
     };
-
-    runSequence();
+    run();
     return () => { isMounted = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+
   return (
-    <div ref={containerRef} className="w-full h-full bg-slate-900/80 backdrop-blur-xl flex flex-col relative overflow-hidden">
-      {/* Main content */}
-      <div className="flex-1 flex flex-row gap-4 p-4">
-        {/* Video placeholder / Main Area */}
-        <div className="flex-1 bg-slate-950/50 rounded-xl relative overflow-hidden border border-slate-800/50 group flex flex-col items-center justify-center">
-          
-          {/* PiP User Avatar */}
-          <div className="absolute top-3 right-3 sm:top-4 sm:right-4 w-20 h-28 sm:w-28 sm:h-36 bg-slate-800 rounded-lg border border-slate-700/50 overflow-hidden shadow-2xl z-10">
-            <img 
-              src="https://api.dicebear.com/7.x/micah/svg?seed=Alex&backgroundColor=cbd5e1" 
-              alt="You" 
-              className="w-full h-full object-cover"
-              referrerPolicy="no-referrer"
-            />
-            <div className="absolute bottom-1.5 left-1.5 sm:bottom-2 sm:left-2 bg-black/60 backdrop-blur-md px-1.5 py-0.5 rounded text-[8px] sm:text-[10px] text-white font-medium flex items-center gap-1">
-              You
-            </div>
+    <div className="w-full h-full bg-[#0b1120] flex flex-col relative overflow-hidden">
+      {/* Timer pill */}
+      <div className="flex justify-center pt-3 pb-2 shrink-0">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700/50 text-[10px] sm:text-xs text-slate-300 font-mono font-semibold">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          {fmt(elapsedSeconds)} / 30:00
+        </div>
+      </div>
+
+      {/* Main area: professor left, responses right */}
+      <div className="flex-1 flex gap-3 px-3 pb-2 min-h-0">
+        {/* Left: Professor panel */}
+        <div className="flex-1 bg-slate-900/60 rounded-xl border border-slate-800/60 relative overflow-hidden flex flex-col items-center justify-center">
+          {/* Label */}
+          <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-full bg-slate-800/90 border border-slate-700/50">
+            <div className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+            <span className="text-[9px] text-slate-300 font-semibold">Enrollment Interview • Prof. Maxiel</span>
           </div>
 
-          {/* Sound Wave */}
-          <div className="flex items-center justify-center gap-1.5 h-24">
-            {[1, 2.5, 4, 6, 4, 2.5, 1].map((val, i) => (
-              <motion.div
-                key={i}
-                className="w-1.5 sm:w-2 bg-sky-400 rounded-full"
-                animate={{
-                  height: [15, 15 + val * 8, 15],
-                }}
-                transition={{
-                  duration: 1.5,
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                  delay: i * 0.1,
-                }}
-              />
-            ))}
+          {/* AI voice visualization (replaced human icon) */}
+          <div className="relative flex flex-col items-center justify-center h-full">
+            <div className="absolute inset-0 bg-sky-500/10 blur-[60px] rounded-full" />
+            {/* AI voice bars */}
+            <div className="flex items-end gap-0.5 h-6">
+              {[0.4, 0.7, 1, 0.8, 0.5, 0.9, 0.6, 0.3, 0.7, 1, 0.5].map((h, i) => (
+                <motion.div
+                  key={i}
+                  className="w-1 rounded-full bg-sky-400"
+                  animate={{ height: [`${h * 8}px`, `${h * 22}px`, `${h * 8}px`] }}
+                  transition={{ duration: 1.2 + i * 0.05, repeat: Infinity, ease: 'easeInOut', delay: i * 0.08 }}
+                />
+              ))}
+            </div>
           </div>
+        </div>
 
-          {/* Bottom Bar: Message Box widening */}
-          <div className="absolute bottom-2 sm:bottom-4 left-0 right-0 flex justify-center items-center gap-1.5 sm:gap-2 px-2 sm:px-4">
-            <div 
-              ref={videoRef}
-              className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-colors cursor-pointer flex-shrink-0 ${videoEnabled ? 'bg-slate-700 text-white' : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700'}`}
-            >
-              <Video className="w-4 h-4 sm:w-5 sm:h-5" />
-            </div>
-            <div 
-              ref={micRef}
-              className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-colors cursor-pointer flex-shrink-0 ${micEnabled ? 'bg-slate-700 text-white' : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700'}`}
-            >
-              <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
-            </div>
-
-            <motion.div 
-              className="h-8 sm:h-10 bg-slate-800 rounded-full flex items-center relative overflow-visible w-full max-w-[200px] sm:max-w-[320px]"
-              initial={{ width: 32 }}
-              animate={{ width: isExpanded ? "100%" : 32 }}
-              transition={{ duration: 0.5, ease: "easeInOut" }}
-            >
-              {/* Expanded Content */}
-              <motion.div 
-                className="flex items-center justify-between w-full px-1 absolute inset-0"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: isExpanded ? 1 : 0 }}
-                transition={{ duration: 0.3, delay: isExpanded ? 0.3 : 0 }}
-                style={{ pointerEvents: isExpanded ? 'auto' : 'none' }}
-              >
-                <div className="relative">
-                  <div 
-                    ref={plusRef}
-                    className="w-6 h-6 sm:w-8 sm:h-8 rounded-full hover:bg-slate-700 flex items-center justify-center text-slate-400 cursor-pointer flex-shrink-0"
-                  >
-                    <Plus className="w-3 h-3 sm:w-4 sm:h-4" />
-                  </div>
-                  
-                  {/* Popup Menu */}
-                  <motion.div 
-                    className="absolute bottom-[120%] left-0 w-32 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden"
-                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                    animate={{ opacity: showMenu ? 1 : 0, y: showMenu ? 0 : 10, scale: showMenu ? 1 : 0.95 }}
-                    style={{ pointerEvents: showMenu ? 'auto' : 'none' }}
-                  >
-                    <button 
-                      ref={resumeRef}
-                      className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-white flex items-center gap-2"
-                    >
-                      <FileText className="w-3 h-3" /> Resume.pdf
-                    </button>
-                  </motion.div>
-                </div>
-
-                <div 
-                  ref={inputRef}
-                  className="flex-1 px-1 sm:px-2 text-[10px] sm:text-xs text-slate-300 truncate flex items-center gap-1 h-full cursor-text"
+        {/* Right: Responses panel */}
+        <div className="w-[42%] bg-slate-900/60 rounded-xl border border-slate-800/60 flex flex-col overflow-hidden">
+          <div className="px-3 py-2 border-b border-slate-800/60 shrink-0">
+            <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest">Your Responses</span>
+          </div>
+          <div className="flex-1 overflow-hidden px-2 py-2 flex flex-col gap-2 justify-end">
+            {responses.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full gap-1 opacity-40">
+                <Mic className="w-5 h-5 text-slate-500" />
+                <span className="text-[9px] text-slate-500 text-center">Respond to Prof. Maxiel's questions.</span>
+              </div>
+            ) : (
+              responses.map((r, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-slate-800/60 rounded-lg px-2 py-1.5 border border-slate-700/40"
                 >
-                  {hasAttachment && (
-                    <div className="bg-sky-500/20 text-sky-400 px-1.5 py-0.5 rounded flex items-center gap-1">
-                      <Paperclip className="w-3 h-3" />
-                      <span className="text-[8px] sm:text-[10px]">Resume.pdf</span>
+                  <div className="flex items-center gap-1 mb-0.5">
+                    <div className="w-3 h-3 rounded-full bg-sky-500/20 border border-sky-500/40 flex items-center justify-center">
+                      <span className="text-[6px] text-sky-400 font-bold">U</span>
                     </div>
-                  )}
-                  {inputText || (!hasAttachment && <span className="text-slate-500">Type a message...</span>)}
-                  {/* Blinking cursor */}
-                  {isExpanded && <motion.span animate={{ opacity: [1, 0] }} transition={{ repeat: Infinity, duration: 0.8 }} className="w-0.5 h-3 sm:h-4 bg-sky-400 inline-block ml-0.5" />}
-                </div>
-                
-                <div 
-                  ref={sendRef}
-                  className="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-sky-500 flex items-center justify-center text-white cursor-pointer flex-shrink-0"
-                >
-                  <Send className="w-3 h-3 ml-0.5" />
-                </div>
-              </motion.div>
-              
-              {/* Initial Message Icon */}
-              <motion.div 
-                className="absolute inset-0 flex items-center justify-center text-slate-400"
-                initial={{ opacity: 1 }}
-                animate={{ opacity: isExpanded ? 0 : 1 }}
-                transition={{ duration: 0.3 }}
-                style={{ pointerEvents: isExpanded ? 'none' : 'auto' }}
-              >
-                <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5" />
-              </motion.div>
-            </motion.div>
+                    <span className="text-[8px] text-slate-500 font-medium">You</span>
+                  </div>
+                  <p className="text-[8px] sm:text-[9px] text-slate-300 leading-relaxed line-clamp-3">{r}</p>
+                </motion.div>
+              ))
+            )}
+          </div>
+          <div className="px-3 py-2 border-t border-slate-800/60 shrink-0">
+            <span className="text-[8px] text-slate-600">{responses.length} / 5 Responses Recorded</span>
           </div>
         </div>
       </div>
 
-      {/* Animated Cursor */}
-      {showCursor && (
-        <motion.div
-          className="absolute z-50 pointer-events-none"
-          animate={{ 
-            left: cursorPos.x, 
-            top: cursorPos.y,
-            scale: isClicking ? 0.8 : 1
-          }}
-          transition={{ 
-            left: { duration: 0.5, ease: "easeInOut" },
-            top: { duration: 0.5, ease: "easeInOut" },
-            scale: { duration: 0.1 }
-          }}
-          style={{ x: "-20%", y: "-20%" }} // Offset so the tip of the cursor is at the coordinate
-        >
-          <MousePointer2 className="w-5 h-5 sm:w-6 sm:h-6 text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]" fill="#0f172a" />
-        </motion.div>
-      )}
+      {/* Bottom controls */}
+      <div className="flex items-center justify-center gap-3 pb-3 shrink-0">
+        {/* Mic */}
+        <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all duration-300 ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800'}`}>
+          {isListening ? (
+            <div className="flex items-end gap-0.5 h-5">
+              {[0.6, 1, 0.7, 0.9, 0.5].map((h, i) => (
+                <motion.div key={i} className="w-0.5 bg-white rounded-full"
+                  animate={{ height: [`${h * 6}px`, `${h * 16}px`, `${h * 6}px`] }}
+                  transition={{ duration: 0.6, repeat: Infinity, ease: 'easeInOut', delay: i * 0.1 }}
+                />
+              ))}
+            </div>
+          ) : (
+            <Mic className="w-4 h-4 sm:w-5 sm:h-5 text-slate-400" />
+          )}
+          {isListening && <span className="absolute w-10 h-10 sm:w-12 sm:h-12 rounded-2xl border-2 border-emerald-400 opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0,0,0.2,1) infinite' }} />}
+        </div>
+        {/* Leave */}
+        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400">
+          <LogOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+        </div>
+      </div>
     </div>
   );
 };
 
 const FeatureCard = ({ icon, title, description }: { icon: React.ReactNode, title: string, description: string }) => (
-  <motion.div 
+  <motion.div
     whileHover={{ y: -5 }}
-    className="bg-slate-900/50 border border-slate-800/50 p-6 rounded-2xl flex gap-4 items-start hover:bg-slate-800/50 transition-colors"
+    className="h-full bg-slate-900/50 border border-slate-800/50 p-6 rounded-2xl flex gap-4 items-start hover:bg-slate-800/50 transition-colors"
   >
     <div className="p-3 bg-slate-800 rounded-xl border border-slate-700/50 flex-shrink-0">
       {icon}
@@ -554,7 +410,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             <span className="font-bold text-xl tracking-tight">Career Edge</span>
           </div>
-          
+
           {/* Desktop Nav */}
           <div className="hidden md:flex items-center gap-8">
             <a href="#" className="text-sm font-medium text-slate-300 hover:text-white transition-colors">Features</a>
@@ -594,132 +450,177 @@ export default function App() {
         {/* Hero Section */}
         <section className="container mx-auto px-6 pt-12 pb-24 md:pt-24 md:pb-32">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
-             {/* Left Text */}
-             <motion.div 
-               initial={{ opacity: 0, x: -30 }}
-               animate={{ opacity: 1, x: 0 }}
-               transition={{ duration: 0.8 }}
-               className="flex flex-col gap-6"
-             >
-                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-sky-500/10 border border-sky-500/20 text-sky-400 text-xs font-medium w-fit">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  AI-Powered Interview Prep
-                </div>
-                <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.1]">
-                  Your Voice turns into a <span className="text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400">bright opportunity.</span>
-                </h1>
-                <p className="text-lg md:text-xl text-slate-400 leading-relaxed max-w-xl">
-                  Practice with our AI-driven interview simulator. Perfect your pitch, refine your answers, and land your dream job with confidence.
-                </p>
-                <div className="flex flex-col sm:flex-row gap-4 mt-4">
-                  <button onClick={() => openAuth('signup')} className="px-8 py-4 rounded-xl bg-sky-500 hover:bg-sky-400 text-white font-semibold transition-all shadow-lg shadow-sky-500/25 flex items-center justify-center gap-2 group">
-                    Start Practicing
-                    <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                  </button>
-                  <button className="px-8 py-4 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700 text-white font-semibold transition-all flex items-center justify-center gap-2">
-                    <Play className="w-4 h-4" />
-                    Watch Demo
-                  </button>
-                </div>
-             </motion.div>
+            {/* Left Text */}
+            <motion.div
+              initial={{ opacity: 0, x: -30 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.8 }}
+              className="flex flex-col gap-6"
+            >
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-sky-500/10 border border-sky-500/20 text-sky-400 text-xs font-medium w-fit">
+                <Sparkles className="w-3.5 h-3.5" />
+                AI-Powered Interview Prep
+              </div>
+              <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.1]">
+                Your Voice turns into a <span className="text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400">bright opportunity.</span>
+              </h1>
+              <p className="text-lg md:text-xl text-slate-400 leading-relaxed max-w-xl">
+                Practice with our AI-driven interview simulator. Perfect your pitch, refine your answers, and land your dream job with confidence.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-4 mt-4">
+                <button onClick={() => openAuth('signup')} className="px-8 py-4 rounded-xl bg-sky-500 hover:bg-sky-400 text-white font-semibold transition-all shadow-lg shadow-sky-500/25 flex items-center justify-center gap-2 group">
+                  Start Practicing
+                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                </button>
+                <button 
+                  onClick={() => document.getElementById('campus-map')?.scrollIntoView({ behavior: 'smooth' })}
+                  className="px-8 py-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold transition-all flex items-center justify-center gap-2 group border border-slate-700"
+                >
+                  <MapPin className="w-4 h-4 text-sky-400" />
+                  Find Campus
+                </button>
+              </div>
+            </motion.div>
 
-             {/* Right Graphic */}
-             <motion.div 
-               initial={{ opacity: 0, scale: 0.9 }}
-               animate={{ opacity: 1, scale: 1 }}
-               transition={{ duration: 0.8, delay: 0.2 }}
-               className="flex justify-center relative"
-             >
-                <div className="absolute inset-0 bg-sky-500/20 blur-[100px] rounded-full opacity-50" />
-                <MorphingGraphic />
-             </motion.div>
+            {/* Right Graphic */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.8, delay: 0.2 }}
+              className="flex justify-center relative"
+            >
+              <div className="absolute inset-0 bg-sky-500/20 blur-[100px] rounded-full opacity-50" />
+              <MorphingGraphic />
+            </motion.div>
           </div>
         </section>
 
         {/* Features Section */}
         <section className="container mx-auto px-6 py-24 border-t border-slate-800/50">
-           <div className="text-center mb-16">
-             <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">Master every interview scenario</h2>
-             <p className="text-slate-400 max-w-2xl mx-auto">Our advanced AI analyzes your responses in real-time, providing actionable feedback to help you improve.</p>
-           </div>
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">Master every interview scenario</h2>
+            <p className="text-slate-400 max-w-2xl mx-auto">Our advanced AI analyzes your responses in real-time, providing actionable feedback to help you improve.</p>
+          </div>
 
-           <div className="flex flex-col gap-16">
-             {/* Top large block */}
-             <motion.div 
-               initial={{ opacity: 0, y: 30 }}
-               whileInView={{ opacity: 1, y: 0 }}
-               viewport={{ once: true }}
-               transition={{ duration: 0.6 }}
-               className="w-full h-full"
-             >
-               <LaptopMockup>
-                 <InterviewMockup />
-               </LaptopMockup>
-             </motion.div>
-             
-             {/* Bottom 3 smaller blocks */}
-             <div className="grid lg:grid-cols-3 gap-6">
-               <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.6, delay: 0.1 }}>
-                 <FeatureCard 
-                   icon={<BrainCircuit className="w-6 h-6 text-sky-400" />}
-                   title="Real-time AI Feedback"
-                   description="Get instant analysis on your pacing, tone, and keyword usage as you speak, helping you adjust on the fly."
-                 />
-               </motion.div>
-               <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.6, delay: 0.2 }}>
-                 <FeatureCard 
-                   icon={<Target className="w-6 h-6 text-emerald-400" />}
-                   title="Industry-Specific Questions"
-                   description="Practice with a curated library of questions tailored to your specific role, seniority, and target company."
-                 />
-               </motion.div>
-               <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.6, delay: 0.3 }}>
-                 <FeatureCard 
-                   icon={<BarChart className="w-6 h-6 text-amber-400" />}
-                   title="Confidence Analysis"
-                   description="Track your progress over time with detailed metrics on your interview performance and confidence scores."
-                 />
-               </motion.div>
-             </div>
-           </div>
-        </section>
+          <div className="flex flex-col gap-16">
+            {/* Top large block */}
+            <motion.div
+              initial={{ opacity: 0, y: 30 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.6 }}
+              className="w-full h-full"
+            >
+              <LaptopMockup>
+                <InterviewMockup />
+              </LaptopMockup>
+            </motion.div>
 
-        {/* Callout Section */}
-        <section className="container mx-auto px-6 py-24">
-          <motion.div 
-            initial={{ opacity: 0, y: 30 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.8 }}
-            className="max-w-4xl mx-auto text-center flex flex-col items-center"
-          >
-            <h2 className="text-3xl md:text-5xl font-bold tracking-tight mb-6">Ready to ace your next interview?</h2>
-            <p className="text-lg text-slate-400 mb-12 max-w-2xl">
-              Join thousands of candidates who have successfully landed their dream jobs using our platform.
-            </p>
-            
-            {/* Large block below text as per wireframe */}
-            <div className="w-full bg-gradient-to-br from-slate-800/80 to-slate-900/80 backdrop-blur-md border border-slate-700/50 rounded-3xl p-8 md:p-12 shadow-2xl relative overflow-hidden">
-              <div className="absolute top-0 right-0 -mt-20 -mr-20 w-64 h-64 bg-sky-500/20 blur-[80px] rounded-full pointer-events-none" />
-              <div className="absolute bottom-0 left-0 -mb-20 -ml-20 w-64 h-64 bg-indigo-500/20 blur-[80px] rounded-full pointer-events-none" />
-              
-              <div className="relative z-10">
-                <h3 className="text-2xl md:text-3xl font-semibold mb-8 text-white">Start your free trial today</h3>
-                <div className="flex flex-col sm:flex-row gap-4 justify-center max-w-xl mx-auto">
-                  <input 
-                    type="email" 
-                    placeholder="Enter your email address" 
-                    className="px-5 py-4 rounded-xl bg-slate-950/50 border border-slate-700 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 text-slate-200 w-full sm:w-auto flex-1 transition-all"
-                  />
-                  <button onClick={() => openAuth('signup')} className="px-8 py-4 rounded-xl bg-sky-500 hover:bg-sky-400 text-white font-semibold transition-colors whitespace-nowrap shadow-lg shadow-sky-500/25">
-                    Get Started Free
-                  </button>
-                </div>
-                <p className="text-xs text-slate-500 mt-4">No credit card required. 14-day free trial.</p>
-              </div>
+            {/* Bottom 3 smaller blocks */}
+            <div className="grid lg:grid-cols-3 gap-6 items-stretch">
+              <motion.div className="h-full" initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.6, delay: 0.1 }}>
+                <FeatureCard
+                  icon={<BrainCircuit className="w-6 h-6 text-sky-400" />}
+                  title="Real-time AI Feedback"
+                  description="Get instant analysis on your pacing, tone, and keyword usage as you speak, helping you adjust on the fly."
+                />
+              </motion.div>
+              <motion.div className="h-full" initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.6, delay: 0.2 }}>
+                <FeatureCard
+                  icon={<GraduationCap className="w-6 h-6 text-emerald-400" />}
+                  title="Department & Course Readiness"
+                  description="Practice with questions tailored to your chosen department — CCIT, CTE, or CBAPA — preparing you for real university enrollment interviews."
+                />
+              </motion.div>
+              <motion.div className="h-full" initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.6, delay: 0.3 }}>
+                <FeatureCard
+                  icon={<BarChart className="w-6 h-6 text-amber-400" />}
+                  title="Confidence Analysis"
+                  description="Track your progress over time with detailed metrics on your interview performance and confidence scores."
+                />
+              </motion.div>
             </div>
-          </motion.div>
+          </div>
         </section>
+
+        {/* Campus Location Section */}
+        <section id="campus-map" className="container mx-auto px-6 py-24 border-t border-slate-800/50">
+          <div className="grid lg:grid-cols-2 gap-16 items-center">
+            <motion.div
+              initial={{ opacity: 0, x: -30 }}
+              whileInView={{ opacity: 1, x: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.8 }}
+              className="flex flex-col gap-8"
+            >
+              <div>
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium w-fit mb-4">
+                  <MapPin className="w-3.5 h-3.5" />
+                  Our Location
+                </div>
+                <h2 className="text-3xl md:text-5xl font-bold tracking-tight mb-6">Explore the <span className="text-emerald-400">PRMSU Castillejos Campus</span></h2>
+                <p className="text-slate-400 text-lg leading-relaxed">
+                  The PRMSU Castillejos Campus is dedicated to providing quality education closer to the community. Practice your interviews right here or visit us to explore our specialized course offerings.
+                </p>
+                <div className="mt-6">
+                  <a 
+                    href="https://www.google.com/maps/dir/?api=1&destination=14.914655,120.197460" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 text-sky-400 font-bold hover:text-sky-300 transition-colors uppercase tracking-widest text-xs"
+                  >
+                    Get Directions
+                    <ArrowRight className="w-4 h-4" />
+                  </a>
+                </div>
+              </div>
+
+              <div className="grid sm:grid-cols-2 gap-6">
+                <div className="flex gap-4 items-start p-4 rounded-xl bg-slate-900/50 border border-slate-800/50">
+                  <div className="w-10 h-10 rounded-lg bg-sky-500/10 flex items-center justify-center shrink-0">
+                    <MapPin className="w-5 h-5 text-sky-400" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-200 mb-1">Address</h4>
+                    <p className="text-xs text-slate-400 leading-relaxed">Balaybay, San Nicolas,<br />Castillejos, Zambales 2208</p>
+                  </div>
+                </div>
+                <div className="flex gap-4 items-start p-4 rounded-xl bg-slate-900/50 border border-slate-800/50">
+                  <div className="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
+                    <Mail className="w-5 h-5 text-emerald-400" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-200 mb-1">Email</h4>
+                    <p className="text-xs text-slate-400 leading-relaxed">prmsucaste1@gmail.com</p>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              whileInView={{ opacity: 1, scale: 1 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.8 }}
+              className="relative rounded-[2.5rem] overflow-hidden border border-slate-800 shadow-2xl h-[400px] group"
+            >
+              <div className="absolute inset-0 bg-sky-500/10 z-10 pointer-events-none group-hover:opacity-0 transition-opacity duration-500" />
+              <iframe
+                title="PRMSU Castillejos Campus Map"
+                src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d1927.7012267434372!2d120.19745969839475!3d14.914654999999996!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x339679f962c794c9%3A0x794784a72428c0c5!2sPRESIDENT%20RAMON%20MAGSAYSAY%20STATE%20UNIVERSITY!5e0!3m2!1sen!2sph!4v1776418690828!5m2!1sen!2sph"
+                width="100%"
+                height="100%"
+                style={{ border: 0, filter: 'invert(90%) hue-rotate(180deg) brightness(0.8) contrast(1.2)' }}
+                allowFullScreen={true}
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                className="relative z-0"
+              />
+            </motion.div>
+          </div>
+        </section>
+
+        {/* Callout section hidden for now */}
       </main>
 
       {/* Footer */}
@@ -734,7 +635,7 @@ export default function App() {
                 Empowering candidates to showcase their true potential through AI-driven interview practice and feedback.
               </p>
             </div>
-            
+
             <div>
               <h4 className="font-semibold text-slate-200 mb-4">Product</h4>
               <ul className="flex flex-col gap-3 text-sm text-slate-400">
@@ -744,7 +645,7 @@ export default function App() {
                 <li><a href="#" className="hover:text-sky-400 transition-colors">Enterprise</a></li>
               </ul>
             </div>
-            
+
             <div>
               <h4 className="font-semibold text-slate-200 mb-4">Resources</h4>
               <ul className="flex flex-col gap-3 text-sm text-slate-400">
@@ -765,7 +666,7 @@ export default function App() {
               </ul>
             </div>
           </div>
-          
+
           <div className="pt-8 border-t border-slate-800/50 flex flex-col md:flex-row items-center justify-between gap-4">
             <p className="text-sm text-slate-500">
               © {new Date().getFullYear()} Career Edge Inc. All rights reserved.
