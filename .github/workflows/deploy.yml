@@ -56,6 +56,17 @@ jobs:
           echo "Waiting for EC2 provisioning scripts to finish..."
           cloud-init status --wait || true
           
+          # Forcefully install Docker and AWS CLI if they crashed during EC2 boot
+          if ! command -v aws &> /dev/null || ! command -v docker &> /dev/null; then
+            echo "Dependencies missing! Hand installing via Action runner..."
+            while sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; do echo 'Waiting for apt lock...'; sleep 5; done
+            sudo apt-get update -y
+            sudo apt-get install -y awscli docker.io
+            sudo systemctl enable docker || true
+            sudo systemctl start docker || true
+            sudo usermod -aG docker ubuntu || true
+          fi
+          
           # Login to ECR on the EC2 instance
           aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
           
