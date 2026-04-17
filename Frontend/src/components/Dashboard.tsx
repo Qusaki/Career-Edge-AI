@@ -30,7 +30,10 @@ import {
   FileText,
   Upload,
   Clock,
-  Shield
+  Shield,
+  Eye,
+  EyeOff,
+  Camera
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -51,6 +54,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const wsRef = React.useRef<WebSocket | null>(null);
   const [isStartingInterview, setIsStartingInterview] = useState(false);
   const [isFinishingInterview, setIsFinishingInterview] = useState(false);
+  const [showProfilePass, setShowProfilePass] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [interviewResult, setInterviewResult] = useState<any>(null);
@@ -226,7 +230,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         if (res.ok) {
           const data = await res.json();
           setProfile({
-            name: `${data.firstname || ''} ${data.lastname || ''}`.trim() || 'Guest User',
+            name: `${data.firstname || ''} ${data.middlename || ''} ${data.lastname || ''}`.replace(/\s+/g, ' ').trim() || 'Guest User',
             email: data.email || '',
             password: '',
             department: data.department || '',
@@ -264,11 +268,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
       const formData = new FormData();
 
-      const nameParts = profile.name.trim().split(' ');
+      const nameParts = profile.name.trim().split(/\s+/);
       const firstname = nameParts[0] || '';
-      const lastname = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+      let middlename = '';
+      let lastname = '';
+
+      if (nameParts.length > 2) {
+        middlename = nameParts[1];
+        lastname = nameParts.slice(2).join(' ');
+      } else if (nameParts.length === 2) {
+        lastname = nameParts[1];
+      }
 
       formData.append('firstname', firstname);
+      formData.append('middlename', middlename);
       formData.append('lastname', lastname);
       formData.append('department', profile.department);
       if (profile.password) formData.append('password', profile.password);
@@ -283,7 +296,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       if (res.ok) {
         const updatedUser = await res.json();
         setProfile({
-          name: `${updatedUser.firstname || ''} ${updatedUser.lastname || ''}`.trim() || 'Guest User',
+          name: `${updatedUser.firstname || ''} ${updatedUser.middlename || ''} ${updatedUser.lastname || ''}`.replace(/\s+/g, ' ').trim() || 'Guest User',
           email: updatedUser.email || '',
           password: '',
           department: updatedUser.department || '',
@@ -291,7 +304,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         });
         setSelectedFile(null);
         setIsSaved(true);
-        setTimeout(() => setIsSaved(false), 3000);
+        setTimeout(() => {
+          setIsSaved(false);
+          setActiveTab('dashboard');
+        }, 1500);
       } else {
         console.error('Failed to save profile', await res.text());
       }
@@ -2240,20 +2256,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
               </div>
 
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-8">
-                {/* Profile Picture */}
-                <div className="flex items-center gap-6">
-                  <div className="w-24 h-24 rounded-full bg-slate-800 border-2 border-slate-700 overflow-hidden shrink-0">
-                    <img
-                      src={profile.profilePicture}
-                      alt="Profile"
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-medium text-slate-200">Profile Picture</h3>
-                    <p className="text-sm text-slate-400 mb-3">PNG, JPG up to 5MB</p>
-                    <label className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-sm font-medium transition-colors border border-slate-700 cursor-pointer inline-block">
-                      Change Picture
+                <div className="flex items-center gap-8">
+                  {/* Profile Picture with Camera Overlay */}
+                  <div className="relative group">
+                    <div className="w-24 h-24 rounded-full bg-slate-800 border-2 border-slate-700 overflow-hidden shrink-0 group-hover:border-sky-500/50 transition-colors">
+                      <img
+                        src={profile.profilePicture}
+                        alt="Profile"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    {/* Camera Overlay Trigger */}
+                    <label className="absolute bottom-0 right-0 w-8 h-8 bg-sky-500 hover:bg-sky-400 text-white rounded-full flex items-center justify-center cursor-pointer shadow-lg transform translate-x-1 translate-y-1 transition-all hover:scale-110 active:scale-95 z-10 border-2 border-slate-900">
+                      <Camera className="w-4 h-4" />
                       <input
                         type="file"
                         accept="image/png, image/jpeg"
@@ -2261,6 +2276,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                         className="hidden"
                       />
                     </label>
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <h3 className="text-2xl font-bold text-slate-100 tracking-tight">{profile.name}</h3>
+                    <p className="text-sm text-slate-400 font-medium">Click the camera to update photo</p>
                   </div>
                 </div>
 
@@ -2288,14 +2308,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                     />
                   </div>
 
-                  {/* Password */}
                   <div className="space-y-3">
                     <label className="text-sm font-medium text-slate-300">Password</label>
                     <input
                       type="password"
-                      value={profile.password}
+                      value={profile.password || ''}
                       onChange={(e) => setProfile({ ...profile, password: e.target.value })}
                       className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
+                      placeholder="••••••••"
                     />
                   </div>
 
@@ -2328,7 +2348,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                     disabled={isSaving}
                     className="px-6 py-3 bg-sky-500 hover:bg-sky-400 text-white rounded-xl font-medium transition-colors shadow-lg shadow-sky-500/20 disabled:opacity-50"
                   >
-                    {isSaving ? 'Saving...' : 'Save Changes'}
+                    {isSaving ? 'Saving...' : 'Save'}
                   </button>
                 </div>
               </div>
