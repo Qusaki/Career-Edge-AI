@@ -60,6 +60,11 @@ jobs:
           if ! command -v aws &> /dev/null || ! command -v docker &> /dev/null; then
             echo "Dependencies missing! Hand installing via Action runner..."
             while sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; do echo 'Waiting for apt lock...'; sleep 5; done
+            
+            echo "Bypassing AWS regional Ubuntu mirror due to 503 errors..."
+            sudo sed -i 's/ap-southeast-1.ec2.archive.ubuntu.com/archive.ubuntu.com/g' /etc/apt/sources.list || true
+            sudo sed -i 's/ap-southeast-1.ec2.archive.ubuntu.com/archive.ubuntu.com/g' /etc/apt/sources.list.d/* || true
+            
             sudo apt-get update -y
             sudo apt-get install -y awscli docker.io
             sudo systemctl enable docker || true
