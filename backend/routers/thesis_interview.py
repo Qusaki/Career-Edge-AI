@@ -16,9 +16,11 @@ from google.genai import types
 from database import get_db
 from core.deps import get_current_user, get_current_user_ws
 from core.tts import generate_tts_base64_async
+from core.aws import upload_abstract_to_s3, get_abstract_text_from_s3, delete_abstract_from_s3
 from models.user import User
 from models.thesis_interview import ThesisInterviewSession, ThesisInterviewMessage
 from schemas.thesis_interview import ThesisInterviewSessionResponse, ThesisInterviewSessionWithMessagesResponse, ThesisInterviewChatRequest, ThesisCompleteInterviewRequest
+from fastapi import UploadFile, File
 
 router = APIRouter()
 
@@ -27,7 +29,7 @@ def strip_markdown_for_tts(text: str) -> str:
     text = re.sub(r'#+\s', '', text)
     return text.strip()
 
-def get_thesis_system_prompt(department: str) -> str:
+def get_thesis_system_prompt(department: str, abstract_text: str = None) -> str:
     dep = department.upper() if department else ""
     base_prompt = """
 You are Professor Maxiel. You are acting as a strict but constructive PANEL MEMBER for a formal THESIS DEFENSE.
@@ -35,6 +37,8 @@ This session will last for exactly 1 HOUR. You must be aware of the time limits 
 
 CRITICAL INSTRUCTION: You MUST speak DIRECTLY to the student. DO NOT narrate your actions. DO NOT explain what you are going to do. DO NOT output thoughts. Just speak exactly what you want the student to hear out loud.
 """
+    if abstract_text:
+        base_prompt += f"\n\n[STUDENT THESIS ABSTRACT]:\n{abstract_text}\n\nREQUIRED: The student provided this abstract. You MUST use it to ask probing questions tailored strictly to their proposed architecture and methodology.\n"
     if dep == "CTE":
         return base_prompt + """
 You are evaluating a College of Teacher Education (CTE) Thesis Defense (BSED / BEEd).
@@ -90,6 +94,22 @@ def get_user_interviews(db: Session = Depends(get_db), current_user: User = Depe
     sessions = db.query(ThesisInterviewSession).filter(ThesisInterviewSession.user_id == current_user.id).order_by(ThesisInterviewSession.start_time.desc()).all()
     return sessions
 
+@router.post("/{session_id}/upload-abstract")
+def upload_thesis_abstract(session_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    session = db.query(ThesisInterviewSession).filter(ThesisInterviewSession.id == session_id, ThesisInterviewSession.user_id == current_user.id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Thesis session not found.")
+    if session.status != "active":
+        raise HTTPException(status_code=400, detail="Cannot upload to an inactive session.")
+    
+    try:
+        s3_key = upload_abstract_to_s3(file, session_id)
+        session.abstract_s3_key = s3_key
+        db.commit()
+        return {"message": "Abstract uploaded successfully.", "s3_key": s3_key}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.websocket("/{session_id}/chat")
 async def interview_chat_ws(
     websocket: WebSocket,
@@ -121,7 +141,12 @@ async def interview_chat_ws(
 
     await websocket.accept()
 
-    system_prompt = get_thesis_system_prompt(current_user.department)
+    abstract_text = None
+    if session.abstract_s3_key:
+        print("[DEBUG] Downloading abstract text for context...")
+        abstract_text = get_abstract_text_from_s3(session.abstract_s3_key)
+
+    system_prompt = get_thesis_system_prompt(current_user.department, abstract_text)
     
     # Initialize Google GenAI Client
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -315,6 +340,10 @@ def complete_interview(session_id: int, request: ThesisCompleteInterviewRequest,
     )
     
     try:
+        if session.abstract_s3_key:
+            delete_abstract_from_s3(session.abstract_s3_key)
+            session.abstract_s3_key = None # Clear it sequentially so we don't accidentally try to delete it twice
+            
         evaluation = json.loads(response.text)
         
         if current_user.department.upper() == "CTE":

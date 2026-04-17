@@ -12,3 +12,8 @@ output "s3_bucket_name" {
   value       = aws_s3_bucket.profile_pictures.bucket
   description = "The name of the S3 bucket for profile pictures"
 }
+
+output "abstracts_bucket_name" {
+  value       = aws_s3_bucket.abstracts.bucket
+  description = "The name of the S3 bucket for thesis abstracts"
+}

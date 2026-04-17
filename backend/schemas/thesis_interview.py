@@ -43,6 +43,7 @@ class ThesisInterviewSessionResponse(BaseModel):
     total_score: Optional[float] = None
     passed: Optional[bool] = None
     feedback_summary: Optional[str] = None
+    abstract_s3_key: Optional[str] = None
 
     class Config:
         from_attributes = True

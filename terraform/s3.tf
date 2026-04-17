@@ -45,3 +45,27 @@ resource "aws_s3_bucket_policy" "public_read" {
     aws_s3_bucket_ownership_controls.profile_pictures
   ]
 }
+
+resource "aws_s3_bucket" "abstracts" {
+  bucket = "${var.project_name}-abstracts-${data.aws_caller_identity.current.account_id}"
+
+  tags = {
+    Name = "${var.project_name}-abstracts"
+  }
+}
+
+resource "aws_s3_bucket_ownership_controls" "abstracts" {
+  bucket = aws_s3_bucket.abstracts.id
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "abstracts" {
+  bucket = aws_s3_bucket.abstracts.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}

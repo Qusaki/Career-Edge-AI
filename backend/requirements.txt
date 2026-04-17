@@ -11,3 +11,4 @@ google-genai
 google-cloud-texttospeech
 sse-starlette
 boto3
+PyPDF2

@@ -39,6 +39,8 @@ class ThesisInterviewSession(Base):
     passed = Column(Boolean, nullable=True)
     feedback_summary = Column(String, nullable=True)
     
+    abstract_s3_key = Column(String, nullable=True)
+    
     messages = relationship("ThesisInterviewMessage", back_populates="session", cascade="all, delete-orphan")
 
 

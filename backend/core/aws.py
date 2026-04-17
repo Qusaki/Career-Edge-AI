@@ -55,3 +55,61 @@ def upload_file_to_s3(file: UploadFile, object_name: str = None) -> str:
         raise ValueError("Credentials not available")
     except ClientError as e:
         raise ValueError(f"AWS Client error: {e}")
+
+AWS_S3_ABSTRACTS_BUCKET_NAME = os.getenv("AWS_S3_ABSTRACTS_BUCKET_NAME")
+
+def upload_abstract_to_s3(file: UploadFile, session_id: int) -> str:
+    """
+    Upload a thesis abstract to the abstracts S3 bucket.
+    """
+    if not all([AWS_REGION, AWS_S3_ABSTRACTS_BUCKET_NAME]):
+        raise ValueError("AWS abstracts bucket configuration is missing in environment variables.")
+
+    object_name = f"abstracts/session_{session_id}_{file.filename}"
+
+    try:
+        s3_client.upload_fileobj(
+            file.file,
+            AWS_S3_ABSTRACTS_BUCKET_NAME,
+            object_name,
+            ExtraArgs={"ContentType": file.content_type}
+        )
+        return object_name
+    except Exception as e:
+        raise ValueError(f"Failed to upload abstract: {e}")
+
+import PyPDF2
+import io
+
+def get_abstract_text_from_s3(object_key: str) -> str:
+    """
+    Download abstract from S3 and extract its text (PDF supported).
+    """
+    try:
+        response = s3_client.get_object(Bucket=AWS_S3_ABSTRACTS_BUCKET_NAME, Key=object_key)
+        file_content = response['Body'].read()
+        
+        if object_key.lower().endswith('.pdf'):
+            reader = PyPDF2.PdfReader(io.BytesIO(file_content))
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() + "\n"
+            return text
+        else:
+            # Assume text based
+            return file_content.decode('utf-8')
+    except Exception as e:
+        print(f"Error fetching/parsing abstract: {e}")
+        return ""
+
+def delete_abstract_from_s3(object_key: str):
+    """
+    Delete the abstract object securely after interview finishes.
+    """
+    if not object_key:
+        return
+    try:
+        s3_client.delete_object(Bucket=AWS_S3_ABSTRACTS_BUCKET_NAME, Key=object_key)
+        print(f"[DEBUG] Successfully deleted abstract logic: {object_key}")
+    except Exception as e:
+        print(f"Failed to delete abstract {object_key}: {e}")
