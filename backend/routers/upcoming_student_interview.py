@@ -17,8 +17,8 @@ from database import get_db
 from core.deps import get_current_user, get_current_user_ws
 from core.tts import generate_tts_base64_async
 from models.user import User
-from models.interview import InterviewSession, InterviewMessage
-from schemas.interview import InterviewSessionResponse, InterviewSessionWithMessagesResponse, InterviewChatRequest, CompleteInterviewRequest
+from models.upcoming_student_interview import UpcomingStudentInterviewSession, UpcomingStudentInterviewMessage
+from schemas.upcoming_student_interview import UpcomingStudentInterviewSessionResponse, UpcomingStudentInterviewSessionWithMessagesResponse, UpcomingStudentInterviewChatRequest, UpcomingStudentCompleteInterviewRequest
 
 router = APIRouter()
 
@@ -63,13 +63,13 @@ CRITICAL INSTRUCTION: You MUST speak DIRECTLY to the student. DO NOT narrate you
 4. Conclude gracefully when finished and instruct them to click 'Complete Interview'.
 """
 
-@router.post("/start", response_model=InterviewSessionResponse)
+@router.post("/start", response_model=UpcomingStudentInterviewSessionResponse)
 def start_interview(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Creates a new interview session."""
+    """Creates a new structured upcoming student interview session."""
     if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
         raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT, CTE, and CBAPA students.")
         
-    session = InterviewSession(user_id=current_user.id)
+    session = UpcomingStudentInterviewSession(user_id=current_user.id)
     db.add(session)
     db.commit()
     db.refresh(session)
@@ -77,10 +77,10 @@ def start_interview(db: Session = Depends(get_db), current_user: User = Depends(
 
 from typing import List
 
-@router.get("/", response_model=List[InterviewSessionResponse])
+@router.get("/", response_model=List[UpcomingStudentInterviewSessionResponse])
 def get_user_interviews(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Fetches all past interview sessions for the authenticated user."""
-    sessions = db.query(InterviewSession).filter(InterviewSession.user_id == current_user.id).order_by(InterviewSession.start_time.desc()).all()
+    """Fetches all past past upcoming student interview sessions for the authenticated user."""
+    sessions = db.query(UpcomingStudentInterviewSession).filter(UpcomingStudentInterviewSession.user_id == current_user.id).order_by(UpcomingStudentInterviewSession.start_time.desc()).all()
     return sessions
 
 @router.websocket("/{session_id}/chat")
@@ -96,7 +96,7 @@ async def interview_chat_ws(
         return
 
     # Validate Session & Timer
-    session = db.query(InterviewSession).filter(InterviewSession.id == session_id, InterviewSession.user_id == current_user.id).first()
+    session = db.query(UpcomingStudentInterviewSession).filter(UpcomingStudentInterviewSession.id == session_id, UpcomingStudentInterviewSession.user_id == current_user.id).first()
     if not session:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Interview session not found.")
         return
@@ -269,12 +269,12 @@ class CbapaInterviewEvaluation(typing_extensions.TypedDict):
     ethical_score: float
     feedback_summary: str
 
-@router.post("/{session_id}/complete", response_model=InterviewSessionResponse)
-def complete_interview(session_id: int, request: CompleteInterviewRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+@router.post("/{session_id}/complete", response_model=UpcomingStudentInterviewSessionResponse)
+def complete_interview(session_id: int, request: UpcomingStudentCompleteInterviewRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
         raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT, CTE, and CBAPA students.")
 
-    session = db.query(InterviewSession).filter(InterviewSession.id == session_id, InterviewSession.user_id == current_user.id).first()
+    session = db.query(UpcomingStudentInterviewSession).filter(UpcomingStudentInterviewSession.id == session_id, UpcomingStudentInterviewSession.user_id == current_user.id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Interview session not found.")
         
@@ -282,13 +282,13 @@ def complete_interview(session_id: int, request: CompleteInterviewRequest, db: S
         return session
         
     # Build Transcript
-    history = db.query(InterviewMessage).filter(InterviewMessage.session_id == session.id).order_by(InterviewMessage.timestamp.asc()).all()
+    history = db.query(UpcomingStudentInterviewMessage).filter(UpcomingStudentInterviewMessage.session_id == session.id).order_by(UpcomingStudentInterviewMessage.timestamp.asc()).all()
     if history:
         transcript = "\n".join([f"{msg.role.upper()}: {msg.content}" for msg in history])
     elif request.conversation:
         transcript = "\n".join([f"{msg.sender.upper()}: {msg.text}" for msg in request.conversation])
         for item in request.conversation:
-            new_msg = InterviewMessage(session_id=session.id, role=item.sender, content=item.text)
+            new_msg = UpcomingStudentInterviewMessage(session_id=session.id, role=item.sender, content=item.text)
             db.add(new_msg)
         db.commit()
     else:
@@ -383,12 +383,12 @@ def complete_interview(session_id: int, request: CompleteInterviewRequest, db: S
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate evaluation: {e}")
 
-@router.get("/{session_id}", response_model=InterviewSessionWithMessagesResponse)
+@router.get("/{session_id}", response_model=UpcomingStudentInterviewSessionWithMessagesResponse)
 def get_interview(session_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
         raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT, CTE, and CBAPA students.")
 
-    session = db.query(InterviewSession).filter(InterviewSession.id == session_id, InterviewSession.user_id == current_user.id).first()
+    session = db.query(UpcomingStudentInterviewSession).filter(UpcomingStudentInterviewSession.id == session_id, UpcomingStudentInterviewSession.user_id == current_user.id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Interview session not found.")
     return session

@@ -33,7 +33,8 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 # for 'autogenerate' support
 from models.user import Base
-import models.interview
+import models.upcoming_student_interview
+import models.thesis_interview
 
 target_metadata = Base.metadata
 

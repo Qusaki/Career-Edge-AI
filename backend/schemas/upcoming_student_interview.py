@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 
-class InterviewMessageResponse(BaseModel):
+class UpcomingStudentInterviewMessageResponse(BaseModel):
     id: int
     role: str
     content: str
@@ -11,7 +11,7 @@ class InterviewMessageResponse(BaseModel):
     class Config:
         from_attributes = True
 
-class InterviewSessionResponse(BaseModel):
+class UpcomingStudentInterviewSessionResponse(BaseModel):
     id: int
     user_id: int
     start_time: datetime
@@ -48,16 +48,15 @@ class InterviewSessionResponse(BaseModel):
     class Config:
         from_attributes = True
 
-class InterviewSessionWithMessagesResponse(InterviewSessionResponse):
-    messages: List[InterviewMessageResponse] = []
+class UpcomingStudentInterviewSessionWithMessagesResponse(UpcomingStudentInterviewSessionResponse):
+    messages: List[UpcomingStudentInterviewMessageResponse] = []
 
-class InterviewChatRequest(BaseModel):
+class UpcomingStudentInterviewChatRequest(BaseModel):
     text: str
 
-class ConversationSpeaker(BaseModel):
+class UpcomingStudentConversationSpeaker(BaseModel):
     sender: str
     text: str
 
-class CompleteInterviewRequest(BaseModel):
-    conversation: List[ConversationSpeaker] = []
-
+class UpcomingStudentCompleteInterviewRequest(BaseModel):
+    conversation: List[UpcomingStudentConversationSpeaker] = []
