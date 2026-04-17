@@ -8,6 +8,7 @@ on:
 env:
   AWS_REGION: ap-southeast-1 # Change if your ECR repo is in another region
   ECR_REPOSITORY: fastapi-backend # Replace with your ECR repository name
+  AWS_S3_ABSTRACTS_BUCKET_NAME: career-edge-ai-abstracts-610628048969
 
 jobs:
   build-and-push:
@@ -48,7 +49,7 @@ jobs:
         host: ${{ secrets.EC2_HOST }}
         username: ${{ secrets.EC2_USER }}
         key: ${{ secrets.EC2_SSH_KEY }}
-        envs: ECR_REGISTRY,ECR_REPOSITORY,AWS_REGION
+        envs: ECR_REGISTRY,ECR_REPOSITORY,AWS_REGION,AWS_S3_ABSTRACTS_BUCKET_NAME
         script: |
           set -e # Ensure the pipeline fails if any command fails!
           
@@ -72,6 +73,7 @@ jobs:
             -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
             -e AWS_REGION="${{ env.AWS_REGION }}" \
             -e AWS_S3_BUCKET_NAME="${{ secrets.AWS_S3_BUCKET_NAME }}" \
+            -e AWS_S3_ABSTRACTS_BUCKET_NAME="${{ env.AWS_S3_ABSTRACTS_BUCKET_NAME }}" \
             -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
             -e GOOGLE_CREDENTIALS_JSON='${{ secrets.GOOGLE_CREDENTIALS_JSON }}' \
             $ECR_REGISTRY/$ECR_REPOSITORY:latest
