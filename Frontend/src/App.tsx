@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, useMotionValue, useSpring, useTransform } from 'motion/react';
-import { Mic, FileText, CheckCircle, BarChart, Play, ArrowRight, Github, Twitter, Linkedin, Sparkles, BrainCircuit, Target, GraduationCap, Menu, X, MessageSquare, Video, Plus, Send, MousePointer2, Paperclip, LogOut, MapPin, Phone, Mail, Globe } from 'lucide-react';
+import { Mic, FileText, CheckCircle, BarChart, Play, ArrowRight, Github, Facebook, Sparkles, BrainCircuit, Target, GraduationCap, Menu, X, MessageSquare, Video, Plus, Send, MousePointer2, Paperclip, LogOut, MapPin, Phone, Mail, Globe } from 'lucide-react';
 import { AuthPage } from './components/AuthPage';
 import { Dashboard } from './components/Dashboard';
 
@@ -624,61 +624,17 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-800/50 bg-slate-950 pt-16 pb-8 relative z-10">
+      <footer className="bg-slate-950 py-8 relative z-10">
         <div className="container mx-auto px-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-16">
-            <div className="col-span-2 md:col-span-1 flex flex-col gap-4 pr-4">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="font-bold text-lg tracking-tight text-slate-200">Career Edge</span>
-              </div>
-              <p className="text-sm text-slate-400 leading-relaxed">
-                Empowering candidates to showcase their true potential through AI-driven interview practice and feedback.
-              </p>
-            </div>
-
-            <div>
-              <h4 className="font-semibold text-slate-200 mb-4">Product</h4>
-              <ul className="flex flex-col gap-3 text-sm text-slate-400">
-                <li><a href="#" className="hover:text-sky-400 transition-colors">Features</a></li>
-                <li><a href="#" className="hover:text-sky-400 transition-colors">Contact</a></li>
-                <li><a href="#" className="hover:text-sky-400 transition-colors">Use Cases</a></li>
-                <li><a href="#" className="hover:text-sky-400 transition-colors">Enterprise</a></li>
-              </ul>
-            </div>
-
-            <div>
-              <h4 className="font-semibold text-slate-200 mb-4">Resources</h4>
-              <ul className="flex flex-col gap-3 text-sm text-slate-400">
-                <li><a href="#" className="hover:text-sky-400 transition-colors">Blog</a></li>
-                <li><a href="#" className="hover:text-sky-400 transition-colors">Interview Guides</a></li>
-                <li><a href="#" className="hover:text-sky-400 transition-colors">Help Center</a></li>
-                <li><a href="#" className="hover:text-sky-400 transition-colors">Community</a></li>
-              </ul>
-            </div>
-
-            <div>
-              <h4 className="font-semibold text-slate-200 mb-4">Company</h4>
-              <ul className="flex flex-col gap-3 text-sm text-slate-400">
-                <li><a href="#" className="hover:text-sky-400 transition-colors">About Us</a></li>
-                <li><a href="#" className="hover:text-sky-400 transition-colors">Careers</a></li>
-                <li><a href="#" className="hover:text-sky-400 transition-colors">Privacy Policy</a></li>
-                <li><a href="#" className="hover:text-sky-400 transition-colors">Terms of Service</a></li>
-              </ul>
-            </div>
-          </div>
-
           <div className="pt-8 border-t border-slate-800/50 flex flex-col md:flex-row items-center justify-between gap-4">
             <p className="text-sm text-slate-500">
               © {new Date().getFullYear()} Career Edge Inc. All rights reserved.
             </p>
             <div className="flex items-center gap-4">
-              <a href="#" className="w-10 h-10 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center hover:bg-slate-800 hover:border-slate-700 transition-all group">
-                <Twitter className="w-4 h-4 text-slate-400 group-hover:text-sky-400" />
+              <a href="https://www.facebook.com/PRMSUCCITCastillejos" target="_blank" rel="noopener noreferrer" className="w-10 h-10 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center hover:bg-slate-800 hover:border-slate-700 transition-all group">
+                <Facebook className="w-4 h-4 text-slate-400 group-hover:text-sky-400" />
               </a>
-              <a href="#" className="w-10 h-10 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center hover:bg-slate-800 hover:border-slate-700 transition-all group">
-                <Linkedin className="w-4 h-4 text-slate-400 group-hover:text-sky-400" />
-              </a>
-              <a href="#" className="w-10 h-10 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center hover:bg-slate-800 hover:border-slate-700 transition-all group">
+              <a href="https://github.com/Qusaki/Career-Edge-AI" target="_blank" rel="noopener noreferrer" className="w-10 h-10 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center hover:bg-slate-800 hover:border-slate-700 transition-all group">
                 <Github className="w-4 h-4 text-slate-400 group-hover:text-sky-400" />
               </a>
             </div>
