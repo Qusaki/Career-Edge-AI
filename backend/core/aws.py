@@ -78,7 +78,7 @@ def upload_abstract_to_s3(file: UploadFile, session_id: int) -> str:
     except Exception as e:
         raise ValueError(f"Failed to upload abstract: {e}")
 
-import PyPDF2
+pass # import PyPDF2
 import io
 
 def get_abstract_text_from_s3(object_key: str) -> str:
@@ -90,7 +90,7 @@ def get_abstract_text_from_s3(object_key: str) -> str:
         file_content = response['Body'].read()
         
         if object_key.lower().endswith('.pdf'):
-            reader = PyPDF2.PdfReader(io.BytesIO(file_content))
+            reader = None # PyPDF2.PdfReader(io.BytesIO(file_content))
             text = ""
             for page in reader.pages:
                 text += page.extract_text() + "\n"

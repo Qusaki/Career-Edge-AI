@@ -1,3 +1,4 @@
+from core.aws import upload_file_to_s3
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from database import get_db
@@ -5,7 +6,7 @@ from models.user import User
 from schemas.user import UserCreate, UserResponse
 from core.security import get_password_hash
 from core.deps import get_current_user
-from core.aws import upload_file_to_s3
+
 
 router = APIRouter()
 

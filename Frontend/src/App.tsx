@@ -380,6 +380,13 @@ const FeatureCard = ({ icon, title, description }: { icon: React.ReactNode, titl
 export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [currentView, setCurrentView] = useState<'landing' | 'auth' | 'dashboard'>('landing');
+
+  useEffect(() => {
+    // Auto-login if token exists
+    if (localStorage.getItem('token')) {
+      setCurrentView('dashboard');
+    }
+  }, []);
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
 
   const openAuth = (mode: 'signin' | 'signup') => {

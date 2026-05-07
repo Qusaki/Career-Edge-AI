@@ -9,13 +9,10 @@ import base64
 from fastapi import APIRouter, HTTPException, Depends, Request, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
-import google.generativeai as genai
-from google import genai as new_genai
-from google.genai import types
+from openai import AsyncOpenAI, OpenAI
 
 from database import get_db
 from core.deps import get_current_user, get_current_user_ws
-from core.tts import generate_tts_base64_async
 from core.aws import upload_abstract_to_s3, get_abstract_text_from_s3, delete_abstract_from_s3
 from models.user import User
 from models.thesis_interview import ThesisInterviewSession, ThesisInterviewMessage
@@ -49,7 +46,7 @@ You are evaluating a College of Teacher Education (CTE) Thesis Defense (BSED / B
    - Learning Outcomes & Student Assessment
    - Literature Review & DepEd Alignment
    - Scalability & Policy Recommendations
-3. Conclude gracefully when the comprehensive review is finished or the hour limit is near,.
+3. Conclude gracefully when the comprehensive review is finished or the hour limit is near.
 """
     elif dep == "CBAPA":
         return base_prompt + """
@@ -94,21 +91,7 @@ def get_user_interviews(db: Session = Depends(get_db), current_user: User = Depe
     sessions = db.query(ThesisInterviewSession).filter(ThesisInterviewSession.user_id == current_user.id).order_by(ThesisInterviewSession.start_time.desc()).all()
     return sessions
 
-@router.post("/{session_id}/upload-abstract")
-def upload_thesis_abstract(session_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    session = db.query(ThesisInterviewSession).filter(ThesisInterviewSession.id == session_id, ThesisInterviewSession.user_id == current_user.id).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Thesis session not found.")
-    if session.status != "active":
-        raise HTTPException(status_code=400, detail="Cannot upload to an inactive session.")
-    
-    try:
-        s3_key = upload_abstract_to_s3(file, session_id)
-        session.abstract_s3_key = s3_key
-        db.commit()
-        return {"message": "Abstract uploaded successfully.", "s3_key": s3_key}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.websocket("/{session_id}/chat")
 async def interview_chat_ws(
@@ -117,7 +100,7 @@ async def interview_chat_ws(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_ws)
 ):
-    """Handles real-time bi-directional audio streaming with Gemini Live API for Thesis Defense."""
+    """Handles real-time bi-directional streaming with Local Ollama API for Thesis Defense."""
     if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Forbidden: Department not authorized.")
         return
@@ -148,92 +131,98 @@ async def interview_chat_ws(
 
     system_prompt = get_thesis_system_prompt(current_user.department, abstract_text)
     
-    # Initialize Google GenAI Client
-    api_key = os.environ.get("GEMINI_API_KEY")
-    client = new_genai.Client(
-        api_key=api_key,
-        http_options=types.HttpOptions(api_version="v1beta")
-    )
+    client = AsyncOpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+    model_name = os.getenv("OLLAMA_MODEL", "llama3.2")
     
-    config = types.LiveConnectConfig(
-        response_modalities=["AUDIO"],
-        system_instruction=types.Content(parts=[types.Part.from_text(text=system_prompt)])
-    )
+    messages = [{"role": "system", "content": system_prompt}]
     
     try:
-        async with client.aio.live.connect(model="models/gemini-2.5-flash-native-audio-latest", config=config) as live_session:
-            
-            audio_chunk_count = 0
-            
-            async def receive_from_client():
+        while True:
+            msg = await websocket.receive()
+            if "text" in msg:
                 try:
-                    while True:
-                        msg = await websocket.receive()
-                        if "text" in msg:
-                            try:
-                                data = json.loads(msg["text"])
-                                if data.get("text"):
-                                    turn_complete = data.get("end_of_turn", False)
-                                    print(f"\n[DEBUG] Sending to Gemini: '{data['text']}' | end_of_turn={turn_complete}")
+                    data = json.loads(msg["text"])
+                    if data.get("text"):
+                        user_text = data["text"]
+                        print(f"\\n[DEBUG] Received from user: '{user_text}'")
+                        messages.append({"role": "user", "content": user_text})
+                        
+                        response_stream = await client.chat.completions.create(
+                            model=model_name,
+                            messages=messages,
+                            stream=True
+                        )
+                        
+                        full_response = ""
+                        sentence_buffer = ""
+                        tts_tasks = []
+                        
+                        async def process_tts(text_to_speak: str):
+                            audio_b64 = await generate_tts_base64_async(text_to_speak)
+                            if audio_b64:
+                                try:
+                                    audio_bytes = base64.b64decode(audio_b64)
+                                    await websocket.send_bytes(audio_bytes)
+                                except Exception as e:
+                                    print(f"Error sending audio bytes: {e}")
+
+                        async for chunk in response_stream:
+                            if chunk.choices and len(chunk.choices) > 0:
+                                content = chunk.choices[0].delta.content
+                                if content:
+                                    full_response += content
+                                    sentence_buffer += content
                                     
-                                    await live_session.send(
-                                        input=data["text"],
-                                        end_of_turn=turn_complete
-                                    )
-                                    print("[DEBUG] Successfully dispatched to Gemini!")
-                                elif data.get("type") == "end_of_turn":
-                                    print("\n[DEBUG] Sending manual turn_complete!")
-                                    await live_session.send(input="", end_of_turn=True)
-                            except Exception as e:
-                                print(f"[DEBUG] Error handling text message: {e}")
-                except WebSocketDisconnect:
-                    print(f"[DEBUG] Client disconnected.")
-                except Exception as e:
-                    print(f"[DEBUG] Receive from client error: {e}")
-
-            async def send_to_client():
-                try:
-                    while True:
-                        async for response in live_session.receive():
-                            server_content = response.server_content
-                            if server_content is not None:
-                                model_turn = server_content.model_turn
-                                if model_turn is not None:
-                                    for part in model_turn.parts:
-                                        if part.inline_data:
-                                            await websocket.send_bytes(part.inline_data.data)
-                                        if part.text:
-                                            print(f"[DEBUG] Received text chunk from Gemini: {part.text}")
-                                            await websocket.send_json({"text": part.text})
+                                    await websocket.send_json({"text": content})
+                                    
+                                    delimiters = ['. ', '! ', '? ', '.\\n', '!\\n', '?\\n', ': ', '; ', ', ', '\\n']
+                                    for punctuation in delimiters:
+                                        if punctuation in sentence_buffer:
+                                            parts = sentence_buffer.split(punctuation)
+                                            text_to_speak = parts[0] + punctuation[0]
+                                            sanitized_text = strip_markdown_for_tts(text_to_speak)
+                                            
+                                            if len(sanitized_text.strip()) > 5:
+                                                task = asyncio.create_task(process_tts(sanitized_text))
+                                                tts_tasks.append(task)
+                                                
+                                            sentence_buffer = punctuation.join(parts[1:])
+                                            break
+                                            
+                        if sentence_buffer.strip():
+                            sanitized_remainder = strip_markdown_for_tts(sentence_buffer)
+                            task = asyncio.create_task(process_tts(sanitized_remainder))
+                            tts_tasks.append(task)
                             
-                                if server_content.turn_complete:
-                                    print("[DEBUG] Received turn_complete from Gemini!")
-                                    await websocket.send_json({"type": "turn_complete"})
-                                
-                                if hasattr(server_content, 'interrupted') and server_content.interrupted:
-                                    print("[DEBUG] Gemini turn was INTERRUPTED!")
-                            else:
-                                # Log any non-content responses (setup, errors, etc.)
-                                print(f"[DEBUG] Non-content response from Gemini: {type(response)}")
-                        print("[DEBUG] live_session.receive() iterator ended. Restarting...")
-                except asyncio.CancelledError:
-                    pass
+                        # Wait for all TTS to finish
+                        if tts_tasks:
+                            await asyncio.gather(*tts_tasks, return_exceptions=True)
+                            
+                        messages.append({"role": "assistant", "content": full_response})
+                        
+                        # Signal turn complete
+                        await websocket.send_json({"type": "turn_complete"})
+                        
                 except Exception as e:
-                    print(f"[DEBUG] Send to client error: {e}")
-
-            await asyncio.gather(receive_from_client(), send_to_client())
+                    print(f"[DEBUG] Error handling text message: {e}")
+            elif "bytes" in msg:
+                 pass
+    except WebSocketDisconnect:
+        print(f"[DEBUG] Client disconnected.")
     except Exception as e:
-        print(f"Live API connection failed: {e}")
+        print(f"WebSocket Error: {e}")
         try:
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Failed to connect to AI.")
         except Exception:
             pass
+
 
 def get_thesis_evaluation_system_prompt(department: str) -> str:
     if department and department.upper() == "CTE":
         return """
 You are a strict grading algorithm evaluating a transcript of a mock College of Teacher Education (CTE) Thesis Defense.
 You will extract 6 scores out of 100 based on the provided rubric. You must respond in STRICT JSON matching the schema.
+Required JSON keys: pedagogical_innovation_score, action_research_score, learning_outcomes_score, literature_alignment_score, teaching_demo_score, scalability_policy_score, feedback_summary.
 
 Criteria & Weights:
 1. Pedagogical Innovation & Classroom Impact (25%)
@@ -247,6 +236,7 @@ Criteria & Weights:
         return """
 You are a strict grading algorithm evaluating a transcript of a mock College of Business, Accountancy, and Public Administration (CBAPA) Thesis Defense.
 You will extract 5 scores out of 100 based on the provided rubric. You must respond in STRICT JSON matching the schema.
+Required JSON keys: research_problem_score, methodology_analysis_score, practical_roi_score, literature_theoretical_score, professional_delivery_score, feedback_summary.
 
 Criteria & Weights:
 1. Research Problem & Business Relevance (25%)
@@ -259,6 +249,7 @@ Criteria & Weights:
         return """
 You are a strict grading algorithm evaluating a transcript of a mock BS Computer Science Thesis Defense.
 You will extract 5 scores out of 100 based on the provided rubric. You must respond in STRICT JSON matching the schema.
+Required JSON keys: technical_innovation_score, system_implementation_score, experimental_validation_score, literature_review_score, demo_quality_score, feedback_summary.
 
 Criteria & Weights:
 1. Technical Innovation & Algorithm Design (30%)
@@ -267,33 +258,6 @@ Criteria & Weights:
 4. Related Work & Literature Review (15%)
 5. Demo & Presentation Quality (10%)
 """
-
-import typing_extensions
-
-class ThesisCcitEvaluation(typing_extensions.TypedDict):
-    technical_innovation_score: float
-    system_implementation_score: float
-    experimental_validation_score: float
-    literature_review_score: float
-    demo_quality_score: float
-    feedback_summary: str
-
-class ThesisCteEvaluation(typing_extensions.TypedDict):
-    pedagogical_innovation_score: float
-    action_research_score: float
-    learning_outcomes_score: float
-    literature_alignment_score: float
-    teaching_demo_score: float
-    scalability_policy_score: float
-    feedback_summary: str
-
-class ThesisCbapaEvaluation(typing_extensions.TypedDict):
-    research_problem_score: float
-    methodology_analysis_score: float
-    practical_roi_score: float
-    literature_theoretical_score: float
-    professional_delivery_score: float
-    feedback_summary: str
 
 @router.post("/{session_id}/complete", response_model=ThesisInterviewSessionResponse)
 def complete_interview(session_id: int, request: ThesisCompleteInterviewRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -310,9 +274,9 @@ def complete_interview(session_id: int, request: ThesisCompleteInterviewRequest,
     # Build Transcript
     history = db.query(ThesisInterviewMessage).filter(ThesisInterviewMessage.session_id == session.id).order_by(ThesisInterviewMessage.timestamp.asc()).all()
     if history:
-        transcript = "\n".join([f"{msg.role.upper()}: {msg.content}" for msg in history])
+        transcript = "\\n".join([f"{msg.role.upper()}: {msg.content}" for msg in history])
     elif request.conversation:
-        transcript = "\n".join([f"{msg.sender.upper()}: {msg.text}" for msg in request.conversation])
+        transcript = "\\n".join([f"{msg.sender.upper()}: {msg.text}" for msg in request.conversation])
         for item in request.conversation:
             new_msg = ThesisInterviewMessage(session_id=session.id, role=item.sender, content=item.text)
             db.add(new_msg)
@@ -320,31 +284,15 @@ def complete_interview(session_id: int, request: ThesisCompleteInterviewRequest,
     else:
         raise HTTPException(status_code=400, detail="Cannot grade an empty thesis defense.")
     
-    # Send to Gemini with JSON Schema
-    system_prompt = get_thesis_evaluation_system_prompt(current_user.department)
-    if current_user.department.upper() == "CTE":
-        schema_to_use = ThesisCteEvaluation
-    elif current_user.department.upper() == "CBAPA":
-        schema_to_use = ThesisCbapaEvaluation
-    else:
-        schema_to_use = ThesisCcitEvaluation
+    if not request.evaluation:
+        raise HTTPException(status_code=400, detail="Missing frontend evaluation data.")
         
-    model = genai.GenerativeModel('gemini-2.5-flash', system_instruction=system_prompt)
-    
-    response = model.generate_content(
-        f"Evaluate this transcript:\\n\\n{transcript}",
-        generation_config=genai.GenerationConfig(
-            response_mime_type="application/json",
-            response_schema=schema_to_use
-        )
-    )
-    
     try:
         if session.abstract_s3_key:
             delete_abstract_from_s3(session.abstract_s3_key)
-            session.abstract_s3_key = None # Clear it sequentially so we don't accidentally try to delete it twice
+            session.abstract_s3_key = None
             
-        evaluation = json.loads(response.text)
+        evaluation = request.evaluation
         
         if current_user.department.upper() == "CTE":
             session.score_cte_pedagogical_innovation = evaluation.get("pedagogical_innovation_score", 0)

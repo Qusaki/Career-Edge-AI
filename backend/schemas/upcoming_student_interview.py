@@ -60,3 +60,4 @@ class UpcomingStudentConversationSpeaker(BaseModel):
 
 class UpcomingStudentCompleteInterviewRequest(BaseModel):
     conversation: List[UpcomingStudentConversationSpeaker] = []
+    evaluation: Optional[dict] = None

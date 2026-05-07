@@ -3,6 +3,10 @@ import { motion } from 'motion/react';
 import { Canvas } from '@react-three/fiber';
 import { Environment, OrbitControls } from '@react-three/drei';
 import { ProfessorModel } from './ProfessorModel';
+import { useWebLLM } from '../hooks/useWebLLM';
+import { db } from '../db';
+import * as pdfjsLib from 'pdfjs-dist';
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.mjs`;
 import {
   LayoutDashboard,
   Video,
@@ -41,6 +45,7 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
+  const { engine: webLLMEngine, isLoading: isLlmLoading, progress: llmProgress, status: llmStatus } = useWebLLM();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'history' | 'analytics' | 'profile' | 'settings' | 'interview-type' | 'university-setup' | 'new-interview' | 'interview-session' | 'interview-result' | 'thesis-setup' | 'thesis-session'>('dashboard');
   const [prevTab, setPrevTab] = useState<string>('dashboard');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -190,9 +195,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       if (res.ok) {
         const data = await res.json();
         setInterviewHistory(data);
+        db.history.put({ id: 1, type: 'upcoming', data: data, timestamp: Date.now() }).catch(console.error);
       }
     } catch (e) {
-      console.error(e);
+      console.warn("Offline: loading interview history from cache");
+      const cached = await db.history.get(1);
+      const data = cached ? cached.data : [];
+      
+      const offlineSessions = await db.offlineSessions.toArray();
+      const offlineUpcoming = offlineSessions.filter(s => s.type === 'upcoming').map(s => ({
+         id: s.localId,
+         status: s.status === 'pending_sync' ? 'pending_sync' : 'completed',
+         start_time: new Date(s.timestamp).toISOString(),
+         total_score: s.evaluation?.total_score || s.evaluation?.technical_score || 0,
+         passed: true,
+         isOffline: true
+      }));
+
+      setInterviewHistory([...offlineUpcoming, ...data]);
     }
   }, [API_URL]);
 
@@ -206,17 +226,84 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       if (res.ok) {
         const data = await res.json();
         setThesisHistory(data);
+        db.history.put({ id: 2, type: 'thesis', data: data, timestamp: Date.now() }).catch(console.error);
       }
     } catch (e) {
-      console.error(e);
+      console.warn("Offline: loading thesis history from cache");
+      const cached = await db.history.get(2);
+      const data = cached ? cached.data : [];
+      
+      const offlineSessions = await db.offlineSessions.toArray();
+      const offlineThesis = offlineSessions.filter(s => s.type === 'thesis').map(s => ({
+         id: s.localId,
+         status: s.status === 'pending_sync' ? 'pending_sync' : 'completed',
+         start_time: new Date(s.timestamp).toISOString(),
+         total_score: s.evaluation?.total_score || s.evaluation?.score_ccit_technical_innovation || 0,
+         passed: true,
+         isOffline: true
+      }));
+
+      setThesisHistory([...offlineThesis, ...data]);
     }
   }, [API_URL]);
 
   useEffect(() => {
+    const syncOfflineData = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        
+        const pendingSessions = await db.offlineSessions.where('status').equals('pending_sync').toArray();
+        if (pendingSessions.length === 0) return;
+        
+        console.log(`Syncing ${pendingSessions.length} offline sessions to cloud...`);
+        
+        for (const session of pendingSessions) {
+           const endpointPrefix = session.type === 'upcoming' ? '/upcoming-student-interview' : '/thesis-interview';
+           
+           // Step 1: Start
+           const startRes = await fetch(`${API_URL}${endpointPrefix}/start`, {
+             method: 'POST',
+             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+           });
+           if (!startRes.ok) continue; // Try again later
+           
+           const startData = await startRes.json();
+           const realId = startData.id;
+           
+           // Step 2: Complete
+           const completeRes = await fetch(`${API_URL}${endpointPrefix}/${realId}/complete`, {
+             method: 'POST',
+             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+             body: JSON.stringify({ conversation: session.conversationLog, evaluation: session.evaluation })
+           });
+           
+           if (completeRes.ok) {
+              await db.offlineSessions.update(session.localId, { status: 'synced' });
+              console.log(`Synced session ${session.localId} -> ${realId}`);
+           }
+        }
+        
+        // Refresh history
+        fetchHistory();
+        fetchThesisHistory();
+      } catch (e) {
+        console.error("Sync failed", e);
+      }
+    };
+
+    window.addEventListener('online', syncOfflineData);
+    // Also try syncing on component mount if online
+    if (navigator.onLine) {
+      syncOfflineData();
+    }
+
     const fetchUser = async () => {
       try {
         const token = localStorage.getItem('token');
         if (!token) {
+          // If no token, maybe we shouldn't force logout immediately if we are offline, 
+          // but if there's no token, we can't even authenticate offline.
           onLogout();
           return;
         }
@@ -229,18 +316,43 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
         if (res.ok) {
           const data = await res.json();
-          setProfile({
+          const p = {
             name: `${data.firstname || ''} ${data.middlename || ''} ${data.lastname || ''}`.replace(/\s+/g, ' ').trim() || 'Guest User',
             email: data.email || '',
             password: '',
             department: data.department || '',
-            profilePicture: data.profile_picture_url || 'https://api.dicebear.com/7.x/micah/svg?seed=Alex&backgroundColor=cbd5e1'
-          });
+            profilePicture: data.profile_picture_url || `https://api.dicebear.com/7.x/micah/svg?seed=Alex&backgroundColor=cbd5e1`
+          };
+          setProfile(p);
+          
+          db.profile.put({
+            id: 1,
+            email: p.email,
+            first_name: p.name,
+            department: p.department,
+            profile_picture_url: p.profilePicture
+          }).catch(console.error);
+
         } else {
           onLogout();
         }
       } catch (error) {
-        console.error('Failed to fetch user:', error);
+        console.error('Failed to fetch user, trying offline cache:', error);
+        try {
+          const cached = await db.profile.get(1);
+          if (cached) {
+            setProfile({
+              name: cached.first_name || 'Guest User',
+              email: cached.email || '',
+              password: '',
+              department: cached.department || '',
+              profilePicture: cached.profile_picture_url || `https://api.dicebear.com/7.x/micah/svg?seed=Alex&backgroundColor=cbd5e1`
+            });
+          } else {
+             // If completely failed and no cache
+             onLogout();
+          }
+        } catch(e) {}
       }
     };
     fetchUser();
@@ -324,6 +436,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const [aiResponseText, setAiResponseText] = useState('');
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [conversationLog, setConversationLog] = useState<{ sender: 'user' | 'ai', text: string }[]>([]);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
 
   const recognitionRef = React.useRef<any>(null);
   const audioQueueRef = React.useRef<string[]>([]);
@@ -528,8 +641,156 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     };
   };
 
+
+  const handleLocalWebLLM = async (userText: string, currentMessages: any[]) => {
+    if (!webLLMEngine) {
+      alert("AI is still loading. Please wait a moment.");
+      return;
+    }
+    
+    // Add user message to state
+    const newMessages = [...currentMessages, { role: 'user', content: userText }];
+    setChatMessages(newMessages);
+    
+    setAiResponseText('');
+    setIsAiSpeaking(true);
+    isAiSpeakingRef.current = true;
+    
+    // Fake lip sync loop
+    const startLipSync = () => {
+      const loop = () => {
+        if(isAiSpeakingRef.current) {
+          setMouthValue(Math.random() * 0.3 + 0.1);
+          requestAnimationFrame(loop);
+        } else {
+          setMouthValue(0);
+        }
+      };
+      requestAnimationFrame(loop);
+    };
+    startLipSync();
+
+    try {
+      console.log("Starting WebLLM generation...");
+      const responseStream = await webLLMEngine.chat.completions.create({
+        messages: newMessages,
+        stream: true
+      });
+
+      let fullResponse = "";
+      let sentenceBuffer = "";
+
+      // TTS Queueing System
+      let ttsQueue: string[] = [];
+      let isTtsPlaying = false;
+
+      const processTtsQueue = async () => {
+        if (isTtsPlaying || ttsQueue.length === 0) return;
+        isTtsPlaying = true;
+        
+        while (ttsQueue.length > 0) {
+           const text = ttsQueue.shift();
+           if (!text || !isAiSpeakingRef.current) break; // If we left the room, stop processing
+           
+           await new Promise<void>((resolve) => {
+              const tagalogKeywords = ['ang', 'mga', 'ng', 'sa', 'at', 'na', 'ay', 'ako', 'ikaw', 'siya', 'tayo', 'kami', 'kayo', 'sila', 'po', 'opo', 'hindi', 'oo', 'bakit', 'paano'];
+              const words = text.toLowerCase().split(/\W+/);
+              let tagalogCount = 0;
+              for (const w of words) {
+                 if (tagalogKeywords.includes(w)) tagalogCount++;
+              }
+              const isTagalog = tagalogCount > 1;
+              const lang = isTagalog ? 'tl' : 'en-US';
+
+              const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(text)}`;
+              
+              if (audioPlayerRef.current) {
+                 audioPlayerRef.current.src = url;
+                 audioPlayerRef.current.onended = () => resolve();
+                 audioPlayerRef.current.onerror = (e) => {
+                    console.error("Google TTS failed", e);
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.onend = () => resolve();
+                    window.speechSynthesis.speak(utterance);
+                 };
+                 audioPlayerRef.current.play().catch(e => resolve());
+              } else {
+                 resolve();
+              }
+           });
+        }
+        isTtsPlaying = false;
+      };
+
+      for await (const chunk of responseStream) {
+        if (!isAiSpeakingRef.current) break; // Abort if user left the room early
+        
+        const delta = chunk.choices[0]?.delta?.content || "";
+        fullResponse += delta;
+        sentenceBuffer += delta;
+        setAiResponseText(prev => prev + delta);
+
+        const delimiters = ['. ', '! ', '? ', '\n'];
+        for (const delimiter of delimiters) {
+          if (sentenceBuffer.includes(delimiter)) {
+            const parts = sentenceBuffer.split(delimiter);
+            const toSpeak = parts[0] + delimiter;
+            sentenceBuffer = parts.slice(1).join(delimiter);
+            
+            const cleanText = toSpeak.replace(/[*_#]/g, '').trim();
+            if (cleanText) {
+               ttsQueue.push(cleanText);
+               processTtsQueue(); // Non-blocking trigger
+            }
+          }
+        }
+      }
+
+      if (sentenceBuffer.trim() && isAiSpeakingRef.current) {
+        const cleanText = sentenceBuffer.replace(/[*_#]/g, '').trim();
+        if (cleanText) {
+            ttsQueue.push(cleanText);
+            processTtsQueue();
+        }
+      }
+
+      // Final cleanup
+      const finalInterval = setInterval(() => {
+        if(!window.speechSynthesis.speaking) {
+          clearInterval(finalInterval);
+          setIsAiSpeaking(false);
+          isAiSpeakingRef.current = false;
+          setMouthValue(0);
+          
+          setChatMessages(prev => [...prev, { role: 'assistant', content: fullResponse }]);
+          const turn = { sender: 'ai' as const, text: fullResponse.trim() };
+          if (activeInterviewModeRef.current === 'thesis') {
+            setThesisConversationLog(prev => [...prev, turn]);
+          } else {
+            setConversationLog(prev => [...prev, turn]);
+          }
+          
+          if (!isListeningRef.current) {
+            toggleListening();
+          }
+        }
+      }, 500);
+
+    } catch (e) {
+      console.error(e);
+      setAiResponseText("Local AI Error.");
+      setIsAiSpeaking(false);
+      isAiSpeakingRef.current = false;
+    }
+  };
+
   const startInterviewSession = async () => {
+    if (isLlmLoading) { alert('AI is still downloading the 2.5GB brain to your browser. Please wait for it to finish!\nStatus: ' + llmStatus); return; }
+    // Unlock speech synthesis immediately on user click
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
     setIsStartingInterview(true);
+    let sid: string | number = '';
+    let isOffline = false;
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_URL}/upcoming-student-interview/start`, {
@@ -542,90 +803,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
       if (response.ok) {
         const data = await response.json();
-        sessionIdRef.current = data.id;
-        setSessionId(data.id);
-        activeInterviewModeRef.current = 'enrollment';
-        setActiveTab('interview-session');
-
-        // Connect WebSocket natively
-        const protocol = API_URL.startsWith('https') ? 'wss:' : 'ws:';
-        const host = API_URL.replace(/^https?:\/\//, '');
-        const wsUrl = `${protocol}//${host}/upcoming-student-interview/${data.id}/chat?token=${token}`;
-
-        const ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
-
-        ws.onopen = () => {
-          // Send an initial kick-off text to reliably trigger the AI's introduction.
-          // Do NOT start the mic here — we wait for the AI to finish its intro first,
-          // otherwise the mic picks up the AI's own voice (echo) and confuses Gemini's VAD.
-          ws.send(JSON.stringify({ text: "Hello! I am here and ready to begin the interview.", end_of_turn: true }));
-        };
-
-        ws.onmessage = async (event) => {
-          if (event.data instanceof Blob) {
-            const arrayBuffer = await event.data.arrayBuffer();
-            playPCM(arrayBuffer);
-          } else {
-            try {
-              const msg = JSON.parse(event.data);
-              if (msg.type === 'turn_complete') {
-                console.log('[Interview] AI turn_complete received');
-                setAiResponseText(prev => {
-                  if (prev.trim()) {
-                    setConversationLog(log => [...log, { sender: 'ai', text: prev.trim() }]);
-                  }
-                  return prev;
-                });
-                // Wait for all scheduled audio buffers to finish playing
-                const remaining = audioContextRef.current
-                  ? (nextPlayTimeRef.current - audioContextRef.current.currentTime) * 1000
-                  : 0;
-                const delay = Math.max(remaining, 500); // at least 500ms buffer
-                console.log(`[Interview] Waiting ${delay}ms for playback to finish`);
-                setTimeout(() => {
-                  setIsAiSpeaking(false);
-                  isAiSpeakingRef.current = false;
-                  isPlayingRef.current = false;
-                  if (!isListeningRef.current) {
-                    console.log('[Interview] Starting mic after AI finished');
-                    toggleListening();
-                  }
-                }, delay);
-              } else if (msg.audio_base64) {
-                const binaryString = window.atob(msg.audio_base64);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                  bytes[i] = binaryString.charCodeAt(i);
-                }
-                playPCM(bytes.buffer, msg.lip_sync);
-              } else if (msg.text) {
-                setAiResponseText(prev => prev + msg.text);
-              }
-            } catch (e) { console.error('[Interview] WS parse error:', e); }
-          }
-        };
-
-        ws.onerror = (e) => {
-          console.error("WebSocket Error:", e);
-          setAiResponseText("Connection to AI failed.");
-          setIsAiSpeaking(false);
-        };
-
-        ws.onclose = () => {
-          setIsAiSpeaking(false);
-        };
-
+        sid = data.id;
       } else {
         const errorText = await response.text();
-        console.error("Failed to start interview:", errorText);
         alert(`Failed to start session: ${errorText}`);
+        return;
       }
     } catch (err: any) {
-      console.error(err);
-      alert(`Network error starting interview: ${err.message}`);
+      console.warn("Offline: generating local session ID");
+      sid = 'local_' + Date.now();
+      isOffline = true;
     } finally {
       setIsStartingInterview(false);
+    }
+    
+    if (sid) {
+      sessionIdRef.current = sid as number;
+      setSessionId(sid as number);
+      activeInterviewModeRef.current = 'enrollment';
+      setActiveTab('interview-session');
+
+      const systemPrompt = "You are Professor Maxiel, an expert interviewer. Your sole purpose is to interview an incoming college freshman. Speak DIRECTLY to the student. Keep the interview to exactly 5 questions total. Ask exactly ONE question at a time. Conclude when finished.";
+      const initialMsgs = [{ role: 'system', content: systemPrompt }];
+      setChatMessages(initialMsgs);
+      
+      handleLocalWebLLM("Hello! I am here and ready to begin the interview.", initialMsgs);
     }
   };
 
@@ -657,6 +859,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   };
 
   const exitInterview = () => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
     stopListening();
     setIsLeaveModalOpen(false);
     setIsAiSpeaking(false);
@@ -681,7 +884,55 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const finishInterviewSession = async () => {
     if (!sessionId) return;
     setIsFinishingInterview(true);
+    let evaluation = null;
+    
     try {
+      if (webLLMEngine) {
+         const gradingPrompt = `You are a strict grading algorithm. You will evaluate the following transcript of an incoming college freshman interview. 
+Extract 5 scores out of 100 based on the rubric. Respond in STRICT JSON matching this schema exactly:
+{
+  "technical_score": 0,
+  "problem_solving_score": 0,
+  "coding_score": 0,
+  "communication_score": 0,
+  "soft_skills_score": 0,
+  "feedback_summary": "string"
+}
+Transcript:
+${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
+         
+         const resp = await webLLMEngine.chat.completions.create({
+           messages: [{ role: 'user', content: gradingPrompt }],
+           response_format: { type: "json_object" }
+         });
+         
+         try {
+           evaluation = JSON.parse(resp.choices[0].message.content || "{}");
+         } catch(e) {
+           console.error("Failed to parse local evaluation", e);
+         }
+      }
+
+      if (String(sessionId).startsWith('local_')) {
+          // It's an offline session, save to IndexedDB directly
+          await db.offlineSessions.put({
+            localId: String(sessionId),
+            type: 'upcoming',
+            status: 'pending_sync',
+            conversationLog: conversationLog,
+            evaluation: evaluation,
+            timestamp: Date.now()
+          });
+          
+          setInterviewResult({ ...evaluation, total_score: evaluation?.total_score || evaluation?.technical_score || 0, passed: true });
+          stopListening();
+          setIsLeaveModalOpen(false);
+          setIsAiSpeaking(false);
+          setIsListening(false);
+          if (audioPlayerRef.current) audioPlayerRef.current.pause();
+          return;
+      }
+
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_URL}/upcoming-student-interview/${sessionId}/complete`, {
         method: 'POST',
@@ -689,7 +940,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ conversation: conversationLog })
+        body: JSON.stringify({ conversation: conversationLog, evaluation })
       });
       if (response.ok) {
         const data = await response.json();
@@ -699,20 +950,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         setIsAiSpeaking(false);
         setIsListening(false);
         if (audioPlayerRef.current) audioPlayerRef.current.pause();
-        if (wsRef.current) {
-          wsRef.current.close();
-          wsRef.current = null;
-        }
-        // Do NOT change activeTab here; keep user on the session tab so the split view handles the evaluation natively!
-        // setActiveTab('interview-result'); 
       } else {
         alert("Failed to grade interview. Please try again.");
       }
     } catch (e) {
-      console.error(e);
-      alert("Network error finishing interview.");
+      console.warn("Offline: saving completed session to cache");
+      // If network fails during complete
+      await db.offlineSessions.put({
+        localId: String(sessionId), // Can be real ID if it was created before going offline
+        type: 'upcoming',
+        status: 'pending_sync',
+        conversationLog: conversationLog,
+        evaluation: evaluation,
+        timestamp: Date.now()
+      });
+      
+      setInterviewResult({ ...evaluation, total_score: evaluation?.total_score || evaluation?.technical_score || 0, passed: true });
+      stopListening();
+      setIsLeaveModalOpen(false);
+      setIsAiSpeaking(false);
+      setIsListening(false);
+      if (audioPlayerRef.current) audioPlayerRef.current.pause();
     } finally {
       setIsFinishingInterview(false);
+      // Refresh history to show the new offline session
+      fetchHistory();
     }
   };
 
@@ -787,6 +1049,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   };
 
   const startThesisSession = async () => {
+    if (isLlmLoading) { alert('AI is still downloading the 2.5GB brain to your browser. Please wait for it to finish!\nStatus: ' + llmStatus); return; }
     setThesisStartError(null);
 
     // Pre-flight: department must be CCIT, CTE, or CBAPA
@@ -800,6 +1063,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     }
 
     setThesisIsStarting(true);
+    let sid: string | number = '';
+    let isOffline = false;
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_URL}/thesis-interview/start`, {
@@ -815,25 +1080,47 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
           errMsg = await response.text() || errMsg;
         }
         setThesisStartError(errMsg);
+        setThesisIsStarting(false);
         return;
       }
       const data = await response.json();
-      const sid = data.id;
-      thesisSessionIdRef.current = sid;
-      setThesisSessionId(sid);
+      sid = data.id;
+    } catch (err: any) {
+      console.warn("Offline: generating local thesis session ID");
+      sid = 'local_' + Date.now();
+      isOffline = true;
+    }
+    
+    if (sid) {
+      thesisSessionIdRef.current = sid as number;
+      setThesisSessionId(sid as number);
 
+      let abstractText = "";
       if (thesisAbstractFile) {
         setThesisAbstractUploading(true);
         try {
-          const formData = new FormData();
-          formData.append('file', thesisAbstractFile);
-          await fetch(`${API_URL}/thesis-interview/${sid}/upload-abstract`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}` },
-            body: formData
-          });
+          if (thesisAbstractFile.name.endsWith('.txt')) {
+             abstractText = await thesisAbstractFile.text();
+          } else if (thesisAbstractFile.name.endsWith('.pdf')) {
+             const arrayBuffer = await thesisAbstractFile.arrayBuffer();
+             const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+             let fullText = "";
+             // Only parse first 10 pages to save time/memory
+             const maxPages = Math.min(pdf.numPages, 10);
+             for (let i = 1; i <= maxPages; i++) {
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                const pageText = textContent.items.map((item: any) => item.str).join(' ');
+                fullText += pageText + "\n";
+             }
+             abstractText = fullText;
+          }
         } catch (e) {
-          console.error('Abstract upload failed:', e);
+          console.error('Abstract parsing failed:', e);
+          setThesisStartError("Failed to read abstract file offline.");
+          setThesisAbstractUploading(false);
+          setThesisIsStarting(false);
+          return;
         } finally {
           setThesisAbstractUploading(false);
         }
@@ -847,55 +1134,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       if (thesisTimerRef.current) clearInterval(thesisTimerRef.current);
       thesisTimerRef.current = setInterval(() => setThesisElapsedSeconds(prev => prev + 1), 1000);
 
-      const protocol = API_URL.startsWith('https') ? 'wss:' : 'ws:';
-      const host = API_URL.replace(/^https?:\/\//, '');
-      const wsUrl = `${protocol}//${host}/thesis-interview/${sid}/chat?token=${token}`;
-      const ws = new WebSocket(wsUrl);
-      thesisWsRef.current = ws;
-
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ text: 'Hello! I am here and ready to begin the thesis defense.', end_of_turn: true }));
-      };
-
-      ws.onmessage = async (event) => {
-        if (event.data instanceof Blob) {
-          const ab = await event.data.arrayBuffer();
-          playPCM(ab);
-        } else {
-          try {
-            const msg = JSON.parse(event.data);
-            if (msg.type === 'turn_complete') {
-              setAiResponseText(prev => {
-                if (prev.trim()) setThesisConversationLog(log => [...log, { sender: 'ai', text: prev.trim() }]);
-                return '';
-              });
-              const remaining = audioContextRef.current ? (nextPlayTimeRef.current - audioContextRef.current.currentTime) * 1000 : 0;
-              const delay = Math.max(remaining, 500);
-              setTimeout(() => {
-                setIsAiSpeaking(false);
-                isAiSpeakingRef.current = false;
-                isPlayingRef.current = false;
-                if (!isListeningRef.current) toggleListening();
-              }, delay);
-            } else if (msg.text) {
-              setAiResponseText(prev => prev + msg.text);
-            }
-          } catch (e) { console.error('[Thesis WS] parse error:', e); }
-        }
-      };
-
-      ws.onerror = (e) => { console.error('Thesis WS Error:', e); setIsAiSpeaking(false); };
-      ws.onclose = () => { setIsAiSpeaking(false); };
-    } catch (err: any) {
-      console.error(err);
-      setThesisStartError(`Network error: ${err.message}`);
-    } finally {
+      // WebLLM Setup
+      const systemPrompt = `You are Professor Maxiel, an expert panelist for a thesis defense at ${dep}. Probe the student's research abstract. Speak DIRECTLY to the student. Keep the interview to exactly 5 questions total. Ask exactly ONE question at a time. Conclude gracefully when finished.\n\nStudent's Abstract/Proposal context:\n${abstractText ? abstractText.substring(0, 5000) : 'None provided.'}`; // Truncate to 5000 chars to avoid token limits
+      const initialMsgs = [{ role: 'system', content: systemPrompt }];
+      setChatMessages(initialMsgs);
+      
+      handleLocalWebLLM("Hello! I am here and ready to begin the thesis defense.", initialMsgs);
       setThesisIsStarting(false);
-      setThesisAbstractUploading(false);
     }
   };
 
   const exitThesisSession = () => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
     stopListening();
     if (thesisTimerRef.current) { clearInterval(thesisTimerRef.current); thesisTimerRef.current = null; }
     setThesisIsLeaveModalOpen(false);
@@ -920,12 +1170,65 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const finishThesisSession = async () => {
     if (!thesisSessionIdRef.current) return;
     setThesisIsFinishing(true);
+    let evaluation = null;
+    
     try {
+      if (webLLMEngine) {
+         const gradingPrompt = `You are a strict grading algorithm. Evaluate the transcript of this thesis defense.
+Extract scores out of 100 based on the rubric. Respond in STRICT JSON matching this schema exactly:
+{
+  "technical_innovation_score": 0,
+  "system_implementation_score": 0,
+  "experimental_validation_score": 0,
+  "literature_review_score": 0,
+  "demo_quality_score": 0,
+  "feedback_summary": "string"
+}
+Transcript:
+${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
+         
+         const resp = await webLLMEngine.chat.completions.create({
+           messages: [{ role: 'user', content: gradingPrompt }],
+           response_format: { type: "json_object" }
+         });
+         
+         try {
+           evaluation = JSON.parse(resp.choices[0].message.content || "{}");
+           if (evaluation.technical_innovation_score) {
+              evaluation.score_ccit_technical_innovation = evaluation.technical_innovation_score;
+           }
+         } catch(e) {
+           console.error("Failed to parse local thesis evaluation", e);
+         }
+      }
+
+      if (String(thesisSessionIdRef.current).startsWith('local_')) {
+          // Offline mode
+          await db.offlineSessions.put({
+            localId: String(thesisSessionIdRef.current),
+            type: 'thesis',
+            status: 'pending_sync',
+            conversationLog: thesisConversationLog,
+            evaluation: evaluation,
+            timestamp: Date.now()
+          });
+          
+          setThesisResult({ ...evaluation, total_score: evaluation?.total_score || evaluation?.score_ccit_technical_innovation || 0, passed: true });
+          stopListening();
+          setThesisIsLeaveModalOpen(false);
+          setIsAiSpeaking(false);
+          isAiSpeakingRef.current = false;
+          setIsListening(false);
+          if (thesisTimerRef.current) { clearInterval(thesisTimerRef.current); thesisTimerRef.current = null; }
+          if (audioPlayerRef.current) audioPlayerRef.current.pause();
+          return;
+      }
+
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_URL}/thesis-interview/${thesisSessionIdRef.current}/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ conversation: thesisConversationLog })
+        body: JSON.stringify({ conversation: thesisConversationLog, evaluation })
       });
       if (response.ok) {
         const data = await response.json();
@@ -937,15 +1240,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         setIsListening(false);
         if (thesisTimerRef.current) { clearInterval(thesisTimerRef.current); thesisTimerRef.current = null; }
         if (audioPlayerRef.current) audioPlayerRef.current.pause();
-        if (thesisWsRef.current) { thesisWsRef.current.close(); thesisWsRef.current = null; }
       } else {
         alert('Failed to grade thesis defense. Please try again.');
       }
     } catch (e) {
-      console.error(e);
-      alert('Network error finishing thesis defense.');
+      console.warn("Offline: saving completed thesis session to cache");
+      await db.offlineSessions.put({
+        localId: String(thesisSessionIdRef.current),
+        type: 'thesis',
+        status: 'pending_sync',
+        conversationLog: thesisConversationLog,
+        evaluation: evaluation,
+        timestamp: Date.now()
+      });
+      
+      setThesisResult({ ...evaluation, total_score: evaluation?.total_score || evaluation?.score_ccit_technical_innovation || 0, passed: true });
+      stopListening();
+      setThesisIsLeaveModalOpen(false);
+      setIsAiSpeaking(false);
+      isAiSpeakingRef.current = false;
+      setIsListening(false);
+      if (thesisTimerRef.current) { clearInterval(thesisTimerRef.current); thesisTimerRef.current = null; }
+      if (audioPlayerRef.current) audioPlayerRef.current.pause();
     } finally {
       setThesisIsFinishing(false);
+      fetchThesisHistory();
     }
   };
 
@@ -1026,9 +1345,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                 setConversationLog(prev => [...prev, turn]);
               }
               const activeWs = activeInterviewModeRef.current === 'thesis' ? thesisWsRef.current : wsRef.current;
-              if (activeWs && activeWs.readyState === WebSocket.OPEN) {
-                activeWs.send(JSON.stringify({ text: finalTranscript.trim(), end_of_turn: true }));
-              }
+              setChatMessages((prev) => {
+                const newMessages = [...prev, { role: 'user', content: finalTranscript.trim() }];
+                setTimeout(() => handleLocalWebLLM(finalTranscript.trim(), prev), 0);
+                return newMessages;
+              });
               stopListening();
             }
           };
@@ -1064,6 +1385,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   ];
 
   return (
+    <>
+      {isLlmLoading && (
+        <div className="fixed inset-0 z-[9999] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center text-white">
+          <div className="w-16 h-16 border-4 border-sky-500 border-t-transparent rounded-full animate-spin mb-6"></div>
+          <h2 className="text-3xl font-black mb-2 text-sky-400">Downloading AI Brain...</h2>
+          <p className="text-slate-300 max-w-md text-lg leading-relaxed mb-4">Please wait while the 2.5GB WebLLM model is loaded into your browser memory. This happens ONLY the first time you run the app!</p>
+          <div className="bg-slate-900 border border-slate-700 px-6 py-4 rounded-2xl w-full max-w-md">
+            <p className="font-mono text-sm text-sky-300 mb-2">{llmStatus}</p>
+            <div className="w-full bg-slate-800 rounded-full h-3 overflow-hidden">
+              <div className="bg-sky-500 h-full transition-all duration-300" style={{width: `${llmProgress}%`}}></div>
+            </div>
+          </div>
+        </div>
+      )}
     <div className="min-h-screen bg-slate-950 text-slate-50 flex overflow-hidden">
       {/* Sidebar */}
       {activeTab !== 'interview-type' && activeTab !== 'university-setup' && activeTab !== 'new-interview' && activeTab !== 'interview-session' && activeTab !== 'thesis-setup' && activeTab !== 'thesis-session' && (
@@ -2360,5 +2695,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         </div>
       </main>
     </div>
+    </>
   );
 };
