@@ -155,17 +155,7 @@ async def interview_chat_ws(
                         
                         full_response = ""
                         sentence_buffer = ""
-                        tts_tasks = []
                         
-                        async def process_tts(text_to_speak: str):
-                            audio_b64 = await generate_tts_base64_async(text_to_speak)
-                            if audio_b64:
-                                try:
-                                    audio_bytes = base64.b64decode(audio_b64)
-                                    await websocket.send_bytes(audio_bytes)
-                                except Exception as e:
-                                    print(f"Error sending audio bytes: {e}")
-
                         async for chunk in response_stream:
                             if chunk.choices and len(chunk.choices) > 0:
                                 content = chunk.choices[0].delta.content
@@ -175,28 +165,12 @@ async def interview_chat_ws(
                                     
                                     await websocket.send_json({"text": content})
                                     
-                                    delimiters = ['. ', '! ', '? ', '.\\n', '!\\n', '?\\n', ': ', '; ', ', ', '\\n']
+                                    delimiters = ['. ', '! ', '? ', '.\n', '!\n', '?\n', ': ', '; ', ', ', '\n']
                                     for punctuation in delimiters:
                                         if punctuation in sentence_buffer:
                                             parts = sentence_buffer.split(punctuation)
-                                            text_to_speak = parts[0] + punctuation[0]
-                                            sanitized_text = strip_markdown_for_tts(text_to_speak)
-                                            
-                                            if len(sanitized_text.strip()) > 5:
-                                                task = asyncio.create_task(process_tts(sanitized_text))
-                                                tts_tasks.append(task)
-                                                
                                             sentence_buffer = punctuation.join(parts[1:])
                                             break
-                                            
-                        if sentence_buffer.strip():
-                            sanitized_remainder = strip_markdown_for_tts(sentence_buffer)
-                            task = asyncio.create_task(process_tts(sanitized_remainder))
-                            tts_tasks.append(task)
-                            
-                        # Wait for all TTS to finish
-                        if tts_tasks:
-                            await asyncio.gather(*tts_tasks, return_exceptions=True)
                             
                         messages.append({"role": "assistant", "content": full_response})
                         
