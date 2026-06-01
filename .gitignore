@@ -39,3 +39,7 @@ terraform.rc
 
 # Google Cloud Credentials
 google-credentials.json
+
+# Databases
+*.db
+*.sqlite3
