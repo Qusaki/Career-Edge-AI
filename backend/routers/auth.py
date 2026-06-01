@@ -11,7 +11,6 @@ from core.security import (
 )
 from fastapi.security import OAuth2PasswordRequestForm
 from schemas.token import Token
-from schemas.user import UserLogin
 
 router = APIRouter()
 
