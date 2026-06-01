@@ -1,30 +1,20 @@
 import os
 import json
-import asyncio
-import re
 import datetime
-import wave
-import io
-import base64
-from fastapi import APIRouter, HTTPException, Depends, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
-from sse_starlette.sse import EventSourceResponse
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncOpenAI
 
 from database import get_db
 from core.deps import get_current_user, get_current_user_ws
-from core.aws import upload_abstract_to_s3, get_abstract_text_from_s3, delete_abstract_from_s3
+from core.aws import get_abstract_text_from_s3, delete_abstract_from_s3
 from models.user import User
 from models.thesis_interview import ThesisInterviewSession, ThesisInterviewMessage
-from schemas.thesis_interview import ThesisInterviewSessionResponse, ThesisInterviewSessionWithMessagesResponse, ThesisInterviewChatRequest, ThesisCompleteInterviewRequest
-from fastapi import UploadFile, File
+from schemas.thesis_interview import ThesisInterviewSessionResponse, ThesisInterviewSessionWithMessagesResponse, ThesisCompleteInterviewRequest
 
 router = APIRouter()
 
-def strip_markdown_for_tts(text: str) -> str:
-    text = re.sub(r'[*_]', '', text)
-    text = re.sub(r'#+\s', '', text)
-    return text.strip()
+
 
 def get_thesis_system_prompt(department: str, abstract_text: str = None) -> str:
     dep = department.upper() if department else ""
@@ -182,7 +172,7 @@ async def interview_chat_ws(
             elif "bytes" in msg:
                  pass
     except WebSocketDisconnect:
-        print(f"[DEBUG] Client disconnected.")
+        print("\n[DEBUG] Client disconnected.")
     except Exception as e:
         print(f"WebSocket Error: {e}")
         try:
@@ -248,9 +238,8 @@ def complete_interview(session_id: int, request: ThesisCompleteInterviewRequest,
     # Build Transcript
     history = db.query(ThesisInterviewMessage).filter(ThesisInterviewMessage.session_id == session.id).order_by(ThesisInterviewMessage.timestamp.asc()).all()
     if history:
-        transcript = "\\n".join([f"{msg.role.upper()}: {msg.content}" for msg in history])
+        pass
     elif request.conversation:
-        transcript = "\\n".join([f"{msg.sender.upper()}: {msg.text}" for msg in request.conversation])
         for item in request.conversation:
             new_msg = ThesisInterviewMessage(session_id=session.id, role=item.sender, content=item.text)
             db.add(new_msg)

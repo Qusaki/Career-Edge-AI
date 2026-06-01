@@ -1,28 +1,19 @@
 import os
 import json
-import asyncio
-import re
 import datetime
-import wave
-import io
-import base64
-from fastapi import APIRouter, HTTPException, Depends, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
-from sse_starlette.sse import EventSourceResponse
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncOpenAI
 
 from database import get_db
 from core.deps import get_current_user, get_current_user_ws
 from models.user import User
 from models.upcoming_student_interview import UpcomingStudentInterviewSession, UpcomingStudentInterviewMessage
-from schemas.upcoming_student_interview import UpcomingStudentInterviewSessionResponse, UpcomingStudentInterviewSessionWithMessagesResponse, UpcomingStudentInterviewChatRequest, UpcomingStudentCompleteInterviewRequest
+from schemas.upcoming_student_interview import UpcomingStudentInterviewSessionResponse, UpcomingStudentInterviewSessionWithMessagesResponse, UpcomingStudentCompleteInterviewRequest
 
 router = APIRouter()
 
-def strip_markdown_for_tts(text: str) -> str:
-    text = re.sub(r'[*_]', '', text)
-    text = re.sub(r'#+\s', '', text)
-    return text.strip()
+
 
 def get_interview_system_prompt(department: str) -> str:
     dep = department.upper() if department else ""
@@ -164,7 +155,7 @@ async def interview_chat_ws(
             elif "bytes" in msg:
                  pass
     except WebSocketDisconnect:
-        print(f"[DEBUG] Client disconnected.")
+        print("\n[DEBUG] Client disconnected.")
     except Exception as e:
         print(f"WebSocket Error: {e}")
         try:
@@ -232,9 +223,8 @@ def complete_interview(session_id: int, request: UpcomingStudentCompleteIntervie
     # Build Transcript
     history = db.query(UpcomingStudentInterviewMessage).filter(UpcomingStudentInterviewMessage.session_id == session.id).order_by(UpcomingStudentInterviewMessage.timestamp.asc()).all()
     if history:
-        transcript = "\\n".join([f"{msg.role.upper()}: {msg.content}" for msg in history])
+        pass
     elif request.conversation:
-        transcript = "\\n".join([f"{msg.sender.upper()}: {msg.text}" for msg in request.conversation])
         for item in request.conversation:
             new_msg = UpcomingStudentInterviewMessage(session_id=session.id, role=item.sender, content=item.text)
             db.add(new_msg)
