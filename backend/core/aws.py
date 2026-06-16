@@ -1,5 +1,6 @@
 import boto3
 import os
+# pyrefly: ignore [missing-import]
 from fastapi import UploadFile
 from botocore.exceptions import NoCredentialsError, ClientError
 
@@ -78,8 +79,6 @@ def upload_abstract_to_s3(file: UploadFile, session_id: int) -> str:
     except Exception as e:
         raise ValueError(f"Failed to upload abstract: {e}")
 
-pass # import PyPDF2
-import io
 
 def get_abstract_text_from_s3(object_key: str) -> str:
     """

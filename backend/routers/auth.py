@@ -1,5 +1,7 @@
 from datetime import timedelta
+# pyrefly: ignore [missing-import]
 from fastapi import APIRouter, Depends, HTTPException, status
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -9,9 +11,10 @@ from core.security import (
     create_access_token,
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
+# pyrefly: ignore [missing-import]
 from fastapi.security import OAuth2PasswordRequestForm
+
 from schemas.token import Token
-from schemas.user import UserLogin
 
 router = APIRouter()
 
