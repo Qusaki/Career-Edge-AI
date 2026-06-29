@@ -2,12 +2,129 @@
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --color-page: #f7f5f0;
+  --color-card: #fbfaf7;
+  --color-line: #e3e0d6;
+  --color-ink: #2e2812;
+  --color-muted: #8a8470;
+  --color-accent: #c99a3b;
+  --color-accent-ink: #3c2e0f;
+  --color-gold-text: #b8862e;
+  --color-success: #5e8c5a;
+  --color-active: #efeae0;
+  --color-brand-black: #02040a;
+  --color-brand-navy: #071225;
+  --color-brand-navy-soft: #10213f;
+  --color-brand-gold: #d4af37;
+  --color-brand-gold-light: #f7d774;
+  --color-brand-green: #1f8a58;
+  --color-brand-maroon: #7d1f2d;
+
+  /* Light dashboard neutrals; legacy slate utilities inherit the new theme. */
+  --color-slate-950: #f7f5f0;
+  --color-slate-900: #fbfaf7;
+  --color-slate-800: #efeae0;
+  --color-slate-700: #e3e0d6;
+  --color-slate-600: #aaa38e;
+  --color-slate-500: #8a8470;
+  --color-slate-400: #8a8470;
+  --color-slate-300: #4f4933;
+  --color-slate-200: #2e2812;
+  --color-slate-100: #2e2812;
+  --color-slate-50: #2e2812;
+
+  /* Gold replaces the old cyan highlight system. */
+  --color-sky-950: #241a04;
+  --color-sky-900: #473305;
+  --color-sky-800: #6d520d;
+  --color-sky-700: #98731b;
+  --color-sky-600: #b99122;
+  --color-sky-500: #c99a3b;
+  --color-sky-400: #b8862e;
+  --color-sky-300: #ffe9a6;
+  --color-sky-200: #fff1c7;
+  --color-sky-100: #fff8e2;
+  --color-sky-50: #fffdf4;
+
+  /* Green stays reserved for positive performance and saved states. */
+  --color-emerald-950: #062217;
+  --color-emerald-900: #0b3a25;
+  --color-emerald-800: #115437;
+  --color-emerald-700: #176d48;
+  --color-emerald-600: #1f8a58;
+  --color-emerald-500: #2aaa6e;
+  --color-emerald-400: #5e8c5a;
+  --color-emerald-300: #8ae0b7;
+  --color-emerald-200: #c4f1db;
+  --color-emerald-100: #e5f8ee;
+  --color-emerald-50: #f3fcf7;
+
+  /* Maroon replaces red/purple states for warnings, risk, and thesis accents. */
+  --color-rose-950: #2d0710;
+  --color-rose-900: #4a0d19;
+  --color-rose-800: #651824;
+  --color-rose-700: #7d1f2d;
+  --color-rose-600: #98293b;
+  --color-rose-500: #b3384c;
+  --color-rose-400: #d45b6d;
+  --color-rose-300: #ee9aa6;
+  --color-rose-200: #f6c5cd;
+  --color-rose-100: #fbe6ea;
+  --color-rose-50: #fff5f7;
+
+  --color-purple-950: #2d0710;
+  --color-purple-900: #4a0d19;
+  --color-purple-800: #651824;
+  --color-purple-700: #7d1f2d;
+  --color-purple-600: #98293b;
+  --color-purple-500: #b3384c;
+  --color-purple-400: #d45b6d;
+  --color-purple-300: #ee9aa6;
+  --color-purple-200: #f6c5cd;
+  --color-purple-100: #fbe6ea;
+  --color-purple-50: #fff5f7;
+
+  --color-indigo-950: #241a04;
+  --color-indigo-900: #473305;
+  --color-indigo-800: #6d520d;
+  --color-indigo-700: #98731b;
+  --color-indigo-600: #b99122;
+  --color-indigo-500: #d4af37;
+  --color-indigo-400: #f7d774;
+  --color-indigo-300: #ffe9a6;
+  --color-indigo-200: #fff1c7;
+  --color-indigo-100: #fff8e2;
+  --color-indigo-50: #fffdf4;
+
+  --color-amber-950: #241a04;
+  --color-amber-900: #473305;
+  --color-amber-800: #6d520d;
+  --color-amber-700: #98731b;
+  --color-amber-600: #b99122;
+  --color-amber-500: #d4af37;
+  --color-amber-400: #f7d774;
+  --color-amber-300: #ffe9a6;
+  --color-amber-200: #fff1c7;
+  --color-amber-100: #fff8e2;
+  --color-amber-50: #fffdf4;
+
+  --color-violet-950: #241a04;
+  --color-violet-900: #473305;
+  --color-violet-800: #6d520d;
+  --color-violet-700: #98731b;
+  --color-violet-600: #b99122;
+  --color-violet-500: #d4af37;
+  --color-violet-400: #f7d774;
+  --color-violet-300: #ffe9a6;
+  --color-violet-200: #fff1c7;
+  --color-violet-100: #fff8e2;
+  --color-violet-50: #fffdf4;
 }
 
 body {
   font-family: "Inter", sans-serif;
-  background-color: #020617; /* slate-950 */
-  color: #f8fafc; /* slate-50 */
+  background-color: #f7f5f0;
+  color: #2e2812;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -30,6 +147,16 @@ body {
 .custom-scrollbar {
   -ms-overflow-style: none;  /* IE and Edge */
   scrollbar-width: none;  /* Firefox */
+}
+
+/* The dashboard is deliberately flat: borders, never elevation effects. */
+.dashboard-shell [class*="shadow"] {
+  box-shadow: none !important;
+}
+
+.dashboard-shell [class*="bg-gradient"] {
+  background-color: #fbfaf7;
+  background-image: none !important;
 }
 @keyframes pulse {
   0%, 100% { opacity: 0.3; transform: scale(0.8); }

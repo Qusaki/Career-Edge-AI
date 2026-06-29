@@ -157,26 +157,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   })();
 
   const renderStatCards = (delay = 0) => (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: delay + 0.1 }} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between">
-        <h3 className="text-slate-400 font-medium">Total Interviews</h3>
-        <div className="mt-4">
-          <span className="text-4xl font-bold text-slate-100">{stats.totalInterviews}</span>
-          <p className="text-sm mt-2 font-medium text-sky-400">Total lifetime</p>
+    <div className="grid w-full grid-cols-1 md:grid-cols-3 gap-2.5">
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: delay + 0.1 }} className="bg-card border border-line rounded-lg p-5 flex flex-col justify-between">
+        <h3 className="text-muted font-medium">Total Interviews</h3>
+        <div className="mt-2">
+          <span className="text-3xl font-bold text-ink">{stats.totalInterviews}</span>
+          <p className="text-sm mt-1 font-medium text-gold-text">Total lifetime</p>
         </div>
       </motion.div>
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: delay + 0.2 }} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between">
-        <h3 className="text-slate-400 font-medium">Average Score</h3>
-        <div className="mt-4">
-          <span className="text-4xl font-bold text-slate-100">{stats.avgScore}%</span>
-          <p className="text-sm mt-2 font-medium text-emerald-400">Overall average</p>
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: delay + 0.2 }} className="bg-card border border-line rounded-lg p-5 flex flex-col justify-between">
+        <h3 className="text-muted font-medium">Average Score</h3>
+        <div className="mt-2">
+          <span className="text-3xl font-bold text-ink">{stats.avgScore}%</span>
+          <p className="text-sm mt-1 font-medium text-success">Overall average</p>
         </div>
       </motion.div>
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: delay + 0.3 }} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between">
-        <h3 className="text-slate-400 font-medium">Performance</h3>
-        <div className="mt-4">
-          <span className="text-4xl font-bold text-slate-100">{stats.performance}</span>
-          <p className={`text-sm mt-2 font-medium ${stats.perfColor}`}>{stats.perfMsg}</p>
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: delay + 0.3 }} className="bg-card border border-line rounded-lg p-5 flex flex-col justify-between">
+        <h3 className="text-muted font-medium">Performance</h3>
+        <div className="mt-2">
+          <span className="text-3xl font-bold text-ink">{stats.performance}</span>
+          <p className={`text-sm mt-1 font-medium ${stats.perfColor}`}>{stats.perfMsg}</p>
         </div>
       </motion.div>
     </div>
@@ -454,6 +454,32 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const [mouthCues, setMouthCues] = useState<any[] | null>(null);
   const [currentAudioStartTime, setCurrentAudioStartTime] = useState(0);
   const [activeAnalyser, setActiveAnalyser] = useState<AnalyserNode | null>(null);
+  const browserTtsAnalyserRef = React.useRef<AnalyserNode | null>(null);
+
+  if (!browserTtsAnalyserRef.current) {
+    browserTtsAnalyserRef.current = {
+      frequencyBinCount: 64,
+      getByteFrequencyData: (data: Uint8Array) => {
+        data.fill(0);
+        if (!isAiSpeakingRef.current || !window.speechSynthesis?.speaking) return;
+
+        const pulse = 95 + Math.abs(Math.sin(performance.now() / 85)) * 120;
+        for (let i = 1; i < Math.min(data.length, 32); i++) {
+          data[i] = Math.min(255, pulse * (1 - i / 45)) as number;
+        }
+      }
+    } as unknown as AnalyserNode;
+  }
+
+  const unlockBrowserSpeech = () => {
+    if (!('speechSynthesis' in window)) return;
+
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.resume();
+    const unlockUtterance = new SpeechSynthesisUtterance('.');
+    unlockUtterance.volume = 0;
+    window.speechSynthesis.speak(unlockUtterance);
+  };
 
   useEffect(() => {
     // Mount the single persistent audio tag safely
@@ -683,43 +709,81 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       // TTS Queueing System
       let ttsQueue: string[] = [];
       let isTtsPlaying = false;
+      let ttsProcessingPromise: Promise<void> | null = null;
+
+      const detectSpeechLang = (text: string) => {
+        const tagalogKeywords = ['ang', 'mga', 'ng', 'sa', 'at', 'na', 'ay', 'ako', 'ikaw', 'siya', 'tayo', 'kami', 'kayo', 'sila', 'po', 'opo', 'hindi', 'oo', 'bakit', 'paano'];
+        const words = text.toLowerCase().split(/\W+/);
+        const tagalogCount = words.reduce((count, word) => count + (tagalogKeywords.includes(word) ? 1 : 0), 0);
+        return tagalogCount > 1 ? 'tl-PH' : 'en-US';
+      };
+
+      const speakWithBrowser = (text: string) => {
+        return new Promise<void>((resolve) => {
+          if (!('speechSynthesis' in window)) {
+            console.warn("Speech synthesis is not supported in this browser.");
+            resolve();
+            return;
+          }
+
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.lang = detectSpeechLang(text);
+          utterance.rate = 0.95;
+          utterance.pitch = 1;
+          const voices = window.speechSynthesis.getVoices();
+          const preferredVoice = voices.find(voice => voice.lang === utterance.lang)
+            || voices.find(voice => voice.lang.startsWith(utterance.lang.split('-')[0]));
+          if (preferredVoice) utterance.voice = preferredVoice;
+
+          let finished = false;
+          const fallbackTimeoutMs = Math.max(5000, text.length * 140);
+          const fallbackTimer = window.setTimeout(() => {
+            console.warn("Speech synthesis timed out before onend fired.");
+            finish();
+          }, fallbackTimeoutMs);
+
+          const finish = () => {
+            if (finished) return;
+            finished = true;
+            window.clearTimeout(fallbackTimer);
+            resolve();
+          };
+
+          utterance.onend = finish;
+          utterance.onerror = (event) => {
+            console.error("Speech synthesis failed", event);
+            finish();
+          };
+
+          try {
+            window.speechSynthesis.resume();
+            window.speechSynthesis.speak(utterance);
+          } catch (error) {
+            console.error("Speech synthesis could not start", error);
+            finish();
+          }
+        });
+      };
 
       const processTtsQueue = async () => {
-        if (isTtsPlaying || ttsQueue.length === 0) return;
+        if (isTtsPlaying) return ttsProcessingPromise || Promise.resolve();
+        if (ttsQueue.length === 0) return Promise.resolve();
         isTtsPlaying = true;
         
-        while (ttsQueue.length > 0) {
-           const text = ttsQueue.shift();
-           if (!text || !isAiSpeakingRef.current) break; // If we left the room, stop processing
-           
-           await new Promise<void>((resolve) => {
-              const tagalogKeywords = ['ang', 'mga', 'ng', 'sa', 'at', 'na', 'ay', 'ako', 'ikaw', 'siya', 'tayo', 'kami', 'kayo', 'sila', 'po', 'opo', 'hindi', 'oo', 'bakit', 'paano'];
-              const words = text.toLowerCase().split(/\W+/);
-              let tagalogCount = 0;
-              for (const w of words) {
-                 if (tagalogKeywords.includes(w)) tagalogCount++;
-              }
-              const isTagalog = tagalogCount > 1;
-              const lang = isTagalog ? 'tl' : 'en-US';
-
-              const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(text)}`;
-              
-              if (audioPlayerRef.current) {
-                 audioPlayerRef.current.src = url;
-                 audioPlayerRef.current.onended = () => resolve();
-                 audioPlayerRef.current.onerror = (e) => {
-                    console.error("Google TTS failed", e);
-                    const utterance = new SpeechSynthesisUtterance(text);
-                    utterance.onend = () => resolve();
-                    window.speechSynthesis.speak(utterance);
-                 };
-                 audioPlayerRef.current.play().catch(e => resolve());
-              } else {
-                 resolve();
-              }
-           });
+        try {
+          while (ttsQueue.length > 0) {
+            const text = ttsQueue.shift();
+            if (!text || !isAiSpeakingRef.current) break; // If we left the room, stop processing
+            await speakWithBrowser(text);
+          }
+        } finally {
+          isTtsPlaying = false;
         }
-        isTtsPlaying = false;
+      };
+
+      const enqueueTts = (text: string) => {
+        ttsQueue.push(text);
+        ttsProcessingPromise = processTtsQueue();
       };
 
       for await (const chunk of responseStream) {
@@ -739,8 +803,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
             
             const cleanText = toSpeak.replace(/[*_#]/g, '').trim();
             if (cleanText) {
-               ttsQueue.push(cleanText);
-               processTtsQueue(); // Non-blocking trigger
+               enqueueTts(cleanText);
             }
           }
         }
@@ -749,32 +812,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       if (sentenceBuffer.trim() && isAiSpeakingRef.current) {
         const cleanText = sentenceBuffer.replace(/[*_#]/g, '').trim();
         if (cleanText) {
-            ttsQueue.push(cleanText);
-            processTtsQueue();
+            enqueueTts(cleanText);
         }
       }
 
-      // Final cleanup
-      const finalInterval = setInterval(() => {
-        if(!window.speechSynthesis.speaking) {
-          clearInterval(finalInterval);
-          setIsAiSpeaking(false);
-          isAiSpeakingRef.current = false;
-          setMouthValue(0);
-          
-          setChatMessages(prev => [...prev, { role: 'assistant', content: fullResponse }]);
-          const turn = { sender: 'ai' as const, text: fullResponse.trim() };
-          if (activeInterviewModeRef.current === 'thesis') {
-            setThesisConversationLog(prev => [...prev, turn]);
-          } else {
-            setConversationLog(prev => [...prev, turn]);
-          }
-          
-          if (!isListeningRef.current) {
-            toggleListening();
-          }
-        }
-      }, 500);
+      await (ttsProcessingPromise || Promise.resolve());
+
+      setIsAiSpeaking(false);
+      isAiSpeakingRef.current = false;
+      setMouthValue(0);
+      
+      setChatMessages(prev => [...prev, { role: 'assistant', content: fullResponse }]);
+      const turn = { sender: 'ai' as const, text: fullResponse.trim() };
+      if (activeInterviewModeRef.current === 'thesis') {
+        setThesisConversationLog(prev => [...prev, turn]);
+      } else {
+        setConversationLog(prev => [...prev, turn]);
+      }
+      
+      if (!isListeningRef.current) {
+        toggleListening();
+      }
 
     } catch (e) {
       console.error(e);
@@ -787,7 +845,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const startInterviewSession = async () => {
     if (isLlmLoading) { alert('AI is still downloading the 2.5GB brain to your browser. Please wait for it to finish!\nStatus: ' + llmStatus); return; }
     // Unlock speech synthesis immediately on user click
-    window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+    unlockBrowserSpeech();
     setIsStartingInterview(true);
     let sid: string | number = '';
     let isOffline = false;
@@ -1050,6 +1108,7 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
 
   const startThesisSession = async () => {
     if (isLlmLoading) { alert('AI is still downloading the 2.5GB brain to your browser. Please wait for it to finish!\nStatus: ' + llmStatus); return; }
+    unlockBrowserSpeech();
     setThesisStartError(null);
 
     // Pre-flight: department must be CCIT, CTE, or CBAPA
@@ -1399,22 +1458,22 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
           </div>
         </div>
       )}
-    <div className="min-h-screen bg-slate-950 text-slate-50 flex overflow-hidden">
+    <div className="dashboard-shell min-h-screen bg-page text-ink flex overflow-hidden">
       {/* Sidebar */}
       {activeTab !== 'interview-type' && activeTab !== 'university-setup' && activeTab !== 'new-interview' && activeTab !== 'interview-session' && activeTab !== 'thesis-setup' && activeTab !== 'thesis-session' && (
-        <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col h-screen shrink-0">
+        <aside className="w-72 bg-card border-r border-line flex flex-col h-screen shrink-0">
           {/* Logo Area */}
-          <div className="h-20 px-6 border-b border-slate-800 flex items-center shrink-0">
-            <span className="font-bold text-xl tracking-tight text-white">Career Edge</span>
+          <div className="h-16 px-3 border-b border-line flex items-center shrink-0">
+            <span className="font-bold text-xl tracking-tight text-gold-text">Career Edge</span>
           </div>
 
           {/* Profile Area */}
-          <div className="p-4 border-b border-slate-800">
+          <div className="p-2 border-b border-line">
             <button
               onClick={() => setActiveTab('profile')}
-              className={`w-full text-left bg-slate-800/50 border ${activeTab === 'profile' ? 'border-sky-500 ring-1 ring-sky-500' : 'border-slate-700/50 hover:border-slate-600 hover:bg-slate-800/80'} rounded-xl p-3 flex items-center gap-3 transition-all duration-200`}
+              className={`w-full text-left border border-line ${activeTab === 'profile' ? 'bg-active' : 'bg-transparent hover:bg-active'} rounded-lg p-2 flex items-center gap-3 transition-colors duration-200`}
             >
-              <div className="w-10 h-10 rounded-full bg-slate-700 border border-slate-600 overflow-hidden shrink-0">
+              <div className="w-10 h-10 rounded-full bg-slate-800 border border-sky-500/30 overflow-hidden shrink-0">
                 <img
                   src={profile.profilePicture}
                   alt="User"
@@ -1422,14 +1481,14 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                 />
               </div>
               <div className="overflow-hidden">
-                <h3 className="font-medium text-sm text-slate-200 truncate">{profile.name}</h3>
-                <p className="text-xs text-sky-400 font-medium mt-0.5 truncate">{profile.department}</p>
+                <h3 className="font-medium text-sm text-ink truncate">{profile.name}</h3>
+                <p className="text-xs text-gold-text font-medium mt-0.5 truncate">{profile.department}</p>
               </div>
             </button>
           </div>
 
           {/* Main Action */}
-          <div className="p-4">
+          <div className="p-2">
             {['CCIT', 'CTE', 'CBAPA'].includes(profile.department?.toUpperCase() || '') ? (
               <button
                 onClick={() => {
@@ -1437,7 +1496,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                   setPosition('');
                   setActiveTab('interview-type');
                 }}
-                className="w-full py-3 px-4 rounded-xl font-medium flex items-center justify-center gap-2 transition-colors shadow-lg bg-sky-500 hover:bg-sky-400 text-white shadow-sky-500/20"
+                className="w-full py-2 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 transition-colors bg-accent hover:bg-gold-text text-accent-ink"
               >
                 <Plus className="w-5 h-5" />
                 Start Interview
@@ -1461,31 +1520,31 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 px-4 py-2 space-y-2 overflow-y-auto">
+          <nav className="flex-1 px-2 py-1.5 space-y-1 overflow-y-auto">
             <button
               onClick={() => setActiveTab('dashboard')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${activeTab === 'dashboard' ? 'bg-sky-500/10 text-sky-400' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+              className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'dashboard' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
             >
               <LayoutDashboard className="w-5 h-5" />
               Dashboard
             </button>
             <button
               onClick={() => setActiveTab('history')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${activeTab === 'history' ? 'bg-sky-500/10 text-sky-400' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+              className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'history' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
             >
               <Video className="w-5 h-5" />
               History
             </button>
             <button
               onClick={() => setActiveTab('analytics')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${activeTab === 'analytics' ? 'bg-sky-500/10 text-sky-400' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+              className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'analytics' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
             >
               <BarChart2 className="w-5 h-5" />
               Analytics
             </button>
             <button
               onClick={() => setActiveTab('settings')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${activeTab === 'settings' ? 'bg-sky-500/10 text-sky-400' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+              className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'settings' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
             >
               <Settings className="w-5 h-5" />
               Settings
@@ -1493,10 +1552,10 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
           </nav>
 
           {/* Logout */}
-          <div className="p-4 border-t border-slate-800">
+          <div className="p-2 border-t border-line">
             <button
               onClick={onLogout}
-              className="flex items-center gap-3 px-4 py-3 w-full rounded-xl text-slate-400 hover:bg-slate-800 hover:text-slate-200 font-medium transition-colors"
+              className="flex items-center gap-3 px-2 py-2 w-full rounded-lg text-muted hover:bg-active hover:text-ink font-medium transition-colors"
             >
               <LogOut className="w-5 h-5" />
               Sign Out
@@ -1506,28 +1565,28 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
       )}
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col h-screen overflow-hidden">
+      <main className="min-w-0 flex-1 flex flex-col h-screen overflow-hidden">
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-8 md:p-12">
+        <div className="flex-1 overflow-y-auto px-4 pb-3 pt-6 sm:px-8 md:pb-4 md:pt-8 lg:px-10">
 
           {activeTab === 'dashboard' && (
-            <div className="max-w-6xl mx-auto space-y-8">
+            <div className="w-full">
               {/* Page Title */}
-              <div>
-                <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Welcome back, {profile.name.split(' ')[0]}</h1>
-                <p className="text-lg text-slate-400 mt-2">Here's an overview of your interview progress.</p>
+              <div className="mb-6">
+                <h1 className="text-4xl md:text-5xl font-bold text-ink tracking-tight">Welcome back, <span className="text-gold-text">{profile.name.split(' ')[0]}</span></h1>
+                <p className="text-lg md:text-xl font-medium text-muted mt-1.5">Here's an overview of your interview progress.</p>
               </div>
 
               {renderStatCards()}
 
               {/* History List */}
-              <div className="mt-8 space-y-4">
-                <div className="flex items-center justify-between mb-2">
-                  <h2 className="text-lg font-bold text-slate-100 italic tracking-tight">Recent Sessions</h2>
+              <div className="mt-5 w-full space-y-2.5">
+                <div className="flex items-center justify-between mb-1">
+                  <h2 className="text-lg font-bold text-ink italic tracking-tight">Recent Sessions</h2>
                   {interviewHistory.length > 5 && (
                     <button
                       onClick={() => setActiveTab('history')}
-                      className="text-xs font-bold text-sky-400 hover:text-sky-300 transition-colors uppercase tracking-widest"
+                      className="text-xs font-bold text-gold-text hover:text-accent-ink transition-colors uppercase tracking-widest"
                     >
                       View All
                     </button>
@@ -1535,12 +1594,12 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                 </div>
 
                 {interviewHistory.filter(item => (item.total_score || 0) > 0).length === 0 ? (
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-3xl p-10 text-center backdrop-blur-sm">
-                    <p className="text-slate-500 text-sm">No interviews completed yet.</p>
-                    <button onClick={() => setActiveTab('interview-type')} className="mt-4 text-sky-400 text-sm font-bold hover:underline">Start your first interview</button>
+                  <div className="bg-card border border-line rounded-lg px-3 py-8 md:py-10 text-center">
+                    <p className="text-muted text-sm">No interviews completed yet.</p>
+                    <button onClick={() => setActiveTab('interview-type')} className="mt-2 text-gold-text text-sm font-bold hover:underline">Start your first interview</button>
                   </div>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-2.5">
                     {interviewHistory.filter(item => (item.total_score || 0) > 0).slice(0, 5).map((item, i, filteredList) => (
                       <motion.div
                         key={item.id || i}
@@ -1552,20 +1611,20 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         initial={{ opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: 0.1 + (i * 0.05) }}
-                        className="bg-slate-900/40 border border-slate-800/60 hover:border-sky-500/30 rounded-2xl p-4 flex items-center justify-between hover:bg-slate-800/80 transition-all cursor-pointer group backdrop-blur-sm"
+                        className="bg-card border border-line hover:border-accent rounded-lg p-3 flex items-center justify-between hover:bg-active transition-colors cursor-pointer group"
                       >
-                        <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-3">
                           <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-slate-400 group-hover:text-sky-400 group-hover:bg-sky-500/10 transition-all">
                             <Video className="w-5 h-5" />
                           </div>
                           <div>
-                            <h4 className="font-bold text-sm text-slate-200 group-hover:text-sky-400 transition-colors">Interview #{filteredList.length - i}</h4>
-                            <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">{new Date(item.start_time).toLocaleDateString()}</p>
+                            <h4 className="font-bold text-sm text-ink group-hover:text-gold-text transition-colors">Interview #{filteredList.length - i}</h4>
+                            <p className="text-[10px] text-muted uppercase font-bold tracking-wider">{new Date(item.start_time).toLocaleDateString()}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-4">
                           <div className="text-right">
-                            <span className={`text-lg font-black ${item.total_score >= 70 ? 'text-emerald-400' : 'text-sky-400'}`}>{item.total_score || 0}%</span>
+                            <span className={`text-lg font-black ${item.total_score >= 70 ? 'text-success' : 'text-gold-text'}`}>{item.total_score || 0}%</span>
                           </div>
                           <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-sky-400 group-hover:translate-x-1 transition-all" />
                         </div>
@@ -1707,7 +1766,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                   <button
                     onClick={startInterviewSession}
                     disabled={isStartingInterview}
-                    className={`px-8 py-4 bg-sky-500 hover:bg-sky-400 text-white rounded-xl font-medium flex items-center gap-2 transition-colors shadow-lg shadow-sky-500/20 text-lg ${isStartingInterview ? 'opacity-75 cursor-not-allowed' : ''}`}
+                    className={`px-8 py-4 bg-sky-500 hover:bg-sky-400 text-black rounded-xl font-semibold flex items-center gap-2 transition-colors shadow-lg shadow-sky-500/20 text-lg ${isStartingInterview ? 'opacity-75 cursor-not-allowed' : ''}`}
                   >
                     {isStartingInterview ? 'Starting...' : 'Continue'}
                     {!isStartingInterview && <ArrowRight className="w-5 h-5" />}
@@ -1872,7 +1931,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       <OrbitControls enableZoom={false} enablePan={false} maxPolarAngle={Math.PI / 2} minPolarAngle={Math.PI / 2} target={[0, 0, 0]} />
                       <ProfessorModel
                         isSpeaking={isAiSpeaking}
-                        analyserNode={activeAnalyser}
+                        analyserNode={activeAnalyser ?? browserTtsAnalyserRef.current}
                         mouthCues={mouthCues}
                         currentAudioTime={currentAudioStartTime}
                         audioContext={audioContextRef.current}
@@ -2089,7 +2148,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       <OrbitControls enableZoom={false} enablePan={false} maxPolarAngle={Math.PI / 2} minPolarAngle={Math.PI / 2} target={[0, 0, 0]} />
                       <ProfessorModel
                         isSpeaking={isAiSpeaking}
-                        analyserNode={activeAnalyser}
+                        analyserNode={activeAnalyser ?? browserTtsAnalyserRef.current}
                         mouthCues={mouthCues}
                         currentAudioTime={currentAudioStartTime}
                         audioContext={audioContextRef.current}
@@ -2176,7 +2235,19 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                   ) : (
                     // --- TRANSCRIPT HISTORY UI ---
                     <div className="flex flex-col h-full">
-                      <h3 className="text-sm font-bold text-slate-300 border-b border-slate-700/50 pb-3 mb-4 shrink-0 uppercase tracking-widest text-center">User Responses</h3>
+                      <h3 className="text-sm font-bold text-slate-300 border-b border-slate-700/50 pb-3 mb-4 shrink-0 uppercase tracking-widest text-center">Interview Transcript</h3>
+
+                      {(aiResponseText || isAiSpeaking) && (
+                        <div className="mb-4 p-3 rounded-xl bg-sky-500/10 border border-sky-500/20 text-slate-200 shadow-sm shrink-0">
+                          <div className="flex items-center justify-between gap-3 mb-2">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400">Professor Maxiel</span>
+                            {isAiSpeaking && <span className="text-[10px] font-medium text-sky-300">Speaking...</span>}
+                          </div>
+                          <p className="leading-relaxed text-xs whitespace-pre-wrap">
+                            {aiResponseText || 'Preparing response...'}
+                          </p>
+                        </div>
+                      )}
 
                       <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-4 pr-1 scroll-smooth">
                         {(() => {
@@ -2320,7 +2391,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                   </button>
                   <button
                     onClick={exitInterview}
-                    className="flex-1 py-3 px-4 bg-sky-500 hover:bg-sky-400 text-white rounded-xl font-medium transition-colors shadow-lg shadow-sky-500/20"
+                    className="flex-1 py-3 px-4 bg-sky-500 hover:bg-sky-400 text-black rounded-xl font-semibold transition-colors shadow-lg shadow-sky-500/20"
                   >
                     Leave
                   </button>
@@ -2334,7 +2405,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="max-w-4xl mx-auto space-y-8"
+              className="w-full space-y-8"
             >
               <div>
                 <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Interview History</h1>
@@ -2349,15 +2420,15 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
 
                 if (allHistory.length === 0) {
                   return (
-                    <div className="bg-slate-900/50 border border-slate-800 rounded-3xl p-16 text-center backdrop-blur-sm">
-                      <div className="w-20 h-20 bg-slate-800/50 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-600">
+                    <div className="bg-card border border-line rounded-lg px-6 py-12 md:py-14 text-center">
+                      <div className="w-20 h-20 bg-active rounded-full flex items-center justify-center mx-auto mb-6 text-muted">
                         <Video className="w-10 h-10" />
                       </div>
-                      <h3 className="text-xl font-bold text-slate-200">No interviews yet</h3>
-                      <p className="text-slate-500 mt-2 max-w-sm mx-auto">Start your first interview session to see your performance history here.</p>
+                      <h3 className="text-xl font-bold text-ink">No interviews yet</h3>
+                      <p className="text-muted mt-2 max-w-sm mx-auto">Start your first interview session to see your performance history here.</p>
                       <button
                         onClick={() => setActiveTab('interview-type')}
-                        className="mt-8 px-6 py-3 bg-sky-500 hover:bg-sky-400 text-white rounded-xl font-bold transition-all shadow-lg shadow-sky-500/20"
+                        className="mt-8 px-6 py-3 bg-accent hover:bg-gold-text text-accent-ink rounded-lg font-semibold transition-colors"
                       >
                         Start Practicing
                       </button>
@@ -2413,7 +2484,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                               {item.total_score || 0}%
                             </span>
                           </div>
-                          <div className="w-10 h-10 rounded-full flex items-center justify-center bg-slate-800 text-slate-500 group-hover:bg-sky-500 group-hover:text-white transition-all duration-300 shadow-inner">
+                          <div className="w-10 h-10 rounded-full flex items-center justify-center bg-slate-800 text-slate-500 group-hover:bg-sky-500 group-hover:text-black transition-all duration-300 shadow-inner">
                             <ChevronRight className="w-6 h-6" />
                           </div>
                         </div>
@@ -2430,7 +2501,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="max-w-4xl mx-auto space-y-8"
+              className="w-full space-y-8"
             >
               <div>
                 <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Analytics</h1>
@@ -2602,7 +2673,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       />
                     </div>
                     {/* Camera Overlay Trigger */}
-                    <label className="absolute bottom-0 right-0 w-8 h-8 bg-sky-500 hover:bg-sky-400 text-white rounded-full flex items-center justify-center cursor-pointer shadow-lg transform translate-x-1 translate-y-1 transition-all hover:scale-110 active:scale-95 z-10 border-2 border-slate-900">
+                    <label className="absolute bottom-0 right-0 w-8 h-8 bg-sky-500 hover:bg-sky-400 text-black rounded-full flex items-center justify-center cursor-pointer shadow-lg transform translate-x-1 translate-y-1 transition-all hover:scale-110 active:scale-95 z-10 border-2 border-slate-900">
                       <Camera className="w-4 h-4" />
                       <input
                         type="file"
@@ -2681,7 +2752,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                   <button
                     onClick={handleSave}
                     disabled={isSaving}
-                    className="px-6 py-3 bg-sky-500 hover:bg-sky-400 text-white rounded-xl font-medium transition-colors shadow-lg shadow-sky-500/20 disabled:opacity-50"
+                    className="px-6 py-3 bg-sky-500 hover:bg-sky-400 text-black rounded-xl font-semibold transition-colors shadow-lg shadow-sky-500/20 disabled:opacity-50"
                   >
                     {isSaving ? 'Saving...' : 'Save'}
                   </button>
