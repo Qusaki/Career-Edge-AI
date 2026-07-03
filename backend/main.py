@@ -9,7 +9,8 @@ from routers import (
     thesis_interview,
     pre_test_intro,
     pre_test_active_listening,
-    post_test_interview
+    post_test_interview,
+    drills
 )
 from database import engine, Base
 import models.user
@@ -18,6 +19,7 @@ import models.thesis_interview
 import models.pre_test_intro
 import models.pre_test_active_listening
 import models.post_test_interview
+import models.drills
 
 # Automatically create tables if they don't exist
 Base.metadata.create_all(bind=engine)
@@ -44,6 +46,7 @@ app.include_router(thesis_interview.router, prefix="/thesis-interview", tags=["T
 app.include_router(pre_test_intro.router, prefix="/pre-test-intro", tags=["Pre-test Exercises"])
 app.include_router(pre_test_active_listening.router, prefix="/pre-test-active-listening", tags=["Pre-test Exercises"])
 app.include_router(post_test_interview.router, prefix="/post-test-interview", tags=["Post-test Exercises"])
+app.include_router(drills.router, prefix="/drills", tags=["Drills"])
 
 
 @app.get("/")
