@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowRight, BookOpen, Headphones, LoaderCircle, RefreshCw } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowRight, BookOpen, CheckCircle2, Headphones, LoaderCircle, RefreshCw, Send } from 'lucide-react';
 
 type Session = {
   id: number;
@@ -10,10 +10,16 @@ type Session = {
   feedback_summary?: string | null;
 };
 
+type ChatMessage = {
+  sender: 'user' | 'ai';
+  text: string;
+};
+
 type Exercise = {
   title: string;
   description: string;
   endpoint: string;
+  kind: 'intro' | 'active-listening';
   icon: React.ReactNode;
 };
 
@@ -22,22 +28,71 @@ const exercises: Exercise[] = [
     title: 'Who Am I?',
     description: 'Practice a clear, complete, and concise personal introduction.',
     endpoint: '/pre-test-intro',
+    kind: 'intro',
     icon: <BookOpen className="h-6 w-6" />,
   },
   {
     title: 'Active Listening Pairs',
     description: 'Listen carefully, summarize key details, and receive focused feedback.',
     endpoint: '/pre-test-active-listening',
+    kind: 'active-listening',
     icon: <Headphones className="h-6 w-6" />,
   },
 ];
+
+const getWebSocketUrl = (apiUrl: string, path: string, token: string) => {
+  const url = new URL(path, apiUrl.endsWith('/') ? apiUrl : `${apiUrl}/`);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.searchParams.set('token', token);
+  return url.toString();
+};
+
+const getBasicIntroEvaluation = (transcript: string) => {
+  const wordCount = transcript.trim().split(/\s+/).filter(Boolean).length;
+  const score = wordCount >= 60 ? 3 : wordCount >= 30 ? 2 : 1;
+
+  return {
+    score_clarity: score,
+    score_completeness: score,
+    score_courtesy: 3,
+    score_correctness: score,
+    score_conciseness: wordCount <= 140 ? 3 : 2,
+    score_eye_contact: 2,
+    feedback_summary: 'Introduction submitted. Review clarity, completeness, courtesy, correctness, conciseness, and delivery.',
+  };
+};
+
+const getBasicActiveListeningEvaluation = (messages: ChatMessage[]) => {
+  const userText = messages.filter(message => message.sender === 'user').map(message => message.text).join(' ');
+  const wordCount = userText.trim().split(/\s+/).filter(Boolean).length;
+  const score = wordCount >= 80 ? 4 : wordCount >= 40 ? 3 : 2;
+
+  return {
+    score_vocabulary: score,
+    score_clarity: score,
+    score_eye_contact: 3,
+    score_grammar: score,
+    score_courtesy: 4,
+    score_conciseness: score,
+    feedback_summary: 'Active listening exercise completed. Review the transcript for the AI feedback and summary accuracy.',
+  };
+};
 
 export function PreTestPage({ apiUrl }: { apiUrl: string }) {
   const [sessions, setSessions] = useState<(Session & { exercise: string })[]>([]);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState<string | null>(null);
+  const [completing, setCompleting] = useState(false);
+  const [activeExercise, setActiveExercise] = useState<Exercise | null>(null);
+  const [activeSession, setActiveSession] = useState<Session | null>(null);
+  const [introTranscript, setIntroTranscript] = useState('');
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [reply, setReply] = useState('');
+  const [isAiResponding, setIsAiResponding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const aiMessageOpenRef = useRef(false);
 
   const loadSessions = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -65,12 +120,67 @@ export function PreTestPage({ apiUrl }: { apiUrl: string }) {
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
 
+  useEffect(() => () => wsRef.current?.close(), []);
+
+  const connectActiveListeningChat = (session: Session) => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    wsRef.current?.close();
+    aiMessageOpenRef.current = false;
+    const socket = new WebSocket(getWebSocketUrl(apiUrl, `/pre-test-active-listening/${session.id}/chat`, token));
+    wsRef.current = socket;
+
+    socket.onopen = () => {
+      setNotice(`Active Listening session #${session.id} started. Listen to the story, then summarize it.`);
+      socket.send(JSON.stringify({ text: '/start_exercise' }));
+    };
+
+    socket.onmessage = event => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'turn_complete') {
+        aiMessageOpenRef.current = false;
+        setIsAiResponding(false);
+        return;
+      }
+
+      if (data.text) {
+        setIsAiResponding(true);
+        setMessages(prev => {
+          if (aiMessageOpenRef.current && prev[prev.length - 1]?.sender === 'ai') {
+            return prev.map((message, index) =>
+              index === prev.length - 1 ? { ...message, text: message.text + data.text } : message
+            );
+          }
+          aiMessageOpenRef.current = true;
+          return [...prev, { sender: 'ai', text: data.text }];
+        });
+      }
+    };
+
+    socket.onerror = () => {
+      setError('The active listening chat connection failed. Check that the backend and Ollama service are running.');
+      setIsAiResponding(false);
+    };
+
+    socket.onclose = event => {
+      aiMessageOpenRef.current = false;
+      setIsAiResponding(false);
+      if (event.code !== 1000 && activeSession?.status !== 'completed') {
+        setError(event.reason || 'The active listening chat connection closed unexpectedly.');
+      }
+    };
+  };
+
   const startExercise = async (exercise: Exercise) => {
     const token = localStorage.getItem('token');
     if (!token) return;
     setStarting(exercise.endpoint);
     setError(null);
     setNotice(null);
+    setIntroTranscript('');
+    setMessages([]);
+    setReply('');
     try {
       const response = await fetch(`${apiUrl}${exercise.endpoint}/start`, {
         method: 'POST',
@@ -84,12 +194,68 @@ export function PreTestPage({ apiUrl }: { apiUrl: string }) {
         throw new Error(body?.detail || `Unable to start ${exercise.title}.`);
       }
       const session: Session = await response.json();
-      setNotice(`${exercise.title} session #${session.id} is ready.`);
+      setActiveExercise(exercise);
+      setActiveSession(session);
+      if (exercise.kind === 'active-listening') {
+        connectActiveListeningChat(session);
+      } else {
+        setNotice(`Who Am I? session #${session.id} started. Write or paste your introduction below.`);
+      }
       await loadSessions();
     } catch (err) {
       setError(err instanceof Error ? err.message : `Unable to start ${exercise.title}.`);
     } finally {
       setStarting(null);
+    }
+  };
+
+  const sendReply = () => {
+    const text = reply.trim();
+    if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || isAiResponding) return;
+    aiMessageOpenRef.current = false;
+    setMessages(prev => [...prev, { sender: 'user', text }]);
+    wsRef.current.send(JSON.stringify({ text }));
+    setReply('');
+  };
+
+  const completeActiveExercise = async () => {
+    const token = localStorage.getItem('token');
+    if (!token || !activeSession || !activeExercise) return;
+    setCompleting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const isIntro = activeExercise.kind === 'intro';
+      const response = await fetch(`${apiUrl}${activeExercise.endpoint}/${activeSession.id}/complete`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(isIntro ? {
+          transcript: introTranscript,
+          evaluation: getBasicIntroEvaluation(introTranscript),
+        } : {
+          conversation: messages,
+          evaluation: getBasicActiveListeningEvaluation(messages),
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.detail || `Unable to complete ${activeExercise.title}.`);
+      }
+      wsRef.current?.close(1000);
+      const completedSession: Session = await response.json();
+      setActiveExercise(null);
+      setActiveSession(null);
+      setMessages([]);
+      setIntroTranscript('');
+      setNotice(`${activeExercise.title} session #${completedSession.id} completed.`);
+      await loadSessions();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Unable to complete ${activeExercise.title}.`);
+    } finally {
+      setCompleting(false);
     }
   };
 
@@ -109,27 +275,107 @@ export function PreTestPage({ apiUrl }: { apiUrl: string }) {
         </div>
       )}
 
-      <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {exercises.map(exercise => (
-          <article key={exercise.endpoint} className="flex flex-col justify-between rounded-lg border border-line bg-card p-5">
+      {activeExercise && activeSession ? (
+        <section className="rounded-lg border border-line bg-card p-5">
+          <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
             <div>
-              <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-active text-gold-text">
-                {exercise.icon}
-              </div>
-              <h2 className="text-xl font-bold text-ink">{exercise.title}</h2>
-              <p className="mt-2 leading-relaxed text-muted">{exercise.description}</p>
+              <h2 className="text-xl font-bold text-ink">{activeExercise.title} #{activeSession.id}</h2>
+              <p className="mt-1 text-sm text-muted">
+                {activeExercise.kind === 'intro'
+                  ? 'Introduce yourself clearly, completely, and concisely.'
+                  : 'Listen first, then summarize the story or instructions accurately.'}
+              </p>
             </div>
             <button
-              onClick={() => startExercise(exercise)}
-              disabled={starting !== null}
-              className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={completeActiveExercise}
+              disabled={completing || (activeExercise.kind === 'intro' ? !introTranscript.trim() : messages.length === 0)}
+              className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {starting === exercise.endpoint ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <ArrowRight className="h-5 w-5" />}
-              {starting === exercise.endpoint ? 'Starting…' : 'Start Exercise'}
+              {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
+              {completing ? 'Completing…' : 'Complete Exercise'}
             </button>
-          </article>
-        ))}
-      </section>
+          </div>
+
+          {activeExercise.kind === 'intro' ? (
+            <div>
+              <div className="rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
+                <p className="font-bold text-gold-text">Prompt</p>
+                <p className="mt-1">
+                  Please introduce yourself. Include your name, course or department, interests, strengths, and why you are preparing for interviews.
+                </p>
+              </div>
+              <textarea
+                value={introTranscript}
+                onChange={event => setIntroTranscript(event.target.value)}
+                placeholder="Type or paste your self-introduction here…"
+                className="mt-4 min-h-48 w-full resize-none rounded-lg border border-line bg-background px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+              />
+            </div>
+          ) : (
+            <>
+              <div className="h-96 overflow-y-auto rounded-lg border border-line bg-background p-4">
+                {messages.length === 0 ? (
+                  <div className="flex h-full items-center justify-center gap-2 text-muted">
+                    <LoaderCircle className="h-5 w-5 animate-spin" /> Waiting for Professor Maxiel…
+                  </div>
+                ) : messages.map((message, index) => (
+                  <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'bg-accent text-accent-ink' : 'border border-line bg-card text-ink'}`}>
+                      <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Professor Maxiel'}</p>
+                      {message.text}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 flex gap-2">
+                <textarea
+                  value={reply}
+                  onChange={event => setReply(event.target.value)}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault();
+                      sendReply();
+                    }
+                  }}
+                  disabled={isAiResponding}
+                  placeholder={isAiResponding ? 'Professor Maxiel is responding…' : 'Type your summary or answer…'}
+                  className="min-h-12 flex-1 resize-none rounded-lg border border-line bg-background px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:opacity-60"
+                />
+                <button
+                  onClick={sendReply}
+                  disabled={!reply.trim() || isAiResponding}
+                  className="flex items-center justify-center rounded-lg bg-accent px-4 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Send className="h-5 w-5" />
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+      ) : (
+        <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {exercises.map(exercise => (
+            <article key={exercise.endpoint} className="flex flex-col justify-between rounded-lg border border-line bg-card p-5">
+              <div>
+                <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-active text-gold-text">
+                  {exercise.icon}
+                </div>
+                <h2 className="text-xl font-bold text-ink">{exercise.title}</h2>
+                <p className="mt-2 leading-relaxed text-muted">{exercise.description}</p>
+              </div>
+              <button
+                onClick={() => startExercise(exercise)}
+                disabled={starting !== null}
+                className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {starting === exercise.endpoint ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <ArrowRight className="h-5 w-5" />}
+                {starting === exercise.endpoint ? 'Starting…' : 'Start Exercise'}
+              </button>
+            </article>
+          ))}
+        </section>
+      )}
 
       <section className="mt-6">
         <div className="mb-2 flex items-center justify-between">
