@@ -133,7 +133,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
       >
         <div className="p-8">
           <div className="text-center mb-8">
-            <h2 className="text-3xl font-bold text-white mb-2">
+            <h2 className="text-3xl font-bold text-ink mb-2">
               {mode === 'signin' ? 'Welcome back' : 'Create an account'}
             </h2>
             <p className="text-slate-400 text-sm">

@@ -3,6 +3,9 @@ import { motion } from 'motion/react';
 import { Canvas } from '@react-three/fiber';
 import { Environment, OrbitControls } from '@react-three/drei';
 import { ProfessorModel } from './ProfessorModel';
+import { PreTestPage } from './PreTestPage';
+import { DrillsPage } from './DrillsPage';
+import { PostTestPage } from './PostTestPage';
 import { useWebLLM } from '../hooks/useWebLLM';
 import { db } from '../db';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -37,7 +40,10 @@ import {
   Shield,
   Eye,
   EyeOff,
-  Camera
+  Camera,
+  BookOpen,
+  Dumbbell,
+  ClipboardCheck
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -45,8 +51,22 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
-  const { engine: webLLMEngine, isLoading: isLlmLoading, progress: llmProgress, status: llmStatus } = useWebLLM();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'history' | 'analytics' | 'profile' | 'settings' | 'interview-type' | 'university-setup' | 'new-interview' | 'interview-session' | 'interview-result' | 'thesis-setup' | 'thesis-session'>('dashboard');
+  const {
+    engine: webLLMEngine,
+    isLoading: isLlmLoading,
+    progress: llmProgress,
+    status: llmStatus,
+    error: llmError,
+    isReady: isLlmReady,
+    hasError: hasLlmError,
+    retry: retryWebLLM
+  } = useWebLLM();
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'pre-test' | 'drills' | 'post-test' | 'history' | 'analytics' | 'profile' | 'settings' | 'interview-type' | 'university-setup' | 'new-interview' | 'interview-session' | 'interview-result' | 'thesis-setup' | 'thesis-session'>(() => {
+    if (window.location.pathname === '/pre-test') return 'pre-test';
+    if (window.location.pathname === '/drills') return 'drills';
+    if (window.location.pathname === '/post-test') return 'post-test';
+    return 'dashboard';
+  });
   const [prevTab, setPrevTab] = useState<string>('dashboard');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [selectedCompanyType, setSelectedCompanyType] = useState('');
@@ -185,6 +205,37 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://13.212.244.55';
 
+  useEffect(() => {
+    const routes: Partial<Record<typeof activeTab, string>> = {
+      dashboard: '/dashboard',
+      'pre-test': '/pre-test',
+      drills: '/drills',
+      'post-test': '/post-test',
+      history: '/history',
+      analytics: '/analytics',
+      settings: '/settings',
+      profile: '/profile',
+    };
+    const path = routes[activeTab];
+    if (path && window.location.pathname !== path) window.history.pushState({}, '', path);
+  }, [activeTab]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const route = window.location.pathname;
+      if (route === '/pre-test') setActiveTab('pre-test');
+      else if (route === '/drills') setActiveTab('drills');
+      else if (route === '/post-test') setActiveTab('post-test');
+      else if (route === '/history') setActiveTab('history');
+      else if (route === '/analytics') setActiveTab('analytics');
+      else if (route === '/settings') setActiveTab('settings');
+      else if (route === '/profile') setActiveTab('profile');
+      else setActiveTab('dashboard');
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   const fetchHistory = React.useCallback(async () => {
     try {
       const token = localStorage.getItem('token');
@@ -201,15 +252,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       console.warn("Offline: loading interview history from cache");
       const cached = await db.history.get(1);
       const data = cached ? cached.data : [];
-      
+
       const offlineSessions = await db.offlineSessions.toArray();
       const offlineUpcoming = offlineSessions.filter(s => s.type === 'upcoming').map(s => ({
-         id: s.localId,
-         status: s.status === 'pending_sync' ? 'pending_sync' : 'completed',
-         start_time: new Date(s.timestamp).toISOString(),
-         total_score: s.evaluation?.total_score || s.evaluation?.technical_score || 0,
-         passed: true,
-         isOffline: true
+        id: s.localId,
+        status: s.status === 'pending_sync' ? 'pending_sync' : 'completed',
+        start_time: new Date(s.timestamp).toISOString(),
+        total_score: s.evaluation?.total_score || s.evaluation?.technical_score || 0,
+        passed: true,
+        isOffline: true
       }));
 
       setInterviewHistory([...offlineUpcoming, ...data]);
@@ -232,15 +283,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       console.warn("Offline: loading thesis history from cache");
       const cached = await db.history.get(2);
       const data = cached ? cached.data : [];
-      
+
       const offlineSessions = await db.offlineSessions.toArray();
       const offlineThesis = offlineSessions.filter(s => s.type === 'thesis').map(s => ({
-         id: s.localId,
-         status: s.status === 'pending_sync' ? 'pending_sync' : 'completed',
-         start_time: new Date(s.timestamp).toISOString(),
-         total_score: s.evaluation?.total_score || s.evaluation?.score_ccit_technical_innovation || 0,
-         passed: true,
-         isOffline: true
+        id: s.localId,
+        status: s.status === 'pending_sync' ? 'pending_sync' : 'completed',
+        start_time: new Date(s.timestamp).toISOString(),
+        total_score: s.evaluation?.total_score || s.evaluation?.score_ccit_technical_innovation || 0,
+        passed: true,
+        isOffline: true
       }));
 
       setThesisHistory([...offlineThesis, ...data]);
@@ -252,38 +303,38 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       try {
         const token = localStorage.getItem('token');
         if (!token) return;
-        
+
         const pendingSessions = await db.offlineSessions.where('status').equals('pending_sync').toArray();
         if (pendingSessions.length === 0) return;
-        
+
         console.log(`Syncing ${pendingSessions.length} offline sessions to cloud...`);
-        
+
         for (const session of pendingSessions) {
-           const endpointPrefix = session.type === 'upcoming' ? '/upcoming-student-interview' : '/thesis-interview';
-           
-           // Step 1: Start
-           const startRes = await fetch(`${API_URL}${endpointPrefix}/start`, {
-             method: 'POST',
-             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-           });
-           if (!startRes.ok) continue; // Try again later
-           
-           const startData = await startRes.json();
-           const realId = startData.id;
-           
-           // Step 2: Complete
-           const completeRes = await fetch(`${API_URL}${endpointPrefix}/${realId}/complete`, {
-             method: 'POST',
-             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-             body: JSON.stringify({ conversation: session.conversationLog, evaluation: session.evaluation })
-           });
-           
-           if (completeRes.ok) {
-              await db.offlineSessions.update(session.localId, { status: 'synced' });
-              console.log(`Synced session ${session.localId} -> ${realId}`);
-           }
+          const endpointPrefix = session.type === 'upcoming' ? '/upcoming-student-interview' : '/thesis-interview';
+
+          // Step 1: Start
+          const startRes = await fetch(`${API_URL}${endpointPrefix}/start`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+          });
+          if (!startRes.ok) continue; // Try again later
+
+          const startData = await startRes.json();
+          const realId = startData.id;
+
+          // Step 2: Complete
+          const completeRes = await fetch(`${API_URL}${endpointPrefix}/${realId}/complete`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ conversation: session.conversationLog, evaluation: session.evaluation })
+          });
+
+          if (completeRes.ok) {
+            await db.offlineSessions.update(session.localId, { status: 'synced' });
+            console.log(`Synced session ${session.localId} -> ${realId}`);
+          }
         }
-        
+
         // Refresh history
         fetchHistory();
         fetchThesisHistory();
@@ -324,7 +375,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
             profilePicture: data.profile_picture_url || `https://api.dicebear.com/7.x/micah/svg?seed=Alex&backgroundColor=cbd5e1`
           };
           setProfile(p);
-          
+
           db.profile.put({
             id: 1,
             email: p.email,
@@ -349,10 +400,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
               profilePicture: cached.profile_picture_url || `https://api.dicebear.com/7.x/micah/svg?seed=Alex&backgroundColor=cbd5e1`
             });
           } else {
-             // If completely failed and no cache
-             onLogout();
+            // If completely failed and no cache
+            onLogout();
           }
-        } catch(e) {}
+        } catch (e) { }
       }
     };
     fetchUser();
@@ -667,25 +718,43 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     };
   };
 
+  const getWebLLMUnavailableMessage = () => {
+    if (isLlmLoading) {
+      return `AI is still downloading into your browser. Please wait for it to finish.\nStatus: ${llmStatus}`;
+    }
+
+    if (hasLlmError) {
+      return `WebLLM could not initialize in this browser.\n${llmError || llmStatus}`;
+    }
+
+    if (!isLlmReady || !webLLMEngine) {
+      return `WebLLM is not ready yet.\nStatus: ${llmStatus}`;
+    }
+
+    return null;
+  };
 
   const handleLocalWebLLM = async (userText: string, currentMessages: any[]) => {
-    if (!webLLMEngine) {
-      alert("AI is still loading. Please wait a moment.");
+    const unavailableMessage = getWebLLMUnavailableMessage();
+    if (unavailableMessage) {
+      alert(unavailableMessage);
+      setIsAiSpeaking(false);
+      isAiSpeakingRef.current = false;
       return;
     }
-    
+
     // Add user message to state
     const newMessages = [...currentMessages, { role: 'user', content: userText }];
     setChatMessages(newMessages);
-    
+
     setAiResponseText('');
     setIsAiSpeaking(true);
     isAiSpeakingRef.current = true;
-    
+
     // Fake lip sync loop
     const startLipSync = () => {
       const loop = () => {
-        if(isAiSpeakingRef.current) {
+        if (isAiSpeakingRef.current) {
           setMouthValue(Math.random() * 0.3 + 0.1);
           requestAnimationFrame(loop);
         } else {
@@ -698,9 +767,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
     try {
       console.log("Starting WebLLM generation...");
-      const responseStream = await webLLMEngine.chat.completions.create({
+      const responseStream = await webLLMEngine!.chat.completions.create({
         messages: newMessages,
-        stream: true
+        stream: true,
+        temperature: 0.7,
+        max_tokens: 220,
       });
 
       let fullResponse = "";
@@ -718,6 +789,33 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         return tagalogCount > 1 ? 'tl-PH' : 'en-US';
       };
 
+      const selectPreferredFemaleVoice = (voices: SpeechSynthesisVoice[], lang: string) => {
+        const languageCode = lang.split('-')[0];
+        const matchingVoices = voices.filter(voice =>
+          voice.lang === lang || voice.lang.startsWith(languageCode)
+        );
+        const femaleVoiceNames = [
+          'aria',
+          'ava',
+          'emma',
+          'jenny',
+          'joanna',
+          'karen',
+          'linda',
+          'michelle',
+          'samantha',
+          'sara',
+          'zira',
+          'female',
+          'woman',
+          'girl',
+        ];
+
+        return matchingVoices.find(voice =>
+          femaleVoiceNames.some(name => voice.name.toLowerCase().includes(name))
+        ) || matchingVoices[0];
+      };
+
       const speakWithBrowser = (text: string) => {
         return new Promise<void>((resolve) => {
           if (!('speechSynthesis' in window)) {
@@ -731,8 +829,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
           utterance.rate = 0.95;
           utterance.pitch = 1;
           const voices = window.speechSynthesis.getVoices();
-          const preferredVoice = voices.find(voice => voice.lang === utterance.lang)
-            || voices.find(voice => voice.lang.startsWith(utterance.lang.split('-')[0]));
+          const preferredVoice = selectPreferredFemaleVoice(voices, utterance.lang);
           if (preferredVoice) utterance.voice = preferredVoice;
 
           let finished = false;
@@ -769,7 +866,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         if (isTtsPlaying) return ttsProcessingPromise || Promise.resolve();
         if (ttsQueue.length === 0) return Promise.resolve();
         isTtsPlaying = true;
-        
+
         try {
           while (ttsQueue.length > 0) {
             const text = ttsQueue.shift();
@@ -788,7 +885,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
       for await (const chunk of responseStream) {
         if (!isAiSpeakingRef.current) break; // Abort if user left the room early
-        
+
         const delta = chunk.choices[0]?.delta?.content || "";
         fullResponse += delta;
         sentenceBuffer += delta;
@@ -800,10 +897,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
             const parts = sentenceBuffer.split(delimiter);
             const toSpeak = parts[0] + delimiter;
             sentenceBuffer = parts.slice(1).join(delimiter);
-            
+
             const cleanText = toSpeak.replace(/[*_#]/g, '').trim();
             if (cleanText) {
-               enqueueTts(cleanText);
+              enqueueTts(cleanText);
             }
           }
         }
@@ -812,7 +909,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       if (sentenceBuffer.trim() && isAiSpeakingRef.current) {
         const cleanText = sentenceBuffer.replace(/[*_#]/g, '').trim();
         if (cleanText) {
-            enqueueTts(cleanText);
+          enqueueTts(cleanText);
         }
       }
 
@@ -821,7 +918,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       setIsAiSpeaking(false);
       isAiSpeakingRef.current = false;
       setMouthValue(0);
-      
+
       setChatMessages(prev => [...prev, { role: 'assistant', content: fullResponse }]);
       const turn = { sender: 'ai' as const, text: fullResponse.trim() };
       if (activeInterviewModeRef.current === 'thesis') {
@@ -829,7 +926,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       } else {
         setConversationLog(prev => [...prev, turn]);
       }
-      
+
       if (!isListeningRef.current) {
         toggleListening();
       }
@@ -843,7 +940,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   };
 
   const startInterviewSession = async () => {
-    if (isLlmLoading) { alert('AI is still downloading the 2.5GB brain to your browser. Please wait for it to finish!\nStatus: ' + llmStatus); return; }
+    const unavailableMessage = getWebLLMUnavailableMessage();
+    if (unavailableMessage) {
+      alert(unavailableMessage);
+      return;
+    }
     // Unlock speech synthesis immediately on user click
     unlockBrowserSpeech();
     setIsStartingInterview(true);
@@ -874,7 +975,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     } finally {
       setIsStartingInterview(false);
     }
-    
+
     if (sid) {
       sessionIdRef.current = sid as number;
       setSessionId(sid as number);
@@ -884,7 +985,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       const systemPrompt = "You are Professor Maxiel, an expert interviewer. Your sole purpose is to interview an incoming college freshman. Speak DIRECTLY to the student. Keep the interview to exactly 5 questions total. Ask exactly ONE question at a time. Conclude when finished.";
       const initialMsgs = [{ role: 'system', content: systemPrompt }];
       setChatMessages(initialMsgs);
-      
+
       handleLocalWebLLM("Hello! I am here and ready to begin the interview.", initialMsgs);
     }
   };
@@ -943,10 +1044,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     if (!sessionId) return;
     setIsFinishingInterview(true);
     let evaluation = null;
-    
+
     try {
       if (webLLMEngine) {
-         const gradingPrompt = `You are a strict grading algorithm. You will evaluate the following transcript of an incoming college freshman interview. 
+        const gradingPrompt = `You are a strict grading algorithm. You will evaluate the following transcript of an incoming college freshman interview. 
 Extract 5 scores out of 100 based on the rubric. Respond in STRICT JSON matching this schema exactly:
 {
   "technical_score": 0,
@@ -958,37 +1059,37 @@ Extract 5 scores out of 100 based on the rubric. Respond in STRICT JSON matching
 }
 Transcript:
 ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
-         
-         const resp = await webLLMEngine.chat.completions.create({
-           messages: [{ role: 'user', content: gradingPrompt }],
-           response_format: { type: "json_object" }
-         });
-         
-         try {
-           evaluation = JSON.parse(resp.choices[0].message.content || "{}");
-         } catch(e) {
-           console.error("Failed to parse local evaluation", e);
-         }
+
+        const resp = await webLLMEngine.chat.completions.create({
+          messages: [{ role: 'user', content: gradingPrompt }],
+          response_format: { type: "json_object" }
+        });
+
+        try {
+          evaluation = JSON.parse(resp.choices[0].message.content || "{}");
+        } catch (e) {
+          console.error("Failed to parse local evaluation", e);
+        }
       }
 
       if (String(sessionId).startsWith('local_')) {
-          // It's an offline session, save to IndexedDB directly
-          await db.offlineSessions.put({
-            localId: String(sessionId),
-            type: 'upcoming',
-            status: 'pending_sync',
-            conversationLog: conversationLog,
-            evaluation: evaluation,
-            timestamp: Date.now()
-          });
-          
-          setInterviewResult({ ...evaluation, total_score: evaluation?.total_score || evaluation?.technical_score || 0, passed: true });
-          stopListening();
-          setIsLeaveModalOpen(false);
-          setIsAiSpeaking(false);
-          setIsListening(false);
-          if (audioPlayerRef.current) audioPlayerRef.current.pause();
-          return;
+        // It's an offline session, save to IndexedDB directly
+        await db.offlineSessions.put({
+          localId: String(sessionId),
+          type: 'upcoming',
+          status: 'pending_sync',
+          conversationLog: conversationLog,
+          evaluation: evaluation,
+          timestamp: Date.now()
+        });
+
+        setInterviewResult({ ...evaluation, total_score: evaluation?.total_score || evaluation?.technical_score || 0, passed: true });
+        stopListening();
+        setIsLeaveModalOpen(false);
+        setIsAiSpeaking(false);
+        setIsListening(false);
+        if (audioPlayerRef.current) audioPlayerRef.current.pause();
+        return;
       }
 
       const token = localStorage.getItem('token');
@@ -1022,7 +1123,7 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
         evaluation: evaluation,
         timestamp: Date.now()
       });
-      
+
       setInterviewResult({ ...evaluation, total_score: evaluation?.total_score || evaluation?.technical_score || 0, passed: true });
       stopListening();
       setIsLeaveModalOpen(false);
@@ -1107,7 +1208,11 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
   };
 
   const startThesisSession = async () => {
-    if (isLlmLoading) { alert('AI is still downloading the 2.5GB brain to your browser. Please wait for it to finish!\nStatus: ' + llmStatus); return; }
+    const unavailableMessage = getWebLLMUnavailableMessage();
+    if (unavailableMessage) {
+      alert(unavailableMessage);
+      return;
+    }
     unlockBrowserSpeech();
     setThesisStartError(null);
 
@@ -1149,7 +1254,7 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
       sid = 'local_' + Date.now();
       isOffline = true;
     }
-    
+
     if (sid) {
       thesisSessionIdRef.current = sid as number;
       setThesisSessionId(sid as number);
@@ -1159,20 +1264,20 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
         setThesisAbstractUploading(true);
         try {
           if (thesisAbstractFile.name.endsWith('.txt')) {
-             abstractText = await thesisAbstractFile.text();
+            abstractText = await thesisAbstractFile.text();
           } else if (thesisAbstractFile.name.endsWith('.pdf')) {
-             const arrayBuffer = await thesisAbstractFile.arrayBuffer();
-             const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-             let fullText = "";
-             // Only parse first 10 pages to save time/memory
-             const maxPages = Math.min(pdf.numPages, 10);
-             for (let i = 1; i <= maxPages; i++) {
-                const page = await pdf.getPage(i);
-                const textContent = await page.getTextContent();
-                const pageText = textContent.items.map((item: any) => item.str).join(' ');
-                fullText += pageText + "\n";
-             }
-             abstractText = fullText;
+            const arrayBuffer = await thesisAbstractFile.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            let fullText = "";
+            // Only parse first 10 pages to save time/memory
+            const maxPages = Math.min(pdf.numPages, 10);
+            for (let i = 1; i <= maxPages; i++) {
+              const page = await pdf.getPage(i);
+              const textContent = await page.getTextContent();
+              const pageText = textContent.items.map((item: any) => item.str).join(' ');
+              fullText += pageText + "\n";
+            }
+            abstractText = fullText;
           }
         } catch (e) {
           console.error('Abstract parsing failed:', e);
@@ -1197,7 +1302,7 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
       const systemPrompt = `You are Professor Maxiel, an expert panelist for a thesis defense at ${dep}. Probe the student's research abstract. Speak DIRECTLY to the student. Keep the interview to exactly 5 questions total. Ask exactly ONE question at a time. Conclude gracefully when finished.\n\nStudent's Abstract/Proposal context:\n${abstractText ? abstractText.substring(0, 5000) : 'None provided.'}`; // Truncate to 5000 chars to avoid token limits
       const initialMsgs = [{ role: 'system', content: systemPrompt }];
       setChatMessages(initialMsgs);
-      
+
       handleLocalWebLLM("Hello! I am here and ready to begin the thesis defense.", initialMsgs);
       setThesisIsStarting(false);
     }
@@ -1230,10 +1335,10 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
     if (!thesisSessionIdRef.current) return;
     setThesisIsFinishing(true);
     let evaluation = null;
-    
+
     try {
       if (webLLMEngine) {
-         const gradingPrompt = `You are a strict grading algorithm. Evaluate the transcript of this thesis defense.
+        const gradingPrompt = `You are a strict grading algorithm. Evaluate the transcript of this thesis defense.
 Extract scores out of 100 based on the rubric. Respond in STRICT JSON matching this schema exactly:
 {
   "technical_innovation_score": 0,
@@ -1245,42 +1350,42 @@ Extract scores out of 100 based on the rubric. Respond in STRICT JSON matching t
 }
 Transcript:
 ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
-         
-         const resp = await webLLMEngine.chat.completions.create({
-           messages: [{ role: 'user', content: gradingPrompt }],
-           response_format: { type: "json_object" }
-         });
-         
-         try {
-           evaluation = JSON.parse(resp.choices[0].message.content || "{}");
-           if (evaluation.technical_innovation_score) {
-              evaluation.score_ccit_technical_innovation = evaluation.technical_innovation_score;
-           }
-         } catch(e) {
-           console.error("Failed to parse local thesis evaluation", e);
-         }
+
+        const resp = await webLLMEngine.chat.completions.create({
+          messages: [{ role: 'user', content: gradingPrompt }],
+          response_format: { type: "json_object" }
+        });
+
+        try {
+          evaluation = JSON.parse(resp.choices[0].message.content || "{}");
+          if (evaluation.technical_innovation_score) {
+            evaluation.score_ccit_technical_innovation = evaluation.technical_innovation_score;
+          }
+        } catch (e) {
+          console.error("Failed to parse local thesis evaluation", e);
+        }
       }
 
       if (String(thesisSessionIdRef.current).startsWith('local_')) {
-          // Offline mode
-          await db.offlineSessions.put({
-            localId: String(thesisSessionIdRef.current),
-            type: 'thesis',
-            status: 'pending_sync',
-            conversationLog: thesisConversationLog,
-            evaluation: evaluation,
-            timestamp: Date.now()
-          });
-          
-          setThesisResult({ ...evaluation, total_score: evaluation?.total_score || evaluation?.score_ccit_technical_innovation || 0, passed: true });
-          stopListening();
-          setThesisIsLeaveModalOpen(false);
-          setIsAiSpeaking(false);
-          isAiSpeakingRef.current = false;
-          setIsListening(false);
-          if (thesisTimerRef.current) { clearInterval(thesisTimerRef.current); thesisTimerRef.current = null; }
-          if (audioPlayerRef.current) audioPlayerRef.current.pause();
-          return;
+        // Offline mode
+        await db.offlineSessions.put({
+          localId: String(thesisSessionIdRef.current),
+          type: 'thesis',
+          status: 'pending_sync',
+          conversationLog: thesisConversationLog,
+          evaluation: evaluation,
+          timestamp: Date.now()
+        });
+
+        setThesisResult({ ...evaluation, total_score: evaluation?.total_score || evaluation?.score_ccit_technical_innovation || 0, passed: true });
+        stopListening();
+        setThesisIsLeaveModalOpen(false);
+        setIsAiSpeaking(false);
+        isAiSpeakingRef.current = false;
+        setIsListening(false);
+        if (thesisTimerRef.current) { clearInterval(thesisTimerRef.current); thesisTimerRef.current = null; }
+        if (audioPlayerRef.current) audioPlayerRef.current.pause();
+        return;
       }
 
       const token = localStorage.getItem('token');
@@ -1312,7 +1417,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
         evaluation: evaluation,
         timestamp: Date.now()
       });
-      
+
       setThesisResult({ ...evaluation, total_score: evaluation?.total_score || evaluation?.score_ccit_technical_innovation || 0, passed: true });
       stopListening();
       setThesisIsLeaveModalOpen(false);
@@ -1449,1323 +1554,1374 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
         <div className="fixed inset-0 z-[9999] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center text-white">
           <div className="w-16 h-16 border-4 border-sky-500 border-t-transparent rounded-full animate-spin mb-6"></div>
           <h2 className="text-3xl font-black mb-2 text-sky-400">Downloading AI Brain...</h2>
-          <p className="text-slate-300 max-w-md text-lg leading-relaxed mb-4">Please wait while the 2.5GB WebLLM model is loaded into your browser memory. This happens ONLY the first time you run the app!</p>
+          <p className="text-slate-300 max-w-md text-lg leading-relaxed mb-4">Please wait while the WebLLM model is loaded into your browser memory. This happens ONLY the first time you run the app!</p>
           <div className="bg-slate-900 border border-slate-700 px-6 py-4 rounded-2xl w-full max-w-md">
             <p className="font-mono text-sm text-sky-300 mb-2">{llmStatus}</p>
             <div className="w-full bg-slate-800 rounded-full h-3 overflow-hidden">
-              <div className="bg-sky-500 h-full transition-all duration-300" style={{width: `${llmProgress}%`}}></div>
+              <div className="bg-sky-500 h-full transition-all duration-300" style={{ width: `${llmProgress}%` }}></div>
             </div>
           </div>
         </div>
       )}
-    <div className="dashboard-shell min-h-screen bg-page text-ink flex overflow-hidden">
-      {/* Sidebar */}
-      {activeTab !== 'interview-type' && activeTab !== 'university-setup' && activeTab !== 'new-interview' && activeTab !== 'interview-session' && activeTab !== 'thesis-setup' && activeTab !== 'thesis-session' && (
-        <aside className="w-72 bg-card border-r border-line flex flex-col h-screen shrink-0">
-          {/* Logo Area */}
-          <div className="h-16 px-3 border-b border-line flex items-center shrink-0">
-            <span className="font-bold text-xl tracking-tight text-gold-text">Career Edge</span>
-          </div>
-
-          {/* Profile Area */}
-          <div className="p-2 border-b border-line">
+      {hasLlmError && ['interview-type', 'university-setup', 'new-interview', 'interview-session', 'thesis-setup', 'thesis-session'].includes(activeTab) && (
+        <div className="fixed inset-0 z-[9999] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center text-white">
+          <div className="w-full max-w-lg rounded-2xl border border-rose-500/30 bg-slate-900 p-6 shadow-2xl">
+            <h2 className="text-3xl font-black mb-3 text-rose-300">WebLLM Could Not Start</h2>
+            <p className="text-slate-300 leading-relaxed mb-4">
+              The interview AI runs locally in your browser with WebGPU. Use Chrome or Edge with hardware acceleration enabled, then try again.
+            </p>
+            <div className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-left">
+              <p className="font-mono text-sm text-rose-200 break-words">{llmError || llmStatus}</p>
+            </div>
             <button
-              onClick={() => setActiveTab('profile')}
-              className={`w-full text-left border border-line ${activeTab === 'profile' ? 'bg-active' : 'bg-transparent hover:bg-active'} rounded-lg p-2 flex items-center gap-3 transition-colors duration-200`}
+              onClick={retryWebLLM}
+              className="mt-5 rounded-xl bg-sky-500 px-5 py-3 font-bold text-white transition-colors hover:bg-sky-400"
             >
-              <div className="w-10 h-10 rounded-full bg-slate-800 border border-sky-500/30 overflow-hidden shrink-0">
-                <img
-                  src={profile.profilePicture}
-                  alt="User"
-                  className="w-full h-full object-cover"
-                />
-              </div>
-              <div className="overflow-hidden">
-                <h3 className="font-medium text-sm text-ink truncate">{profile.name}</h3>
-                <p className="text-xs text-gold-text font-medium mt-0.5 truncate">{profile.department}</p>
-              </div>
+              Retry WebLLM
             </button>
           </div>
+        </div>
+      )}
+      <div className="dashboard-shell min-h-screen bg-page text-ink flex overflow-hidden">
+        {/* Sidebar */}
+        {activeTab !== 'interview-type' && activeTab !== 'university-setup' && activeTab !== 'new-interview' && activeTab !== 'interview-session' && activeTab !== 'thesis-setup' && activeTab !== 'thesis-session' && (
+          <aside className="w-72 bg-card border-r border-line flex flex-col h-screen shrink-0">
+            {/* Logo Area */}
+            <div className="h-16 px-3 border-b border-line flex items-center shrink-0">
+              <span className="font-bold text-xl tracking-tight text-gold-text">Career Edge</span>
+            </div>
 
-          {/* Main Action */}
-          <div className="p-2">
-            {['CCIT', 'CTE', 'CBAPA'].includes(profile.department?.toUpperCase() || '') ? (
+            {/* Profile Area */}
+            <div className="p-2 border-b border-line">
               <button
-                onClick={() => {
-                  setSelectedCompanyType('');
-                  setPosition('');
-                  setActiveTab('interview-type');
-                }}
-                className="w-full py-2 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 transition-colors bg-accent hover:bg-gold-text text-accent-ink"
+                onClick={() => setActiveTab('profile')}
+                className={`w-full text-left border border-line ${activeTab === 'profile' ? 'bg-active' : 'bg-transparent hover:bg-active'} rounded-lg p-2 flex items-center gap-3 transition-colors duration-200`}
               >
-                <Plus className="w-5 h-5" />
-                Start Interview
+                <div className="w-10 h-10 rounded-full bg-slate-800 border border-sky-500/30 overflow-hidden shrink-0">
+                  <img
+                    src={profile.profilePicture}
+                    alt="User"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div className="overflow-hidden">
+                  <h3 className="font-medium text-sm text-ink truncate">{profile.name}</h3>
+                  <p className="text-xs text-gold-text font-medium mt-0.5 truncate">{profile.department}</p>
+                </div>
               </button>
-            ) : (
-              <div className="w-full relative group">
+            </div>
+
+            {/* Main Action */}
+            <div className="p-2">
+              {['CCIT', 'CTE', 'CBAPA'].includes(profile.department?.toUpperCase() || '') ? (
                 <button
-                  disabled
-                  className="w-full py-3 px-4 rounded-xl font-medium flex items-center justify-center gap-2 bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50 transition-colors"
+                  onClick={() => {
+                    setSelectedCompanyType('');
+                    setPosition('');
+                    setActiveTab('interview-type');
+                  }}
+                  className="w-full py-2 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 transition-colors bg-accent hover:bg-gold-text text-accent-ink"
                 >
-                  <Lock className="w-4 h-4 text-slate-500" />
-                  Locked
+                  <Plus className="w-5 h-5" />
+                  Start Interview
                 </button>
-                {/* Tooltip */}
-                <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-3 px-3 py-2 bg-slate-800 border border-slate-700 text-xs font-medium text-slate-300 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-xl z-50">
-                  <div className="absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 border-b border-r border-slate-700 rotate-45 -mt-1" />
-                  Only available to CCIT, CTE, and CBAPA students
+              ) : (
+                <div className="w-full relative group">
+                  <button
+                    disabled
+                    className="w-full py-3 px-4 rounded-xl font-medium flex items-center justify-center gap-2 bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50 transition-colors"
+                  >
+                    <Lock className="w-4 h-4 text-slate-500" />
+                    Locked
+                  </button>
+                  {/* Tooltip */}
+                  <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-3 px-3 py-2 bg-slate-800 border border-slate-700 text-xs font-medium text-slate-300 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-xl z-50">
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 border-b border-r border-slate-700 rotate-45 -mt-1" />
+                    Only available to CCIT, CTE, and CBAPA students
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Navigation */}
+            <nav className="flex-1 px-2 py-1.5 space-y-1 overflow-y-auto">
+              <button
+                onClick={() => setActiveTab('dashboard')}
+                className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'dashboard' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
+              >
+                <LayoutDashboard className="w-5 h-5" />
+                Dashboard
+              </button>
+              <button
+                onClick={() => setActiveTab('pre-test')}
+                className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'pre-test' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
+              >
+                <BookOpen className="w-5 h-5" />
+                Pre-Test
+              </button>
+              <button
+                onClick={() => setActiveTab('drills')}
+                className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'drills' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
+              >
+                <Dumbbell className="w-5 h-5" />
+                Drills
+              </button>
+              <button
+                onClick={() => setActiveTab('post-test')}
+                className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'post-test' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
+              >
+                <ClipboardCheck className="w-5 h-5" />
+                Post-Test
+              </button>
+              <button
+                onClick={() => setActiveTab('history')}
+                className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'history' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
+              >
+                <Video className="w-5 h-5" />
+                History
+              </button>
+              <button
+                onClick={() => setActiveTab('analytics')}
+                className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'analytics' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
+              >
+                <BarChart2 className="w-5 h-5" />
+                Analytics
+              </button>
+              <button
+                onClick={() => setActiveTab('settings')}
+                className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'settings' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
+              >
+                <Settings className="w-5 h-5" />
+                Settings
+              </button>
+            </nav>
+
+            {/* Logout */}
+            <div className="p-2 border-t border-line">
+              <button
+                onClick={onLogout}
+                className="flex items-center gap-3 px-2 py-2 w-full rounded-lg text-muted hover:bg-active hover:text-ink font-medium transition-colors"
+              >
+                <LogOut className="w-5 h-5" />
+                Sign Out
+              </button>
+            </div>
+          </aside>
+        )}
+
+        {/* Main Content */}
+        <main className="min-w-0 flex-1 flex flex-col h-screen overflow-hidden">
+          {/* Scrollable Content */}
+          <div
+            className="flex-1 overflow-y-auto px-4 pb-3 pt-6 sm:px-8 md:pb-4 md:pt-8 lg:px-10"
+            style={activeTab === 'interview-session' ? { backgroundColor: '#02040a' } : undefined}
+          >
+
+            {activeTab === 'dashboard' && (
+              <div className="w-full">
+                {/* Page Title */}
+                <div className="mb-6">
+                  <h1 className="text-4xl md:text-5xl font-bold text-ink tracking-tight">Welcome back, <span className="text-gold-text">{profile.name.split(' ')[0]}</span></h1>
+                  <p className="text-lg md:text-xl font-medium text-muted mt-1.5">Here's an overview of your interview progress.</p>
+                </div>
+
+                {renderStatCards()}
+
+                {/* History List */}
+                <div className="mt-5 w-full space-y-2.5">
+                  <div className="flex items-center justify-between mb-1">
+                    <h2 className="text-lg font-bold text-ink italic tracking-tight">Recent Sessions</h2>
+                    {interviewHistory.length > 5 && (
+                      <button
+                        onClick={() => setActiveTab('history')}
+                        className="text-xs font-bold text-gold-text hover:text-accent-ink transition-colors uppercase tracking-widest"
+                      >
+                        View All
+                      </button>
+                    )}
+                  </div>
+
+                  {interviewHistory.filter(item => (item.total_score || 0) > 0).length === 0 ? (
+                    <div className="bg-card border border-line rounded-lg px-3 py-8 md:py-10 text-center">
+                      <p className="text-muted text-sm">No interviews completed yet.</p>
+                      <button onClick={() => setActiveTab('interview-type')} className="mt-2 text-gold-text text-sm font-bold hover:underline">Start your first interview</button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {interviewHistory.filter(item => (item.total_score || 0) > 0).slice(0, 5).map((item, i, filteredList) => (
+                        <motion.div
+                          key={item.id || i}
+                          onClick={() => {
+                            setInterviewResult(item);
+                            setPrevTab(activeTab);
+                            setActiveTab('interview-result');
+                          }}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: 0.1 + (i * 0.05) }}
+                          className="bg-card border border-line hover:border-accent rounded-lg p-3 flex items-center justify-between hover:bg-active transition-colors cursor-pointer group"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-slate-400 group-hover:text-sky-400 group-hover:bg-sky-500/10 transition-all">
+                              <Video className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-sm text-ink group-hover:text-gold-text transition-colors">Interview #{filteredList.length - i}</h4>
+                              <p className="text-[10px] text-muted uppercase font-bold tracking-wider">{new Date(item.start_time).toLocaleDateString()}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <div className="text-right">
+                              <span className={`text-lg font-black ${item.total_score >= 70 ? 'text-success' : 'text-gold-text'}`}>{item.total_score || 0}%</span>
+                            </div>
+                            <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-sky-400 group-hover:translate-x-1 transition-all" />
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
-          </div>
 
-          {/* Navigation */}
-          <nav className="flex-1 px-2 py-1.5 space-y-1 overflow-y-auto">
-            <button
-              onClick={() => setActiveTab('dashboard')}
-              className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'dashboard' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
-            >
-              <LayoutDashboard className="w-5 h-5" />
-              Dashboard
-            </button>
-            <button
-              onClick={() => setActiveTab('history')}
-              className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'history' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
-            >
-              <Video className="w-5 h-5" />
-              History
-            </button>
-            <button
-              onClick={() => setActiveTab('analytics')}
-              className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'analytics' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
-            >
-              <BarChart2 className="w-5 h-5" />
-              Analytics
-            </button>
-            <button
-              onClick={() => setActiveTab('settings')}
-              className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'settings' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
-            >
-              <Settings className="w-5 h-5" />
-              Settings
-            </button>
-          </nav>
+            {activeTab === 'pre-test' && <PreTestPage apiUrl={API_URL} />}
 
-          {/* Logout */}
-          <div className="p-2 border-t border-line">
-            <button
-              onClick={onLogout}
-              className="flex items-center gap-3 px-2 py-2 w-full rounded-lg text-muted hover:bg-active hover:text-ink font-medium transition-colors"
-            >
-              <LogOut className="w-5 h-5" />
-              Sign Out
-            </button>
-          </div>
-        </aside>
-      )}
+            {activeTab === 'drills' && <DrillsPage apiUrl={API_URL} />}
 
-      {/* Main Content */}
-      <main className="min-w-0 flex-1 flex flex-col h-screen overflow-hidden">
-        {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto px-4 pb-3 pt-6 sm:px-8 md:pb-4 md:pt-8 lg:px-10">
+            {activeTab === 'post-test' && <PostTestPage apiUrl={API_URL} />}
 
-          {activeTab === 'dashboard' && (
-            <div className="w-full">
-              {/* Page Title */}
-              <div className="mb-6">
-                <h1 className="text-4xl md:text-5xl font-bold text-ink tracking-tight">Welcome back, <span className="text-gold-text">{profile.name.split(' ')[0]}</span></h1>
-                <p className="text-lg md:text-xl font-medium text-muted mt-1.5">Here's an overview of your interview progress.</p>
-              </div>
+            {activeTab === 'interview-type' && (
+              <div className="relative h-full">
+                <button
+                  onClick={() => setActiveTab('dashboard')}
+                  className="absolute top-0 left-0 flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors font-medium"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back
+                </button>
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="max-w-4xl mx-auto space-y-8 pt-12"
+                >
+                  <div className="text-center">
+                    <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Choose Interview Type</h1>
+                    <p className="text-lg text-slate-400 mt-2">Select the type of interview you want to practice.</p>
+                  </div>
 
-              {renderStatCards()}
-
-              {/* History List */}
-              <div className="mt-5 w-full space-y-2.5">
-                <div className="flex items-center justify-between mb-1">
-                  <h2 className="text-lg font-bold text-ink italic tracking-tight">Recent Sessions</h2>
-                  {interviewHistory.length > 5 && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8 items-stretch">
                     <button
-                      onClick={() => setActiveTab('history')}
-                      className="text-xs font-bold text-gold-text hover:text-accent-ink transition-colors uppercase tracking-widest"
+                      onClick={startInterviewSession}
+                      disabled={isStartingInterview}
+                      className="bg-slate-900 border border-slate-800 hover:border-sky-500 hover:ring-1 hover:ring-sky-500 rounded-2xl p-8 flex flex-col items-center text-center transition-all duration-300 group h-full"
                     >
-                      View All
+                      <div className="w-16 h-16 bg-sky-500/10 text-sky-400 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
+                        <GraduationCap className="w-8 h-8" />
+                      </div>
+                      <h3 className="text-xl font-bold text-slate-200 mb-2">University Enrollment</h3>
+                      <p className="text-slate-400 text-sm">PRMSU CASTI entrance interview practice.</p>
                     </button>
-                  )}
-                </div>
 
-                {interviewHistory.filter(item => (item.total_score || 0) > 0).length === 0 ? (
-                  <div className="bg-card border border-line rounded-lg px-3 py-8 md:py-10 text-center">
-                    <p className="text-muted text-sm">No interviews completed yet.</p>
-                    <button onClick={() => setActiveTab('interview-type')} className="mt-2 text-gold-text text-sm font-bold hover:underline">Start your first interview</button>
+                    <button
+                      onClick={() => { setThesisAbstractFile(null); setActiveTab('thesis-setup'); }}
+                      className="bg-slate-900 border border-slate-800 hover:border-purple-500 hover:ring-1 hover:ring-purple-500 rounded-2xl p-8 flex flex-col items-center text-center transition-all duration-300 group h-full"
+                    >
+                      <div className="w-16 h-16 bg-purple-500/10 text-purple-400 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
+                        <Shield className="w-8 h-8" />
+                      </div>
+                      <h3 className="text-xl font-bold text-slate-200 mb-2">Thesis Defense</h3>
+                      <p className="text-slate-400 text-sm">Simulate a formal thesis panel defense with AI. Upload your abstract for targeted questions.</p>
+                    </button>
                   </div>
-                ) : (
-                  <div className="space-y-2.5">
-                    {interviewHistory.filter(item => (item.total_score || 0) > 0).slice(0, 5).map((item, i, filteredList) => (
-                      <motion.div
-                        key={item.id || i}
-                        onClick={() => {
-                          setInterviewResult(item);
-                          setPrevTab(activeTab);
-                          setActiveTab('interview-result');
-                        }}
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: 0.1 + (i * 0.05) }}
-                        className="bg-card border border-line hover:border-accent rounded-lg p-3 flex items-center justify-between hover:bg-active transition-colors cursor-pointer group"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-slate-400 group-hover:text-sky-400 group-hover:bg-sky-500/10 transition-all">
-                            <Video className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <h4 className="font-bold text-sm text-ink group-hover:text-gold-text transition-colors">Interview #{filteredList.length - i}</h4>
-                            <p className="text-[10px] text-muted uppercase font-bold tracking-wider">{new Date(item.start_time).toLocaleDateString()}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <div className="text-right">
-                            <span className={`text-lg font-black ${item.total_score >= 70 ? 'text-success' : 'text-gold-text'}`}>{item.total_score || 0}%</span>
-                          </div>
-                          <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-sky-400 group-hover:translate-x-1 transition-all" />
-                        </div>
-                      </motion.div>
-                    ))}
-                  </div>
-                )}
+                </motion.div>
               </div>
-            </div>
-          )}
+            )}
 
-          {activeTab === 'interview-type' && (
-            <div className="relative h-full">
-              <button
-                onClick={() => setActiveTab('dashboard')}
-                className="absolute top-0 left-0 flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors font-medium"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Back
-              </button>
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="max-w-4xl mx-auto space-y-8 pt-12"
-              >
-                <div className="text-center">
-                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Choose Interview Type</h1>
-                  <p className="text-lg text-slate-400 mt-2">Select the type of interview you want to practice.</p>
-                </div>
+            {activeTab === 'new-interview' && (
+              <div className="relative h-full">
+                <button
+                  onClick={() => setActiveTab('interview-type')}
+                  className="absolute top-0 left-0 flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors font-medium"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back
+                </button>
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="max-w-3xl mx-auto space-y-8 pt-12"
+                >
+                  <div>
+                    <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Let's get started</h1>
+                    <p className="text-lg text-slate-400 mt-2">Tell us a bit about the role you're practicing for.</p>
+                  </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8 items-stretch">
-                  <button
-                    onClick={startInterviewSession}
-                    disabled={isStartingInterview}
-                    className="bg-slate-900 border border-slate-800 hover:border-sky-500 hover:ring-1 hover:ring-sky-500 rounded-2xl p-8 flex flex-col items-center text-center transition-all duration-300 group h-full"
-                  >
-                    <div className="w-16 h-16 bg-sky-500/10 text-sky-400 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
-                      <GraduationCap className="w-8 h-8" />
-                    </div>
-                    <h3 className="text-xl font-bold text-slate-200 mb-2">University Enrollment</h3>
-                    <p className="text-slate-400 text-sm">PRMSU CASTI entrance interview practice.</p>
-                  </button>
-
-                  <button
-                    onClick={() => { setThesisAbstractFile(null); setActiveTab('thesis-setup'); }}
-                    className="bg-slate-900 border border-slate-800 hover:border-purple-500 hover:ring-1 hover:ring-purple-500 rounded-2xl p-8 flex flex-col items-center text-center transition-all duration-300 group h-full"
-                  >
-                    <div className="w-16 h-16 bg-purple-500/10 text-purple-400 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
-                      <Shield className="w-8 h-8" />
-                    </div>
-                    <h3 className="text-xl font-bold text-slate-200 mb-2">Thesis Defense</h3>
-                    <p className="text-slate-400 text-sm">Simulate a formal thesis panel defense with AI. Upload your abstract for targeted questions.</p>
-                  </button>
-                </div>
-              </motion.div>
-            </div>
-          )}
-
-          {activeTab === 'new-interview' && (
-            <div className="relative h-full">
-              <button
-                onClick={() => setActiveTab('interview-type')}
-                className="absolute top-0 left-0 flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors font-medium"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Back
-              </button>
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="max-w-3xl mx-auto space-y-8 pt-12"
-              >
-                <div>
-                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Let's get started</h1>
-                  <p className="text-lg text-slate-400 mt-2">Tell us a bit about the role you're practicing for.</p>
-                </div>
-
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-8">
-                  <div className="space-y-3">
-                    <label className="text-sm font-medium text-slate-300">What type of company?</label>
-                    <div className="relative group">
-                      <div
-                        onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                        className={`w-full bg-slate-950 border ${isDropdownOpen ? 'border-sky-500 ring-1 ring-sky-500' : 'border-slate-800 hover:border-slate-700 hover:shadow-md hover:shadow-black/20'} rounded-xl px-4 py-3 pr-10 transition-all duration-300 cursor-pointer flex items-center justify-between`}
-                      >
-                        <span className={`truncate ${!selectedCompanyType ? 'text-slate-500' : 'text-slate-200'}`}>
-                          {selectedCompanyType ? companyTypes.find(t => t.value === selectedCompanyType)?.label : 'Select company type...'}
-                        </span>
-                        <ChevronDown className={`absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-hover:text-sky-400 transition-all duration-300 pointer-events-none ${isDropdownOpen ? 'rotate-180 text-sky-400' : ''}`} />
-                      </div>
-
-                      {/* Dropdown Menu */}
-                      <motion.div
-                        initial={{ opacity: 0, y: -10, scaleY: 0.95 }}
-                        animate={{
-                          opacity: isDropdownOpen ? 1 : 0,
-                          y: isDropdownOpen ? 0 : -10,
-                          scaleY: isDropdownOpen ? 1 : 0.95
-                        }}
-                        transition={{ duration: 0.2, ease: "easeOut" }}
-                        className={`absolute z-10 w-full mt-2 bg-slate-900 border border-slate-800 rounded-xl shadow-xl shadow-black/40 overflow-hidden origin-top ${isDropdownOpen ? 'pointer-events-auto' : 'pointer-events-none'}`}
-                      >
-                        <div className="max-h-60 overflow-y-auto py-1 custom-scrollbar">
-                          {companyTypes.map((type) => (
-                            <div
-                              key={type.value}
-                              onClick={() => {
-                                setSelectedCompanyType(type.value);
-                                setIsDropdownOpen(false);
-                              }}
-                              className={`px-4 py-3 cursor-pointer transition-colors duration-200 flex items-center ${selectedCompanyType === type.value
-                                ? 'bg-sky-500/10 text-sky-400 font-medium'
-                                : 'text-slate-300 hover:bg-slate-800 hover:text-slate-100'
-                                }`}
-                            >
-                              {type.label}
-                            </div>
-                          ))}
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-8">
+                    <div className="space-y-3">
+                      <label className="text-sm font-medium text-slate-300">What type of company?</label>
+                      <div className="relative group">
+                        <div
+                          onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                          className={`w-full bg-slate-950 border ${isDropdownOpen ? 'border-sky-500 ring-1 ring-sky-500' : 'border-slate-800 hover:border-slate-700 hover:shadow-md hover:shadow-black/20'} rounded-xl px-4 py-3 pr-10 transition-all duration-300 cursor-pointer flex items-center justify-between`}
+                        >
+                          <span className={`truncate ${!selectedCompanyType ? 'text-slate-500' : 'text-slate-200'}`}>
+                            {selectedCompanyType ? companyTypes.find(t => t.value === selectedCompanyType)?.label : 'Select company type...'}
+                          </span>
+                          <ChevronDown className={`absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-hover:text-sky-400 transition-all duration-300 pointer-events-none ${isDropdownOpen ? 'rotate-180 text-sky-400' : ''}`} />
                         </div>
-                      </motion.div>
-                    </div>
-                    <p className="text-xs text-slate-500">This helps our AI tailor the interview questions to the company's culture and expectations.</p>
-                  </div>
 
-                  <div className="space-y-3">
-                    <label className="text-sm font-medium text-slate-300">What position?</label>
-                    <input
-                      type="text"
-                      value={position}
-                      onChange={(e) => setPosition(e.target.value)}
-                      placeholder="e.g. Senior Frontend Engineer, Product Manager..."
-                      className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 hover:shadow-md hover:shadow-black/20 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
-                    />
-                    <p className="text-xs text-slate-500">The AI will ask technical and behavioral questions specific to this role.</p>
-                  </div>
-                </div>
-
-                <div className="flex justify-center">
-                  <button
-                    onClick={startInterviewSession}
-                    disabled={isStartingInterview}
-                    className={`px-8 py-4 bg-sky-500 hover:bg-sky-400 text-black rounded-xl font-semibold flex items-center gap-2 transition-colors shadow-lg shadow-sky-500/20 text-lg ${isStartingInterview ? 'opacity-75 cursor-not-allowed' : ''}`}
-                  >
-                    {isStartingInterview ? 'Starting...' : 'Continue'}
-                    {!isStartingInterview && <ArrowRight className="w-5 h-5" />}
-                  </button>
-                </div>
-              </motion.div>
-            </div>
-          )}
-
-          {activeTab === 'thesis-setup' && (
-            <div className="relative h-full">
-              <button
-                onClick={() => { setThesisAbstractFile(null); setActiveTab('interview-type'); }}
-                className="absolute top-0 left-0 flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors font-medium"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Back
-              </button>
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="max-w-2xl mx-auto space-y-8 pt-12"
-              >
-                <div className="text-center">
-                  <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-400 text-sm font-bold mb-4">
-                    <Shield className="w-4 h-4" />
-                    {profile.department?.toUpperCase() || 'No Department'} Thesis Defense
-                  </div>
-                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Defense Setup</h1>
-                  <p className="text-lg text-slate-400 mt-2">Optionally upload your thesis abstract to give the AI panel targeted context.</p>
-                </div>
-
-                {/* Inline error banner */}
-                {thesisStartError && (
-                  <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-4 flex items-start gap-3">
-                    <div className="w-5 h-5 rounded-full bg-rose-500/20 flex items-center justify-center shrink-0 mt-0.5">
-                      <span className="text-rose-400 text-xs font-black">!</span>
-                    </div>
-                    <p className="text-sm text-rose-300 leading-relaxed">{thesisStartError}</p>
-                  </div>
-                )}
-
-                {/* Department eligibility warning */}
-                {!['CCIT', 'CTE', 'CBAPA'].includes((profile.department || '').trim().toUpperCase()) && (
-                  <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3">
-                    <div className="w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center shrink-0 mt-0.5">
-                      <span className="text-amber-400 text-xs font-black">!</span>
-                    </div>
-                    <div>
-                      <p className="text-sm text-amber-300 font-bold mb-1">Department not eligible</p>
-                      <p className="text-xs text-slate-400 leading-relaxed">
-                        Your department is currently set to <span className="text-amber-400 font-bold">&quot;{profile.department || 'not set'}&quot;</span>.
-                        Thesis Defense is only available for <span className="text-white font-bold">CCIT, CTE, or CBAPA</span> students.
-                        Please update your department in <button onClick={() => setActiveTab('profile')} className="text-sky-400 underline hover:text-sky-300 transition-colors">Profile Settings</button>.
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-6">
-                  <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-purple-500/10 flex items-center justify-center shrink-0">
-                      <FileText className="w-6 h-6 text-purple-400" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-bold text-slate-200">Thesis Abstract <span className="text-xs text-rose-400 font-semibold ml-2">Required</span></h3>
-                      <p className="text-sm text-slate-400 mt-1 leading-relaxed">Upload your abstract (PDF or TXT) — the AI Panel will analyze it and base all defense questions on your actual research.</p>
-                    </div>
-                  </div>
-
-                  {!thesisAbstractFile ? (
-                    <label className="block w-full border-2 border-dashed border-slate-700 hover:border-purple-500/50 rounded-xl p-10 text-center cursor-pointer transition-all group">
-                      <Upload className="w-10 h-10 text-slate-500 group-hover:text-purple-400 mx-auto mb-3 transition-colors" />
-                      <p className="text-slate-400 text-sm font-medium">Click to upload or drag and drop</p>
-                      <p className="text-slate-600 text-xs mt-1">PDF or TXT, up to 10MB</p>
-                      <input
-                        type="file"
-                        accept=".pdf,.txt"
-                        className="hidden"
-                        onChange={(e) => { const f = e.target.files?.[0]; if (f) setThesisAbstractFile(f); }}
-                      />
-                    </label>
-                  ) : (
-                    <div className="flex items-center gap-4 bg-purple-500/10 border border-purple-500/20 rounded-xl p-4">
-                      <FileText className="w-8 h-8 text-purple-400 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-slate-200 truncate">{thesisAbstractFile.name}</p>
-                        <p className="text-xs text-slate-400">{(thesisAbstractFile.size / 1024).toFixed(1)} KB · Ready to upload</p>
+                        {/* Dropdown Menu */}
+                        <motion.div
+                          initial={{ opacity: 0, y: -10, scaleY: 0.95 }}
+                          animate={{
+                            opacity: isDropdownOpen ? 1 : 0,
+                            y: isDropdownOpen ? 0 : -10,
+                            scaleY: isDropdownOpen ? 1 : 0.95
+                          }}
+                          transition={{ duration: 0.2, ease: "easeOut" }}
+                          className={`absolute z-10 w-full mt-2 bg-slate-900 border border-slate-800 rounded-xl shadow-xl shadow-black/40 overflow-hidden origin-top ${isDropdownOpen ? 'pointer-events-auto' : 'pointer-events-none'}`}
+                        >
+                          <div className="max-h-60 overflow-y-auto py-1 custom-scrollbar">
+                            {companyTypes.map((type) => (
+                              <div
+                                key={type.value}
+                                onClick={() => {
+                                  setSelectedCompanyType(type.value);
+                                  setIsDropdownOpen(false);
+                                }}
+                                className={`px-4 py-3 cursor-pointer transition-colors duration-200 flex items-center ${selectedCompanyType === type.value
+                                  ? 'bg-sky-500/10 text-sky-400 font-medium'
+                                  : 'text-slate-300 hover:bg-slate-800 hover:text-slate-100'
+                                  }`}
+                              >
+                                {type.label}
+                              </div>
+                            ))}
+                          </div>
+                        </motion.div>
                       </div>
-                      <button
-                        onClick={() => setThesisAbstractFile(null)}
-                        className="text-slate-400 hover:text-rose-400 transition-colors text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20"
-                      >
-                        Remove
-                      </button>
+                      <p className="text-xs text-slate-500">This helps our AI tailor the interview questions to the company's culture and expectations.</p>
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-sm font-medium text-slate-300">What position?</label>
+                      <input
+                        type="text"
+                        value={position}
+                        onChange={(e) => setPosition(e.target.value)}
+                        placeholder="e.g. Senior Frontend Engineer, Product Manager..."
+                        className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 hover:shadow-md hover:shadow-black/20 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
+                      />
+                      <p className="text-xs text-slate-500">The AI will ask technical and behavioral questions specific to this role.</p>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-center">
+                    <button
+                      onClick={startInterviewSession}
+                      disabled={isStartingInterview}
+                      className={`px-8 py-4 bg-sky-500 hover:bg-sky-400 text-black rounded-xl font-semibold flex items-center gap-2 transition-colors shadow-lg shadow-sky-500/20 text-lg ${isStartingInterview ? 'opacity-75 cursor-not-allowed' : ''}`}
+                    >
+                      {isStartingInterview ? 'Starting...' : 'Continue'}
+                      {!isStartingInterview && <ArrowRight className="w-5 h-5" />}
+                    </button>
+                  </div>
+                </motion.div>
+              </div>
+            )}
+
+            {activeTab === 'thesis-setup' && (
+              <div className="relative h-full">
+                <button
+                  onClick={() => { setThesisAbstractFile(null); setActiveTab('interview-type'); }}
+                  className="absolute top-0 left-0 flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors font-medium"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back
+                </button>
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="max-w-2xl mx-auto space-y-8 pt-12"
+                >
+                  <div className="text-center">
+                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-400 text-sm font-bold mb-4">
+                      <Shield className="w-4 h-4" />
+                      {profile.department?.toUpperCase() || 'No Department'} Thesis Defense
+                    </div>
+                    <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Defense Setup</h1>
+                    <p className="text-lg text-slate-400 mt-2">Optionally upload your thesis abstract to give the AI panel targeted context.</p>
+                  </div>
+
+                  {/* Inline error banner */}
+                  {thesisStartError && (
+                    <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-4 flex items-start gap-3">
+                      <div className="w-5 h-5 rounded-full bg-rose-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                        <span className="text-rose-400 text-xs font-black">!</span>
+                      </div>
+                      <p className="text-sm text-rose-300 leading-relaxed">{thesisStartError}</p>
                     </div>
                   )}
-                </div>
 
-                <div className="bg-amber-500/5 border border-amber-500/20 rounded-2xl p-6 flex gap-4">
-                  <Clock className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-                  <div>
-                    <h4 className="text-sm font-bold text-amber-300">1-Hour Timed Defense</h4>
-                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">Your defense session runs for up to 1 hour. The AI panel will probe your thesis systematically. You can submit for grading after providing 5 responses.</p>
+                  {/* Department eligibility warning */}
+                  {!['CCIT', 'CTE', 'CBAPA'].includes((profile.department || '').trim().toUpperCase()) && (
+                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3">
+                      <div className="w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                        <span className="text-amber-400 text-xs font-black">!</span>
+                      </div>
+                      <div>
+                        <p className="text-sm text-amber-300 font-bold mb-1">Department not eligible</p>
+                        <p className="text-xs text-slate-400 leading-relaxed">
+                          Your department is currently set to <span className="text-amber-400 font-bold">&quot;{profile.department || 'not set'}&quot;</span>.
+                          Thesis Defense is only available for <span className="text-white font-bold">CCIT, CTE, or CBAPA</span> students.
+                          Please update your department in <button onClick={() => setActiveTab('profile')} className="text-sky-400 underline hover:text-sky-300 transition-colors">Profile Settings</button>.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-6">
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-xl bg-purple-500/10 flex items-center justify-center shrink-0">
+                        <FileText className="w-6 h-6 text-purple-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-slate-200">Thesis Abstract <span className="text-xs text-rose-400 font-semibold ml-2">Required</span></h3>
+                        <p className="text-sm text-slate-400 mt-1 leading-relaxed">Upload your abstract (PDF or TXT) — the AI Panel will analyze it and base all defense questions on your actual research.</p>
+                      </div>
+                    </div>
+
+                    {!thesisAbstractFile ? (
+                      <label className="block w-full border-2 border-dashed border-slate-700 hover:border-purple-500/50 rounded-xl p-10 text-center cursor-pointer transition-all group">
+                        <Upload className="w-10 h-10 text-slate-500 group-hover:text-purple-400 mx-auto mb-3 transition-colors" />
+                        <p className="text-slate-400 text-sm font-medium">Click to upload or drag and drop</p>
+                        <p className="text-slate-600 text-xs mt-1">PDF or TXT, up to 10MB</p>
+                        <input
+                          type="file"
+                          accept=".pdf,.txt"
+                          className="hidden"
+                          onChange={(e) => { const f = e.target.files?.[0]; if (f) setThesisAbstractFile(f); }}
+                        />
+                      </label>
+                    ) : (
+                      <div className="flex items-center gap-4 bg-purple-500/10 border border-purple-500/20 rounded-xl p-4">
+                        <FileText className="w-8 h-8 text-purple-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-slate-200 truncate">{thesisAbstractFile.name}</p>
+                          <p className="text-xs text-slate-400">{(thesisAbstractFile.size / 1024).toFixed(1)} KB · Ready to upload</p>
+                        </div>
+                        <button
+                          onClick={() => setThesisAbstractFile(null)}
+                          className="text-slate-400 hover:text-rose-400 transition-colors text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )}
                   </div>
-                </div>
 
-                <div className="flex flex-col items-center gap-3">
-                  <button
-                    id="begin-defense-btn"
-                    onClick={startThesisSession}
-                    disabled={thesisIsStarting || !thesisAbstractFile}
-                    title={!thesisAbstractFile ? 'Upload your thesis abstract first' : ''}
-                    className={`px-10 py-4 rounded-xl font-bold flex items-center gap-3 transition-all text-lg ${!thesisAbstractFile
+                  <div className="bg-amber-500/5 border border-amber-500/20 rounded-2xl p-6 flex gap-4">
+                    <Clock className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="text-sm font-bold text-amber-300">1-Hour Timed Defense</h4>
+                      <p className="text-xs text-slate-400 mt-1 leading-relaxed">Your defense session runs for up to 1 hour. The AI panel will probe your thesis systematically. You can submit for grading after providing 5 responses.</p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col items-center gap-3">
+                    <button
+                      id="begin-defense-btn"
+                      onClick={startThesisSession}
+                      disabled={thesisIsStarting || !thesisAbstractFile}
+                      title={!thesisAbstractFile ? 'Upload your thesis abstract first' : ''}
+                      className={`px-10 py-4 rounded-xl font-bold flex items-center gap-3 transition-all text-lg ${!thesisAbstractFile
                         ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
                         : thesisIsStarting
                           ? 'bg-purple-600 text-white opacity-75 cursor-not-allowed shadow-lg shadow-purple-500/20'
                           : 'bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-500/20'
-                      }`}
-                  >
-                    {!thesisAbstractFile ? (
-                      <><Lock className="w-5 h-5" /> Upload Abstract to Continue</>
-                    ) : thesisIsStarting ? (
-                      thesisAbstractUploading ? 'Uploading Abstract...' : 'Starting Defense...'
-                    ) : (
-                      <>Begin Defense <ArrowRight className="w-5 h-5" /></>
-                    )}
-                  </button>
-                  {!thesisAbstractFile && (
-                    <p className="text-xs text-slate-500">A thesis abstract is required to begin your defense.</p>
-                  )}
-                </div>
-              </motion.div>
-            </div>
-          )}
-
-          {activeTab === 'thesis-session' && (
-            <div className="relative h-full flex flex-col items-center px-4 pt-6 w-full">
-              {/* Timer */}
-              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10">
-                <div className={`flex items-center gap-2 px-4 py-2 rounded-full font-mono text-sm font-bold border transition-colors ${thesisElapsedSeconds >= 3300 ? 'bg-rose-500/20 border-rose-500/30 text-rose-400' : 'bg-slate-800/90 border-slate-700 text-slate-300'}`}>
-                  <Clock className="w-4 h-4" />
-                  {formatTimer(thesisElapsedSeconds)} / 1:00:00
-                </div>
-              </div>
-
-              {/* TOP ROW: 3D MODEL & RESPONSE LOG */}
-              <div className="w-full max-w-7xl mx-auto flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch mb-8 h-[600px] mt-8">
-
-                {/* LEFT: 3D Model */}
-                <motion.div
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  className="lg:col-span-8 bg-[#111827] rounded-[2rem] overflow-hidden relative shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] border border-slate-800 flex items-center justify-center p-0"
-                >
-                  <div className="absolute inset-0 w-full h-full">
-                    <Canvas shadows camera={{ position: [0, 0.5, 3], fov: 35 }}>
-                      <ambientLight intensity={0.8} />
-                      <pointLight position={[10, 10, 10]} intensity={1} />
-                      <directionalLight position={[5, 10, 5]} intensity={2.0} castShadow />
-                      <Environment preset="city" />
-                      <OrbitControls enableZoom={false} enablePan={false} maxPolarAngle={Math.PI / 2} minPolarAngle={Math.PI / 2} target={[0, 0, 0]} />
-                      <ProfessorModel
-                        isSpeaking={isAiSpeaking}
-                        analyserNode={activeAnalyser ?? browserTtsAnalyserRef.current}
-                        mouthCues={mouthCues}
-                        currentAudioTime={currentAudioStartTime}
-                        audioContext={audioContextRef.current}
-                      />
-                    </Canvas>
-                  </div>
-                  <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-500/20 border border-purple-500/30 text-purple-300 text-xs font-bold backdrop-blur-sm">
-                    <Shield className="w-3.5 h-3.5" />
-                    Thesis Defense · Prof. Maxiel
-                  </div>
-                </motion.div>
-
-                {/* RIGHT: Transcript / Result */}
-                <motion.div
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  className="lg:col-span-4 bg-[#1e293b]/80 backdrop-blur-md rounded-[2rem] p-6 flex flex-col relative shadow-xl overflow-hidden border border-slate-800/80"
-                >
-                  {thesisResult ? (
-                    <div className="flex flex-col h-full overflow-y-auto custom-scrollbar pr-2 animate-fade-in">
-                      <div className="text-center space-y-3 mb-6 shrink-0 mt-2">
-                        <div className={`mx-auto inline-flex items-center justify-center w-20 h-20 rounded-full mb-1 border-4 ${thesisResult.passed ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
-                          <span className="text-2xl font-black">{thesisResult.total_score}%</span>
-                        </div>
-                        <h2 className="text-xl font-bold text-slate-100 tracking-tight">Defense Complete</h2>
-                        <p className="text-xs text-slate-400 leading-relaxed px-2">{thesisResult.passed ? 'Congratulations! You passed the thesis defense.' : 'Keep practicing! You did not meet the passing threshold (70%).'}</p>
-                      </div>
-                      <div className="space-y-4 shrink-0">
-                        <h3 className="text-sm font-bold text-slate-200 border-b border-slate-700/50 pb-2">Performance Breakdown</h3>
-                        <div className="grid grid-cols-2 gap-2">
-                          {getThesisBreakdown(thesisResult, profile.department || 'CCIT').map((item, idx, arr) => (
-                            <div key={idx} className={`bg-slate-900 p-3 rounded-xl border border-slate-800/50 ${arr.length % 2 !== 0 && idx === arr.length - 1 ? 'col-span-2 text-center' : ''}`}>
-                              <p className="text-[10px] text-slate-400 mb-1 uppercase tracking-wider truncate" title={item.label}>{item.label}</p>
-                              <p className="text-xl font-black text-purple-400">{item.score || 0}</p>
-                              <p className="text-[9px] text-slate-600 mt-0.5">{item.weight}</p>
-                            </div>
-                          ))}
-                        </div>
-                        {thesisResult.feedback_summary && (
-                          <div className="bg-purple-500/10 border border-purple-500/20 p-4 rounded-xl mt-4">
-                            <h4 className="text-[11px] uppercase tracking-wider font-bold text-purple-400 mb-2">AI Feedback</h4>
-                            <p className="text-xs text-slate-300 leading-relaxed">{thesisResult.feedback_summary}</p>
-                          </div>
-                        )}
-                        <button onClick={exitThesisSession} className="w-full mt-4 py-3 bg-slate-800 hover:bg-slate-700 text-white text-sm rounded-xl font-bold transition-colors shadow-lg shrink-0">
-                          Go to Dashboard
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col h-full">
-                      <h3 className="text-sm font-bold text-slate-300 border-b border-slate-700/50 pb-3 mb-4 shrink-0 uppercase tracking-widest text-center">Your Responses</h3>
-                      <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-4 pr-1 scroll-smooth">
-                        {(() => {
-                          const userLogs = thesisConversationLog.filter(l => l.sender === 'user');
-                          if (userLogs.length === 0) {
-                            return (
-                              <div className="flex-1 flex flex-col items-center justify-center opacity-50">
-                                <User className="w-8 h-8 text-slate-500 mb-3" />
-                                <p className="text-slate-400 text-xs text-center px-4 leading-relaxed">Respond to Prof. Maxiel's questions. Your answers will appear here.</p>
-                              </div>
-                            );
-                          }
-                          return userLogs.map((log, idx) => (
-                            <div key={idx} className="flex flex-col items-stretch animate-fade-in">
-                              <span className="text-[10px] font-bold uppercase tracking-wider mb-1 text-purple-400/80 px-1">Response {idx + 1}</span>
-                              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 shadow-sm">
-                                <p className="leading-relaxed text-xs">{log.text}</p>
-                              </div>
-                            </div>
-                          ));
-                        })()}
-                      </div>
-                      <div className="mt-4 pt-4 border-t border-slate-700/50 shrink-0">
-                        {(() => {
-                          const userTurns = thesisConversationLog.filter(l => l.sender === 'user').length;
-                          if (userTurns >= 5) {
-                            return (
-                              <button
-                                onClick={finishThesisSession}
-                                disabled={thesisIsFinishing}
-                                className={`w-full py-3 ${thesisIsFinishing ? 'bg-slate-500 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-500'} text-white rounded-xl font-bold transition-all shadow-lg shadow-purple-500/20 text-sm tracking-wide animate-fade-in`}
-                              >
-                                {thesisIsFinishing ? 'Grading...' : 'Complete Defense'}
-                              </button>
-                            );
-                          }
-                          return (
-                            <div className="text-center">
-                              <span className="text-xs font-medium text-slate-500">{userTurns} / 5 Responses Recorded</span>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                  )}
-                </motion.div>
-              </div>
-
-              {/* Bottom Controls */}
-              {/* BOTTOM ROW: CONTROLS */}
-              {!thesisResult && (
-                <div className="flex items-center justify-center gap-6 w-full max-w-lg mx-auto pb-4 shrink-0">
-                  <div className="relative">
-                    <button
-                      onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
-                      className="bg-[#171e2e] hover:bg-[#1e293b] border border-slate-800 text-slate-300 hover:text-white w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
-                      title="Add File"
+                        }`}
                     >
-                      {thesisInSessionUploading ? (
-                        <div className="w-5 h-5 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+                      {!thesisAbstractFile ? (
+                        <><Lock className="w-5 h-5" /> Upload Abstract to Continue</>
+                      ) : thesisIsStarting ? (
+                        thesisAbstractUploading ? 'Uploading Abstract...' : 'Starting Defense...'
                       ) : (
-                        <Plus className={`w-5 h-5 transition-transform duration-300 ${isAddMenuOpen ? 'rotate-45' : 'group-hover:scale-110'}`} />
+                        <>Begin Defense <ArrowRight className="w-5 h-5" /></>
                       )}
                     </button>
-
-                    {/* Attachment Popover for Thesis */}
-                    {isAddMenuOpen && (
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        className="absolute bottom-[calc(100%+16px)] left-1/2 -translate-x-1/2 w-48 bg-slate-800 border border-slate-700/80 rounded-2xl shadow-xl overflow-hidden z-[100]"
-                      >
-                        <div className="flex flex-col p-1.5 space-y-1">
-                          <label className="flex items-center gap-3 w-full p-2.5 text-left hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all cursor-pointer">
-                            <div className="w-7 h-7 rounded-lg bg-purple-500/10 flex items-center justify-center shrink-0">
-                              <Plus className="w-3.5 h-3.5 text-purple-400" />
-                            </div>
-                            <span className="text-xs font-semibold tracking-wide">Upload Proposal</span>
-                            <input
-                              type="file"
-                              accept=".pdf,.txt"
-                              className="hidden"
-                              disabled={thesisInSessionUploading}
-                              onChange={(e) => {
-                                const f = e.target.files?.[0];
-                                if (f) uploadThesisAbstractInSession(f);
-                                setIsAddMenuOpen(false);
-                                e.target.value = '';
-                              }}
-                            />
-                          </label>
-                        </div>
-                      </motion.div>
+                    {!thesisAbstractFile && (
+                      <p className="text-xs text-slate-500">A thesis abstract is required to begin your defense.</p>
                     )}
-                  </div>
-
-                  {/* Mic visualiser — center */}
-                  <div className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800 shadow-slate-900/40'} text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl`}>
-                    {isListening ? (
-                      <div className="flex items-center justify-center gap-1.5 h-8 w-full relative z-10 px-4">
-                        {[...userAudioData, ...Array.from(userAudioData).reverse()].map((height, i) => (
-                          <motion.div key={`tw-${i}`} className="w-[3px] bg-white rounded-full" animate={{ height: `${height * 0.7}px` }} transition={{ duration: 0.1, ease: 'linear' }} />
-                        ))}
-                      </div>
-                    ) : (
-                      <Mic className="w-8 h-8 relative z-10 text-slate-400" />
-                    )}
-                    {isListening && <span className="absolute inset-0 rounded-[2rem] border-4 border-emerald-400 opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }} />}
-                  </div>
-
-                  {/* Leave */}
-                  <button
-                    onClick={() => setThesisIsLeaveModalOpen(true)}
-                    className="bg-[#171e2e] hover:bg-rose-500/10 border border-slate-800 hover:border-rose-500/30 text-slate-300 hover:text-rose-500 w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group"
-                    title="Leave Defense Session"
-                  >
-                    <LogOut className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                  </button>
-                </div>
-              )}
-
-              {/* Thesis Leave Modal */}
-              {thesisIsLeaveModalOpen && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="bg-slate-900 border border-slate-700/50 rounded-3xl p-8 max-w-sm w-full shadow-2xl flex flex-col items-center"
-                  >
-                    <div className="w-16 h-16 bg-rose-500/10 rounded-2xl flex items-center justify-center mb-6 text-rose-500">
-                      <LogOut className="w-8 h-8" />
-                    </div>
-                    <h3 className="text-xl font-bold text-white text-center mb-3">End Defense?</h3>
-                    <p className="text-slate-400 text-center mb-8 text-sm leading-relaxed px-2">Are you sure you want to end this thesis defense? Your session progress will not be graded.</p>
-                    <div className="flex gap-4 w-full">
-                      <button onClick={() => setThesisIsLeaveModalOpen(false)} className="flex-1 py-3 px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-medium transition-colors">Cancel</button>
-                      <button onClick={exitThesisSession} className="flex-1 py-3 px-4 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-medium transition-colors shadow-lg shadow-rose-500/20">Leave</button>
-                    </div>
-                  </motion.div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {activeTab === 'interview-session' && (
-            <div className="relative h-full flex flex-col items-center px-4 pt-6 w-full">
-
-              {/* TOP ROW: 3D MODEL & RESPONSE LOG */}
-              <div className="w-full max-w-7xl mx-auto flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch mb-8 h-[600px]">
-
-                {/* LEFT COLUMN: HORIZONTAL 3D MODEL */}
-                <motion.div
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  className="lg:col-span-8 bg-[#111827] rounded-[2rem] overflow-hidden relative shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] border border-slate-800 flex items-center justify-center p-0"
-                >
-                  <div className="absolute inset-0 w-full h-full">
-                    <Canvas shadows camera={{ position: [0, 0.5, 3], fov: 35 }}>
-                      <ambientLight intensity={0.8} />
-                      <pointLight position={[10, 10, 10]} intensity={1} />
-                      <directionalLight position={[5, 10, 5]} intensity={2.0} castShadow />
-                      <Environment preset="city" />
-                      <OrbitControls enableZoom={false} enablePan={false} maxPolarAngle={Math.PI / 2} minPolarAngle={Math.PI / 2} target={[0, 0, 0]} />
-                      <ProfessorModel
-                        isSpeaking={isAiSpeaking}
-                        analyserNode={activeAnalyser ?? browserTtsAnalyserRef.current}
-                        mouthCues={mouthCues}
-                        currentAudioTime={currentAudioStartTime}
-                        audioContext={audioContextRef.current}
-                      />
-                    </Canvas>
                   </div>
                 </motion.div>
+              </div>
+            )}
 
-                {/* RIGHT COLUMN: USER RESPONSES & EVALUATION */}
-                <motion.div
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  className="lg:col-span-4 bg-[#1e293b]/80 backdrop-blur-md rounded-[2rem] p-6 flex flex-col relative shadow-xl overflow-hidden border border-slate-800/80"
-                >
-                  {interviewResult ? (
-                    // --- EVALUATION RESULT UI ---
-                    <div className="flex flex-col h-full overflow-y-auto custom-scrollbar pr-2 animate-fade-in">
-                      <div className="text-center space-y-3 mb-6 shrink-0 mt-2">
-                        <div className={`mx-auto inline-flex items-center justify-center w-20 h-20 rounded-full mb-1 border-4 ${interviewResult.passed ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
-                          <span className="text-2xl font-black">{interviewResult.total_score}%</span>
+            {activeTab === 'thesis-session' && (
+              <div className="relative h-full flex flex-col items-center px-4 pt-6 w-full">
+                {/* Timer */}
+                <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10">
+                  <div className={`flex items-center gap-2 px-4 py-2 rounded-full font-mono text-sm font-bold border transition-colors ${thesisElapsedSeconds >= 3300 ? 'bg-rose-500/20 border-rose-500/30 text-rose-400' : 'bg-slate-800/90 border-slate-700 text-slate-300'}`}>
+                    <Clock className="w-4 h-4" />
+                    {formatTimer(thesisElapsedSeconds)} / 1:00:00
+                  </div>
+                </div>
+
+                {/* TOP ROW: 3D MODEL & RESPONSE LOG */}
+                <div className="w-full max-w-7xl mx-auto flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch mb-8 h-[600px] mt-8">
+
+                  {/* LEFT: 3D Model */}
+                  <motion.div
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="lg:col-span-8 bg-[#111827] rounded-[2rem] overflow-hidden relative shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] border border-slate-800 flex items-center justify-center p-0"
+                  >
+                    <div className="absolute inset-0 w-full h-full">
+                      <Canvas shadows camera={{ position: [0, 0.5, 3], fov: 35 }}>
+                        <ambientLight intensity={0.8} />
+                        <pointLight position={[10, 10, 10]} intensity={1} />
+                        <directionalLight position={[5, 10, 5]} intensity={2.0} castShadow />
+                        <Environment preset="city" />
+                        <OrbitControls enableZoom={false} enablePan={false} maxPolarAngle={Math.PI / 2} minPolarAngle={Math.PI / 2} target={[0, 0, 0]} />
+                        <ProfessorModel
+                          isSpeaking={isAiSpeaking}
+                          analyserNode={activeAnalyser ?? browserTtsAnalyserRef.current}
+                          mouthCues={mouthCues}
+                          currentAudioTime={currentAudioStartTime}
+                          audioContext={audioContextRef.current}
+                        />
+                      </Canvas>
+                    </div>
+                    <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-500/20 border border-purple-500/30 text-purple-300 text-xs font-bold backdrop-blur-sm">
+                      <Shield className="w-3.5 h-3.5" />
+                      Thesis Defense · Prof. Maxiel
+                    </div>
+                  </motion.div>
+
+                  {/* RIGHT: Transcript / Result */}
+                  <motion.div
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="lg:col-span-4 bg-[#1e293b]/80 backdrop-blur-md rounded-[2rem] p-6 flex flex-col relative shadow-xl overflow-hidden border border-slate-800/80"
+                  >
+                    {thesisResult ? (
+                      <div className="flex flex-col h-full overflow-y-auto custom-scrollbar pr-2 animate-fade-in">
+                        <div className="text-center space-y-3 mb-6 shrink-0 mt-2">
+                          <div className={`mx-auto inline-flex items-center justify-center w-20 h-20 rounded-full mb-1 border-4 ${thesisResult.passed ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
+                            <span className="text-2xl font-black">{thesisResult.total_score}%</span>
+                          </div>
+                          <h2 className="text-xl font-bold text-slate-100 tracking-tight">Defense Complete</h2>
+                          <p className="text-xs text-slate-400 leading-relaxed px-2">{thesisResult.passed ? 'Congratulations! You passed the thesis defense.' : 'Keep practicing! You did not meet the passing threshold (70%).'}</p>
                         </div>
-                        <h2 className="text-xl font-bold text-slate-100 tracking-tight">Interview Complete</h2>
-                        <p className="text-xs text-slate-400 leading-relaxed px-2">{interviewResult.passed ? 'Congratulations! You passed the interview.' : 'Keep practicing! You did not meet the passing criteria this time.'}</p>
+                        <div className="space-y-4 shrink-0">
+                          <h3 className="text-sm font-bold text-slate-200 border-b border-slate-700/50 pb-2">Performance Breakdown</h3>
+                          <div className="grid grid-cols-2 gap-2">
+                            {getThesisBreakdown(thesisResult, profile.department || 'CCIT').map((item, idx, arr) => (
+                              <div key={idx} className={`bg-slate-900 p-3 rounded-xl border border-slate-800/50 ${arr.length % 2 !== 0 && idx === arr.length - 1 ? 'col-span-2 text-center' : ''}`}>
+                                <p className="text-[10px] text-slate-400 mb-1 uppercase tracking-wider truncate" title={item.label}>{item.label}</p>
+                                <p className="text-xl font-black text-purple-400">{item.score || 0}</p>
+                                <p className="text-[9px] text-slate-600 mt-0.5">{item.weight}</p>
+                              </div>
+                            ))}
+                          </div>
+                          {thesisResult.feedback_summary && (
+                            <div className="bg-purple-500/10 border border-purple-500/20 p-4 rounded-xl mt-4">
+                              <h4 className="text-[11px] uppercase tracking-wider font-bold text-purple-400 mb-2">AI Feedback</h4>
+                              <p className="text-xs text-slate-300 leading-relaxed">{thesisResult.feedback_summary}</p>
+                            </div>
+                          )}
+                          <button onClick={exitThesisSession} className="w-full mt-4 py-3 bg-slate-800 hover:bg-slate-700 text-white text-sm rounded-xl font-bold transition-colors shadow-lg shrink-0">
+                            Go to Dashboard
+                          </button>
+                        </div>
                       </div>
-
-                      <div className="space-y-4 shrink-0">
-                        <h3 className="text-sm font-bold text-slate-200 border-b border-slate-700/50 pb-2">Performance Breakdown</h3>
-
-                        <div className="grid grid-cols-2 gap-2">
+                    ) : (
+                      <div className="flex flex-col h-full">
+                        <h3 className="text-sm font-bold text-slate-300 border-b border-slate-700/50 pb-3 mb-4 shrink-0 uppercase tracking-widest text-center">Your Responses</h3>
+                        <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-4 pr-1 scroll-smooth">
                           {(() => {
-                            const dep = profile.department?.toUpperCase();
-                            let breakdown = [];
-                            if (dep === 'CTE') {
-                              breakdown = [
-                                { label: "Subject Matter", score: interviewResult.score_cte_subject_matter },
-                                { label: "Teaching Apt.", score: interviewResult.score_cte_teaching },
-                                { label: "Motivation", score: interviewResult.score_cte_motivation },
-                                { label: "Acad. Prepared.", score: interviewResult.score_cte_academic },
-                                { label: "Problem Solving", score: interviewResult.score_cte_problem_solving },
-                                { label: "Leadership", score: interviewResult.score_cte_leadership },
-                                { label: "Communication", score: interviewResult.score_cte_communication },
-                              ];
-                            } else if (dep === 'CBAPA') {
-                              breakdown = [
-                                { label: "Business Fund.", score: interviewResult.score_cbapa_business },
-                                { label: "Analytical", score: interviewResult.score_cbapa_analytical },
-                                { label: "Entrepreneurial", score: interviewResult.score_cbapa_entrepreneurial },
-                                { label: "Acad. Prepared.", score: interviewResult.score_cbapa_academic },
-                                { label: "Leadership", score: interviewResult.score_cbapa_leadership },
-                                { label: "Ethical", score: interviewResult.score_cbapa_ethical },
-                                { label: "Communication", score: interviewResult.score_cbapa_communication },
-                              ];
-                            } else {
-                              breakdown = [
-                                { label: "Technical", score: interviewResult.score_technical },
-                                { label: "Problem Solving", score: interviewResult.score_problem_solving },
-                                { label: "Coding Basics", score: interviewResult.score_coding },
-                                { label: "Soft Skills", score: interviewResult.score_soft_skills },
-                                { label: "Communication", score: interviewResult.score_communication },
-                              ];
+                            const userLogs = thesisConversationLog.filter(l => l.sender === 'user');
+                            if (userLogs.length === 0) {
+                              return (
+                                <div className="flex-1 flex flex-col items-center justify-center opacity-50">
+                                  <User className="w-8 h-8 text-slate-500 mb-3" />
+                                  <p className="text-slate-400 text-xs text-center px-4 leading-relaxed">Respond to Prof. Maxiel's questions. Your answers will appear here.</p>
+                                </div>
+                              );
                             }
-
-                            return breakdown.map((item, idx) => (
-                              <div key={idx} className={`bg-slate-900 p-3 rounded-xl border border-slate-800/50 ${breakdown.length % 2 !== 0 && idx === breakdown.length - 1 ? 'col-span-2 text-center' : ''}`}>
-                                <p className="text-[10px] text-slate-400 mb-1 uppercase tracking-wider overflow-hidden text-ellipsis whitespace-nowrap" title={item.label}>{item.label}</p>
-                                <p className="text-xl font-black text-sky-400">{item.score || 0}</p>
+                            return userLogs.map((log, idx) => (
+                              <div key={idx} className="flex flex-col items-stretch animate-fade-in">
+                                <span className="text-[10px] font-bold uppercase tracking-wider mb-1 text-purple-400/80 px-1">Response {idx + 1}</span>
+                                <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 shadow-sm">
+                                  <p className="leading-relaxed text-xs">{log.text}</p>
+                                </div>
                               </div>
                             ));
                           })()}
                         </div>
+                        <div className="mt-4 pt-4 border-t border-slate-700/50 shrink-0">
+                          {(() => {
+                            const userTurns = thesisConversationLog.filter(l => l.sender === 'user').length;
+                            if (userTurns >= 5) {
+                              return (
+                                <button
+                                  onClick={finishThesisSession}
+                                  disabled={thesisIsFinishing}
+                                  className={`w-full py-3 ${thesisIsFinishing ? 'bg-slate-500 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-500'} text-white rounded-xl font-bold transition-all shadow-lg shadow-purple-500/20 text-sm tracking-wide animate-fade-in`}
+                                >
+                                  {thesisIsFinishing ? 'Grading...' : 'Complete Defense'}
+                                </button>
+                              );
+                            }
+                            return (
+                              <div className="text-center">
+                                <span className="text-xs font-medium text-slate-500">{userTurns} / 5 Responses Recorded</span>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
+                </div>
 
-                        {interviewResult.feedback_summary && (
-                          <div className="bg-indigo-500/10 border border-indigo-500/20 p-4 rounded-xl mt-4">
-                            <h4 className="text-[11px] uppercase tracking-wider font-bold text-indigo-400 mb-2">AI Feedback</h4>
-                            <p className="text-xs text-slate-300 leading-relaxed">{interviewResult.feedback_summary}</p>
+                {/* Bottom Controls */}
+                {/* BOTTOM ROW: CONTROLS */}
+                {!thesisResult && (
+                  <div className="flex items-center justify-center gap-6 w-full max-w-lg mx-auto pb-4 shrink-0">
+                    <div className="relative">
+                      <button
+                        onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
+                        className="bg-[#171e2e] hover:bg-[#1e293b] border border-slate-800 text-slate-300 hover:text-white w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
+                        title="Add File"
+                      >
+                        {thesisInSessionUploading ? (
+                          <div className="w-5 h-5 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Plus className={`w-5 h-5 transition-transform duration-300 ${isAddMenuOpen ? 'rotate-45' : 'group-hover:scale-110'}`} />
+                        )}
+                      </button>
+
+                      {/* Attachment Popover for Thesis */}
+                      {isAddMenuOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          className="absolute bottom-[calc(100%+16px)] left-1/2 -translate-x-1/2 w-48 bg-slate-800 border border-slate-700/80 rounded-2xl shadow-xl overflow-hidden z-[100]"
+                        >
+                          <div className="flex flex-col p-1.5 space-y-1">
+                            <label className="flex items-center gap-3 w-full p-2.5 text-left hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all cursor-pointer">
+                              <div className="w-7 h-7 rounded-lg bg-purple-500/10 flex items-center justify-center shrink-0">
+                                <Plus className="w-3.5 h-3.5 text-purple-400" />
+                              </div>
+                              <span className="text-xs font-semibold tracking-wide">Upload Proposal</span>
+                              <input
+                                type="file"
+                                accept=".pdf,.txt"
+                                className="hidden"
+                                disabled={thesisInSessionUploading}
+                                onChange={(e) => {
+                                  const f = e.target.files?.[0];
+                                  if (f) uploadThesisAbstractInSession(f);
+                                  setIsAddMenuOpen(false);
+                                  e.target.value = '';
+                                }}
+                              />
+                            </label>
+                          </div>
+                        </motion.div>
+                      )}
+                    </div>
+
+                    {/* Mic visualiser — center */}
+                    <div className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800 shadow-slate-900/40'} text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl`}>
+                      {isListening ? (
+                        <div className="flex items-center justify-center gap-1.5 h-8 w-full relative z-10 px-4">
+                          {[...userAudioData, ...Array.from(userAudioData).reverse()].map((height, i) => (
+                            <motion.div key={`tw-${i}`} className="w-[3px] bg-white rounded-full" animate={{ height: `${height * 0.7}px` }} transition={{ duration: 0.1, ease: 'linear' }} />
+                          ))}
+                        </div>
+                      ) : (
+                        <Mic className="w-8 h-8 relative z-10 text-slate-400" />
+                      )}
+                      {isListening && <span className="absolute inset-0 rounded-[2rem] border-4 border-emerald-400 opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }} />}
+                    </div>
+
+                    {/* Leave */}
+                    <button
+                      onClick={() => setThesisIsLeaveModalOpen(true)}
+                      className="bg-[#171e2e] hover:bg-rose-500/10 border border-slate-800 hover:border-rose-500/30 text-slate-300 hover:text-rose-500 w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group"
+                      title="Leave Defense Session"
+                    >
+                      <LogOut className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Thesis Leave Modal */}
+                {thesisIsLeaveModalOpen && (
+                  <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-slate-900 border border-slate-700/50 rounded-3xl p-8 max-w-sm w-full shadow-2xl flex flex-col items-center"
+                    >
+                      <div className="w-16 h-16 bg-rose-500/10 rounded-2xl flex items-center justify-center mb-6 text-rose-500">
+                        <LogOut className="w-8 h-8" />
+                      </div>
+                      <h3 className="text-xl font-bold text-white text-center mb-3">End Defense?</h3>
+                      <p className="text-slate-400 text-center mb-8 text-sm leading-relaxed px-2">Are you sure you want to end this thesis defense? Your session progress will not be graded.</p>
+                      <div className="flex gap-4 w-full">
+                        <button onClick={() => setThesisIsLeaveModalOpen(false)} className="flex-1 py-3 px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-medium transition-colors">Cancel</button>
+                        <button onClick={exitThesisSession} className="flex-1 py-3 px-4 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-medium transition-colors shadow-lg shadow-rose-500/20">Leave</button>
+                      </div>
+                    </motion.div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'interview-session' && (
+              <div className="relative h-full flex flex-col items-center px-4 pt-6 w-full">
+
+                {/* TOP ROW: 3D MODEL & RESPONSE LOG */}
+                <div className="w-full max-w-7xl mx-auto flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch mb-8 h-[600px]">
+
+                  {/* LEFT COLUMN: HORIZONTAL 3D MODEL */}
+                  <motion.div
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="lg:col-span-8 bg-[#111827] rounded-[2rem] overflow-hidden relative shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] border border-slate-800 flex items-center justify-center p-0"
+                    style={{ backgroundColor: '#111827' }}
+                  >
+                    <div className="absolute inset-0 w-full h-full">
+                      <Canvas shadows camera={{ position: [0, 0.5, 3], fov: 35 }}>
+                        <ambientLight intensity={0.8} />
+                        <pointLight position={[10, 10, 10]} intensity={1} />
+                        <directionalLight position={[5, 10, 5]} intensity={2.0} castShadow />
+                        <Environment preset="city" />
+                        <OrbitControls enableZoom={false} enablePan={false} maxPolarAngle={Math.PI / 2} minPolarAngle={Math.PI / 2} target={[0, 0, 0]} />
+                        <ProfessorModel
+                          isSpeaking={isAiSpeaking}
+                          analyserNode={activeAnalyser ?? browserTtsAnalyserRef.current}
+                          mouthCues={mouthCues}
+                          currentAudioTime={currentAudioStartTime}
+                          audioContext={audioContextRef.current}
+                        />
+                      </Canvas>
+                    </div>
+                  </motion.div>
+
+                  {/* RIGHT COLUMN: USER RESPONSES & EVALUATION */}
+                  <motion.div
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="lg:col-span-4 bg-[#1e293b]/80 backdrop-blur-md rounded-[2rem] p-6 flex flex-col relative shadow-xl overflow-hidden border border-slate-800/80"
+                    style={{ backgroundColor: 'rgba(30, 41, 59, 0.96)' }}
+                  >
+                    {interviewResult ? (
+                      // --- EVALUATION RESULT UI ---
+                      <div className="flex flex-col h-full overflow-y-auto custom-scrollbar pr-2 animate-fade-in">
+                        <div className="text-center space-y-3 mb-6 shrink-0 mt-2">
+                          <div className={`mx-auto inline-flex items-center justify-center w-20 h-20 rounded-full mb-1 border-4 ${interviewResult.passed ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
+                            <span className="text-2xl font-black">{interviewResult.total_score}%</span>
+                          </div>
+                          <h2 className="text-xl font-bold text-slate-100 tracking-tight">Interview Complete</h2>
+                          <p className="text-xs text-slate-400 leading-relaxed px-2">{interviewResult.passed ? 'Congratulations! You passed the interview.' : 'Keep practicing! You did not meet the passing criteria this time.'}</p>
+                        </div>
+
+                        <div className="space-y-4 shrink-0">
+                          <h3 className="text-sm font-bold text-slate-200 border-b border-slate-700/50 pb-2">Performance Breakdown</h3>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            {(() => {
+                              const dep = profile.department?.toUpperCase();
+                              let breakdown = [];
+                              if (dep === 'CTE') {
+                                breakdown = [
+                                  { label: "Subject Matter", score: interviewResult.score_cte_subject_matter },
+                                  { label: "Teaching Apt.", score: interviewResult.score_cte_teaching },
+                                  { label: "Motivation", score: interviewResult.score_cte_motivation },
+                                  { label: "Acad. Prepared.", score: interviewResult.score_cte_academic },
+                                  { label: "Problem Solving", score: interviewResult.score_cte_problem_solving },
+                                  { label: "Leadership", score: interviewResult.score_cte_leadership },
+                                  { label: "Communication", score: interviewResult.score_cte_communication },
+                                ];
+                              } else if (dep === 'CBAPA') {
+                                breakdown = [
+                                  { label: "Business Fund.", score: interviewResult.score_cbapa_business },
+                                  { label: "Analytical", score: interviewResult.score_cbapa_analytical },
+                                  { label: "Entrepreneurial", score: interviewResult.score_cbapa_entrepreneurial },
+                                  { label: "Acad. Prepared.", score: interviewResult.score_cbapa_academic },
+                                  { label: "Leadership", score: interviewResult.score_cbapa_leadership },
+                                  { label: "Ethical", score: interviewResult.score_cbapa_ethical },
+                                  { label: "Communication", score: interviewResult.score_cbapa_communication },
+                                ];
+                              } else {
+                                breakdown = [
+                                  { label: "Technical", score: interviewResult.score_technical },
+                                  { label: "Problem Solving", score: interviewResult.score_problem_solving },
+                                  { label: "Coding Basics", score: interviewResult.score_coding },
+                                  { label: "Soft Skills", score: interviewResult.score_soft_skills },
+                                  { label: "Communication", score: interviewResult.score_communication },
+                                ];
+                              }
+
+                              return breakdown.map((item, idx) => (
+                                <div key={idx} className={`bg-slate-900 p-3 rounded-xl border border-slate-800/50 ${breakdown.length % 2 !== 0 && idx === breakdown.length - 1 ? 'col-span-2 text-center' : ''}`}>
+                                  <p className="text-[10px] text-slate-400 mb-1 uppercase tracking-wider overflow-hidden text-ellipsis whitespace-nowrap" title={item.label}>{item.label}</p>
+                                  <p className="text-xl font-black text-sky-400">{item.score || 0}</p>
+                                </div>
+                              ));
+                            })()}
+                          </div>
+
+                          {interviewResult.feedback_summary && (
+                            <div className="bg-indigo-500/10 border border-indigo-500/20 p-4 rounded-xl mt-4">
+                              <h4 className="text-[11px] uppercase tracking-wider font-bold text-indigo-400 mb-2">AI Feedback</h4>
+                              <p className="text-xs text-slate-300 leading-relaxed">{interviewResult.feedback_summary}</p>
+                            </div>
+                          )}
+
+                          <button onClick={exitInterview} className="w-full mt-4 py-3 bg-slate-800 hover:bg-slate-700 text-white text-sm rounded-xl font-bold transition-colors shadow-lg shrink-0">
+                            Go to Dashboard
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      // --- TRANSCRIPT HISTORY UI ---
+                      <div className="flex flex-col h-full">
+                        <h3 className="text-sm font-bold text-slate-300 border-b border-slate-700/50 pb-3 mb-4 shrink-0 uppercase tracking-widest text-center">Interview Transcript</h3>
+
+                        {(aiResponseText || isAiSpeaking) && (
+                          <div className="mb-4 p-3 rounded-xl bg-sky-500/10 border border-sky-500/20 text-slate-200 shadow-sm shrink-0">
+                            <div className="flex items-center justify-between gap-3 mb-2">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400">Professor Maxiel</span>
+                              {isAiSpeaking && <span className="text-[10px] font-medium text-sky-300">Speaking...</span>}
+                            </div>
+                            <p className="leading-relaxed text-xs whitespace-pre-wrap">
+                              {aiResponseText || 'Preparing response...'}
+                            </p>
                           </div>
                         )}
 
-                        <button onClick={exitInterview} className="w-full mt-4 py-3 bg-slate-800 hover:bg-slate-700 text-white text-sm rounded-xl font-bold transition-colors shadow-lg shrink-0">
-                          Go to Dashboard
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    // --- TRANSCRIPT HISTORY UI ---
-                    <div className="flex flex-col h-full">
-                      <h3 className="text-sm font-bold text-slate-300 border-b border-slate-700/50 pb-3 mb-4 shrink-0 uppercase tracking-widest text-center">Interview Transcript</h3>
+                        <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-4 pr-1 scroll-smooth">
+                          {(() => {
+                            // Filter explicitly only for user responses
+                            const userLogs = conversationLog.filter((log) => log.sender === 'user');
 
-                      {(aiResponseText || isAiSpeaking) && (
-                        <div className="mb-4 p-3 rounded-xl bg-sky-500/10 border border-sky-500/20 text-slate-200 shadow-sm shrink-0">
-                          <div className="flex items-center justify-between gap-3 mb-2">
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400">Professor Maxiel</span>
-                            {isAiSpeaking && <span className="text-[10px] font-medium text-sky-300">Speaking...</span>}
-                          </div>
-                          <p className="leading-relaxed text-xs whitespace-pre-wrap">
-                            {aiResponseText || 'Preparing response...'}
-                          </p>
-                        </div>
-                      )}
+                            if (userLogs.length === 0 && !transcript) {
+                              return (
+                                <div className="flex-1 flex flex-col items-center justify-center opacity-50">
+                                  <User className="w-8 h-8 text-slate-500 mb-3" />
+                                  <p className="text-slate-400 text-xs text-center px-4 leading-relaxed">Respond to the AI Professor. Your answers will be tracked here (Limit: 5).</p>
+                                </div>
+                              );
+                            }
 
-                      <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-4 pr-1 scroll-smooth">
-                        {(() => {
-                          // Filter explicitly only for user responses
-                          const userLogs = conversationLog.filter((log) => log.sender === 'user');
-
-                          if (userLogs.length === 0 && !transcript) {
                             return (
-                              <div className="flex-1 flex flex-col items-center justify-center opacity-50">
-                                <User className="w-8 h-8 text-slate-500 mb-3" />
-                                <p className="text-slate-400 text-xs text-center px-4 leading-relaxed">Respond to the AI Professor. Your answers will be tracked here (Limit: 5).</p>
+                              <>
+                                {userLogs.map((log, idx) => (
+                                  <div key={idx} className="flex flex-col items-stretch animate-fade-in">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider mb-1 text-emerald-500/80 px-1">
+                                      Response {idx + 1}
+                                    </span>
+                                    <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 shadow-sm">
+                                      <p className="leading-relaxed text-xs">{log.text}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </>
+                            );
+                          })()}
+                        </div>
+                        <div className="mt-4 pt-4 border-t border-slate-700/50 shrink-0">
+                          {(() => {
+                            const userTurns = conversationLog.filter(l => l.sender === 'user').length;
+                            if (userTurns >= 5) {
+                              return (
+                                <button
+                                  onClick={finishInterviewSession}
+                                  disabled={isFinishingInterview}
+                                  className={`w-full py-3 ${isFinishingInterview ? 'bg-slate-500 cursor-not-allowed' : 'bg-emerald-500 hover:bg-emerald-400'} text-white rounded-xl font-bold transition-all shadow-lg shadow-emerald-500/20 text-sm tracking-wide animate-fade-in`}
+                                >
+                                  {isFinishingInterview ? 'Grading...' : 'Complete Interview'}
+                                </button>
+                              );
+                            }
+                            return (
+                              <div className="text-center">
+                                <span className="text-xs font-medium text-slate-500">{userTurns} / 5 Questions Evaluated</span>
                               </div>
                             );
-                          }
+                          })()}
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
+                </div>
 
-                          return (
-                            <>
-                              {userLogs.map((log, idx) => (
-                                <div key={idx} className="flex flex-col items-stretch animate-fade-in">
-                                  <span className="text-[10px] font-bold uppercase tracking-wider mb-1 text-emerald-500/80 px-1">
-                                    Response {idx + 1}
-                                  </span>
-                                  <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 shadow-sm">
-                                    <p className="leading-relaxed text-xs">{log.text}</p>
-                                  </div>
-                                </div>
-                              ))}
-                            </>
-                          );
-                        })()}
-                      </div>
-                      <div className="mt-4 pt-4 border-t border-slate-700/50 shrink-0">
-                        {(() => {
-                          const userTurns = conversationLog.filter(l => l.sender === 'user').length;
-                          if (userTurns >= 5) {
-                            return (
-                              <button
-                                onClick={finishInterviewSession}
-                                disabled={isFinishingInterview}
-                                className={`w-full py-3 ${isFinishingInterview ? 'bg-slate-500 cursor-not-allowed' : 'bg-emerald-500 hover:bg-emerald-400'} text-white rounded-xl font-bold transition-all shadow-lg shadow-emerald-500/20 text-sm tracking-wide animate-fade-in`}
-                              >
-                                {isFinishingInterview ? 'Grading...' : 'Complete Interview'}
-                              </button>
-                            );
-                          }
-                          return (
-                            <div className="text-center">
-                              <span className="text-xs font-medium text-slate-500">{userTurns} / 5 Questions Evaluated</span>
-                            </div>
-                          );
-                        })()}
-                      </div>
+                {/* BOTTOM ROW: CONTROLS (Floating below everything) */}
+                {!interviewResult && (
+                  <div className="flex items-center justify-center gap-6 w-full max-w-lg mx-auto pb-4 shrink-0">
+                    <div className="relative">
+                      <button
+                        onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
+                        className="bg-[#171e2e] hover:bg-[#1e293b] border border-slate-800 text-slate-300 hover:text-white w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
+                        title="Add File"
+                      >
+                        <Plus className={`w-5 h-5 transition-transform duration-300 ${isAddMenuOpen ? 'rotate-45' : 'group-hover:scale-110'}`} />
+                      </button>
+
+                      {/* Attachment Popover */}
+                      {isAddMenuOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          className="absolute bottom-[calc(100%+16px)] left-1/2 -translate-x-1/2 w-48 bg-slate-800 border border-slate-700/80 rounded-2xl shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] overflow-hidden z-[100]"
+                        >
+                          <div className="flex flex-col p-1.5 space-y-1">
+                            <button onClick={() => setIsAddMenuOpen(false)} className="flex items-center gap-3 w-full p-2.5 text-left hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all">
+                              <div className="w-7 h-7 rounded-lg bg-sky-500/10 flex items-center justify-center shrink-0">
+                                <Folder className="w-3.5 h-3.5 text-sky-400" />
+                              </div>
+                              <span className="text-xs font-semibold tracking-wide">Local Disk</span>
+                            </button>
+                            <button onClick={() => setIsAddMenuOpen(false)} className="flex items-center gap-3 w-full p-2.5 text-left hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all">
+                              <div className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
+                                <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+                              </div>
+                              <span className="text-xs font-semibold tracking-wide">Drive</span>
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
                     </div>
-                  )}
+
+                    <div className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800 shadow-slate-900/40'} text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl`}>
+                      {isListening ? (
+                        <div className="flex items-center justify-center gap-1.5 h-8 w-full relative z-10 px-4">
+                          {[...userAudioData, ...Array.from(userAudioData).reverse()].map((height, i) => (
+                            <motion.div key={`w-${i}`} className="w-[3px] bg-white rounded-full" animate={{ height: `${height * 0.7}px` }} transition={{ duration: 0.1, ease: 'linear' }} />
+                          ))}
+                        </div>
+                      ) : (
+                        <Mic className={`w-8 h-8 relative z-10 ${isMicTransitioning ? 'text-sky-400' : 'text-slate-400'}`} />
+                      )}
+                      {isListening && <span className="absolute inset-0 rounded-[2rem] border-4 border-emerald-400 opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }} />}
+                    </div>
+
+                    <button
+                      onClick={() => setIsLeaveModalOpen(true)}
+                      className="bg-[#171e2e] hover:bg-rose-500/10 border border-slate-800 hover:border-rose-500/30 text-slate-300 hover:text-rose-500 w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
+                      title="Leave/End Session"
+                    >
+                      <LogOut className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Leave Confirmation Modal */}
+            {isLeaveModalOpen && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="bg-slate-900 border border-slate-700/50 rounded-3xl p-8 max-w-sm w-full shadow-2xl flex flex-col items-center"
+                >
+                  <div className="w-16 h-16 bg-rose-500/10 rounded-2xl flex items-center justify-center mb-6 text-rose-500 shadow-inner">
+                    <LogOut className="w-8 h-8" />
+                  </div>
+                  <h3 className="text-xl font-bold text-white text-center mb-3">Leave Interview?</h3>
+                  <p className="text-slate-400 text-center mb-8 text-sm leading-relaxed px-2">
+                    Are you sure you want to end this interview session? Your progress and current context will be cleared.
+                  </p>
+                  <div className="flex gap-4 w-full">
+                    <button
+                      onClick={() => setIsLeaveModalOpen(false)}
+                      className="flex-1 py-3 px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-medium transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={exitInterview}
+                      className="flex-1 py-3 px-4 bg-sky-500 hover:bg-sky-400 text-black rounded-xl font-semibold transition-colors shadow-lg shadow-sky-500/20"
+                    >
+                      Leave
+                    </button>
+                  </div>
                 </motion.div>
               </div>
+            )}
 
-              {/* BOTTOM ROW: CONTROLS (Floating below everything) */}
-              {!interviewResult && (
-                <div className="flex items-center justify-center gap-6 w-full max-w-lg mx-auto pb-4 shrink-0">
-                  <div className="relative">
-                    <button
-                      onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
-                      className="bg-[#171e2e] hover:bg-[#1e293b] border border-slate-800 text-slate-300 hover:text-white w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
-                      title="Add File"
-                    >
-                      <Plus className={`w-5 h-5 transition-transform duration-300 ${isAddMenuOpen ? 'rotate-45' : 'group-hover:scale-110'}`} />
-                    </button>
-
-                    {/* Attachment Popover */}
-                    {isAddMenuOpen && (
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        className="absolute bottom-[calc(100%+16px)] left-1/2 -translate-x-1/2 w-48 bg-slate-800 border border-slate-700/80 rounded-2xl shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] overflow-hidden z-[100]"
-                      >
-                        <div className="flex flex-col p-1.5 space-y-1">
-                          <button onClick={() => setIsAddMenuOpen(false)} className="flex items-center gap-3 w-full p-2.5 text-left hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all">
-                            <div className="w-7 h-7 rounded-lg bg-sky-500/10 flex items-center justify-center shrink-0">
-                              <Folder className="w-3.5 h-3.5 text-sky-400" />
-                            </div>
-                            <span className="text-xs font-semibold tracking-wide">Local Disk</span>
-                          </button>
-                          <button onClick={() => setIsAddMenuOpen(false)} className="flex items-center gap-3 w-full p-2.5 text-left hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all">
-                            <div className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
-                              <Cloud className="w-3.5 h-3.5 text-emerald-400" />
-                            </div>
-                            <span className="text-xs font-semibold tracking-wide">Drive</span>
-                          </button>
-                        </div>
-                      </motion.div>
-                    )}
-                  </div>
-
-                  <div className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800 shadow-slate-900/40'} text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl`}>
-                    {isListening ? (
-                      <div className="flex items-center justify-center gap-1.5 h-8 w-full relative z-10 px-4">
-                        {[...userAudioData, ...Array.from(userAudioData).reverse()].map((height, i) => (
-                          <motion.div key={`w-${i}`} className="w-[3px] bg-white rounded-full" animate={{ height: `${height * 0.7}px` }} transition={{ duration: 0.1, ease: 'linear' }} />
-                        ))}
-                      </div>
-                    ) : (
-                      <Mic className={`w-8 h-8 relative z-10 ${isMicTransitioning ? 'text-sky-400' : 'text-slate-400'}`} />
-                    )}
-                    {isListening && <span className="absolute inset-0 rounded-[2rem] border-4 border-emerald-400 opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }} />}
-                  </div>
-
-                  <button
-                    onClick={() => setIsLeaveModalOpen(true)}
-                    className="bg-[#171e2e] hover:bg-rose-500/10 border border-slate-800 hover:border-rose-500/30 text-slate-300 hover:text-rose-500 w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
-                    title="Leave/End Session"
-                  >
-                    <LogOut className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Leave Confirmation Modal */}
-          {isLeaveModalOpen && (
-            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            {/* History Tab */}
+            {activeTab === 'history' && (
               <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="bg-slate-900 border border-slate-700/50 rounded-3xl p-8 max-w-sm w-full shadow-2xl flex flex-col items-center"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="w-full space-y-8"
               >
-                <div className="w-16 h-16 bg-rose-500/10 rounded-2xl flex items-center justify-center mb-6 text-rose-500 shadow-inner">
-                  <LogOut className="w-8 h-8" />
+                <div>
+                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Interview History</h1>
+                  <p className="text-lg text-slate-400 mt-2">Relive your past sessions and track your progress over time.</p>
                 </div>
-                <h3 className="text-xl font-bold text-white text-center mb-3">Leave Interview?</h3>
-                <p className="text-slate-400 text-center mb-8 text-sm leading-relaxed px-2">
-                  Are you sure you want to end this interview session? Your progress and current context will be cleared.
-                </p>
-                <div className="flex gap-4 w-full">
-                  <button
-                    onClick={() => setIsLeaveModalOpen(false)}
-                    className="flex-1 py-3 px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-medium transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={exitInterview}
-                    className="flex-1 py-3 px-4 bg-sky-500 hover:bg-sky-400 text-black rounded-xl font-semibold transition-colors shadow-lg shadow-sky-500/20"
-                  >
-                    Leave
-                  </button>
-                </div>
-              </motion.div>
-            </div>
-          )}
 
-          {/* History Tab */}
-          {activeTab === 'history' && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="w-full space-y-8"
-            >
-              <div>
-                <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Interview History</h1>
-                <p className="text-lg text-slate-400 mt-2">Relive your past sessions and track your progress over time.</p>
-              </div>
+                {(() => {
+                  const allHistory = [
+                    ...interviewHistory.filter(i => (i.total_score || 0) > 0).map(i => ({ ...i, _type: 'enrollment' as const })),
+                    ...thesisHistory.filter(i => (i.total_score || 0) > 0).map(i => ({ ...i, _type: 'thesis' as const }))
+                  ].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
 
-              {(() => {
-                const allHistory = [
-                  ...interviewHistory.filter(i => (i.total_score || 0) > 0).map(i => ({ ...i, _type: 'enrollment' as const })),
-                  ...thesisHistory.filter(i => (i.total_score || 0) > 0).map(i => ({ ...i, _type: 'thesis' as const }))
-                ].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
-
-                if (allHistory.length === 0) {
-                  return (
-                    <div className="bg-card border border-line rounded-lg px-6 py-12 md:py-14 text-center">
-                      <div className="w-20 h-20 bg-active rounded-full flex items-center justify-center mx-auto mb-6 text-muted">
-                        <Video className="w-10 h-10" />
+                  if (allHistory.length === 0) {
+                    return (
+                      <div className="bg-card border border-line rounded-lg px-6 py-12 md:py-14 text-center">
+                        <div className="w-20 h-20 bg-active rounded-full flex items-center justify-center mx-auto mb-6 text-muted">
+                          <Video className="w-10 h-10" />
+                        </div>
+                        <h3 className="text-xl font-bold text-ink">No interviews yet</h3>
+                        <p className="text-muted mt-2 max-w-sm mx-auto">Start your first interview session to see your performance history here.</p>
+                        <button
+                          onClick={() => setActiveTab('interview-type')}
+                          className="mt-8 px-6 py-3 bg-accent hover:bg-gold-text text-accent-ink rounded-lg font-semibold transition-colors"
+                        >
+                          Start Practicing
+                        </button>
                       </div>
-                      <h3 className="text-xl font-bold text-ink">No interviews yet</h3>
-                      <p className="text-muted mt-2 max-w-sm mx-auto">Start your first interview session to see your performance history here.</p>
-                      <button
-                        onClick={() => setActiveTab('interview-type')}
-                        className="mt-8 px-6 py-3 bg-accent hover:bg-gold-text text-accent-ink rounded-lg font-semibold transition-colors"
-                      >
-                        Start Practicing
-                      </button>
-                    </div>
-                  );
-                }
+                    );
+                  }
 
-                return (
-                  <div className="grid grid-cols-1 gap-4 pb-12">
-                    {allHistory.map((item, i) => (
-                      <motion.div
-                        key={`${item._type}-${item.id || i}`}
-                        onClick={() => {
-                          setInterviewResult(item);
-                          setPrevTab(activeTab);
-                          setActiveTab('interview-result');
-                        }}
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: i * 0.04 }}
-                        className="bg-slate-900 border border-slate-800/50 rounded-2xl p-6 flex items-center justify-between hover:bg-slate-800/80 hover:border-sky-500/30 transition-all cursor-pointer group shadow-xl backdrop-blur-sm"
-                      >
-                        <div className="flex items-center gap-6">
-                          <div className={`w-14 h-14 rounded-2xl bg-slate-800 flex items-center justify-center transition-all duration-300 ${item._type === 'thesis'
+                  return (
+                    <div className="grid grid-cols-1 gap-4 pb-12">
+                      {allHistory.map((item, i) => (
+                        <motion.div
+                          key={`${item._type}-${item.id || i}`}
+                          onClick={() => {
+                            setInterviewResult(item);
+                            setPrevTab(activeTab);
+                            setActiveTab('interview-result');
+                          }}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: i * 0.04 }}
+                          className="bg-slate-900 border border-slate-800/50 rounded-2xl p-6 flex items-center justify-between hover:bg-slate-800/80 hover:border-sky-500/30 transition-all cursor-pointer group shadow-xl backdrop-blur-sm"
+                        >
+                          <div className="flex items-center gap-6">
+                            <div className={`w-14 h-14 rounded-2xl bg-slate-800 flex items-center justify-center transition-all duration-300 ${item._type === 'thesis'
                               ? 'text-purple-400 group-hover:text-purple-300 group-hover:bg-purple-500/10'
                               : 'text-slate-400 group-hover:text-sky-400 group-hover:bg-sky-500/10'
-                            }`}>
-                            {item._type === 'thesis' ? <Shield className="w-7 h-7" /> : <Video className="w-7 h-7" />}
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-3">
-                              <h4 className={`font-bold text-xl text-slate-100 tracking-tight transition-colors ${item._type === 'thesis' ? 'group-hover:text-purple-400' : 'group-hover:text-sky-400'
-                                }`}>
-                                {item._type === 'thesis' ? 'Thesis Defense' : `Interview #${allHistory.filter(h => h._type === 'enrollment').length - allHistory.filter(h => h._type === 'enrollment').indexOf(item)}`}
-                              </h4>
-                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${item._type === 'thesis'
+                              }`}>
+                              {item._type === 'thesis' ? <Shield className="w-7 h-7" /> : <Video className="w-7 h-7" />}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-3">
+                                <h4 className={`font-bold text-xl text-slate-100 tracking-tight transition-colors ${item._type === 'thesis' ? 'group-hover:text-purple-400' : 'group-hover:text-sky-400'
+                                  }`}>
+                                  {item._type === 'thesis' ? 'Thesis Defense' : `Interview #${allHistory.filter(h => h._type === 'enrollment').length - allHistory.filter(h => h._type === 'enrollment').indexOf(item)}`}
+                                </h4>
+                                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${item._type === 'thesis'
                                   ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
                                   : item.passed ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                                  }`}>
+                                  {item._type === 'thesis' ? 'THESIS' : (item.passed ? 'PASSED' : 'NOT PASSED')}
+                                </span>
+                              </div>
+                              <p className="text-sm text-slate-500 mt-1 font-medium italic">
+                                {item._type === 'thesis' ? `${profile.department?.toUpperCase()} Defense` : `${profile.department || 'General'} Assessment`} · {new Date(item.start_time).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-8">
+                            <div className="text-right min-w-[100px]">
+                              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em] mb-1">Final Score</p>
+                              <span className={`text-3xl font-black ${(item.total_score || 0) >= 75 ? 'text-emerald-400' : (item.total_score || 0) >= 50 ? 'text-sky-400' : 'text-rose-400'
                                 }`}>
-                                {item._type === 'thesis' ? 'THESIS' : (item.passed ? 'PASSED' : 'NOT PASSED')}
+                                {item.total_score || 0}%
                               </span>
                             </div>
-                            <p className="text-sm text-slate-500 mt-1 font-medium italic">
-                              {item._type === 'thesis' ? `${profile.department?.toUpperCase()} Defense` : `${profile.department || 'General'} Assessment`} · {new Date(item.start_time).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
-                            </p>
+                            <div className="w-10 h-10 rounded-full flex items-center justify-center bg-slate-800 text-slate-500 group-hover:bg-sky-500 group-hover:text-black transition-all duration-300 shadow-inner">
+                              <ChevronRight className="w-6 h-6" />
+                            </div>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-8">
-                          <div className="text-right min-w-[100px]">
-                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em] mb-1">Final Score</p>
-                            <span className={`text-3xl font-black ${(item.total_score || 0) >= 75 ? 'text-emerald-400' : (item.total_score || 0) >= 50 ? 'text-sky-400' : 'text-rose-400'
-                              }`}>
-                              {item.total_score || 0}%
-                            </span>
-                          </div>
-                          <div className="w-10 h-10 rounded-full flex items-center justify-center bg-slate-800 text-slate-500 group-hover:bg-sky-500 group-hover:text-black transition-all duration-300 shadow-inner">
-                            <ChevronRight className="w-6 h-6" />
-                          </div>
-                        </div>
-                      </motion.div>
-                    ))}
-                  </div>
-                );
-              })()}
-            </motion.div>
-          )}
-
-          {/* Analytics Tab */}
-          {activeTab === 'analytics' && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="w-full space-y-8"
-            >
-              <div>
-                <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Analytics</h1>
-                <p className="text-lg text-slate-400 mt-2">In-depth overview of your overall interview performance.</p>
-              </div>
-
-              {renderStatCards()}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-xl backdrop-blur-sm">
-                  <h3 className="text-xl font-bold text-slate-100 mb-6 italic tracking-tight">Skill Breakdown</h3>
-                  <div className="space-y-6">
-                    {stats.skillBreakdown.map((skill, idx) => (
-                      <div key={idx} className="space-y-2">
-                        <div className="flex justify-between text-xs font-bold uppercase tracking-wider text-slate-400">
-                          <span>{skill.label}</span>
-                          <span className="text-slate-200">{skill.value}%</span>
-                        </div>
-                        <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
-                          <motion.div
-                            initial={{ width: 0 }}
-                            animate={{ width: `${skill.value}%` }}
-                            transition={{ duration: 1, delay: 0.5 + (idx * 0.1) }}
-                            className={`h-full ${skill.color} rounded-full`}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-xl backdrop-blur-sm flex flex-col justify-center items-center text-center space-y-4">
-                  <div className="w-16 h-16 rounded-2xl bg-sky-500/10 flex items-center justify-center text-sky-400">
-                    <BarChart2 className="w-8 h-8" />
-                  </div>
-                  <h3 className="text-xl font-bold text-slate-100 italic tracking-tight">Insight Generator</h3>
-                  <p className="text-slate-400 text-sm leading-relaxed px-4 italic">
-                    "Your communication clarity is improving! Focus on structural answers for coding sessions to reach 'Excellent' status."
-                  </p>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {/* Placeholders for settings tab */}
-          {activeTab === 'settings' && (
-            <div className="flex items-center justify-center h-full">
-              <p className="text-slate-500 text-lg">This section is coming soon.</p>
-            </div>
-          )}
-
-          {activeTab === 'interview-result' && interviewResult && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="max-w-3xl mx-auto space-y-6"
-            >
-              <div className="text-center">
-                <h1 className="text-4xl font-bold text-slate-100 tracking-tight">
-                  {isThesisResult(interviewResult) ? 'Thesis Defense Result' : 'Past Evaluation'}
-                </h1>
-                <p className="text-lg text-slate-400 mt-2">Detailed performance breakdown</p>
-              </div>
-
-              <div className="bg-[#1e293b]/80 backdrop-blur-md rounded-[2rem] p-8 shadow-xl border border-slate-800/80">
-                <div className="text-center space-y-3 mb-8">
-                  <div className={`mx-auto inline-flex items-center justify-center w-24 h-24 rounded-full mb-2 border-4 ${interviewResult.passed ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
-                    <span className="text-3xl font-black">{interviewResult.total_score || 0}%</span>
-                  </div>
-                  <h2 className="text-2xl font-bold text-slate-100 tracking-tight">
-                    {interviewResult.passed ? 'Passed 🎉' : 'Needs Practice 💡'}
-                  </h2>
-                  {isThesisResult(interviewResult) && (
-                    <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-400 text-xs font-bold">
-                      <Shield className="w-3.5 h-3.5" />
-                      Thesis Defense Result
+                        </motion.div>
+                      ))}
                     </div>
-                  )}
+                  );
+                })()}
+              </motion.div>
+            )}
+
+            {/* Analytics Tab */}
+            {activeTab === 'analytics' && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="w-full space-y-8"
+              >
+                <div>
+                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Analytics</h1>
+                  <p className="text-lg text-slate-400 mt-2">In-depth overview of your overall interview performance.</p>
                 </div>
 
-                <div className="space-y-6">
-                  <h3 className="text-sm font-bold text-slate-200 border-b border-slate-700/50 pb-2">Performance Breakdown</h3>
-
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {(() => {
-                      const dep = profile.department?.toUpperCase();
-                      let breakdown: { label: string; score: number | null | undefined }[] = [];
-
-                      if (isThesisResult(interviewResult)) {
-                        breakdown = getThesisBreakdown(interviewResult, dep || 'CCIT').map(b => ({ label: b.label, score: b.score }));
-                      } else if (dep === 'CTE') {
-                        breakdown = [
-                          { label: 'Subject Matter', score: interviewResult.score_cte_subject_matter },
-                          { label: 'Teaching Apt.', score: interviewResult.score_cte_teaching },
-                          { label: 'Motivation', score: interviewResult.score_cte_motivation },
-                          { label: 'Acad. Prepared.', score: interviewResult.score_cte_academic },
-                          { label: 'Problem Solving', score: interviewResult.score_cte_problem_solving },
-                          { label: 'Leadership', score: interviewResult.score_cte_leadership },
-                          { label: 'Communication', score: interviewResult.score_cte_communication },
-                        ];
-                      } else if (dep === 'CBAPA') {
-                        breakdown = [
-                          { label: 'Business Fund.', score: interviewResult.score_cbapa_business },
-                          { label: 'Analytical', score: interviewResult.score_cbapa_analytical },
-                          { label: 'Entrepreneurial', score: interviewResult.score_cbapa_entrepreneurial },
-                          { label: 'Acad. Prepared.', score: interviewResult.score_cbapa_academic },
-                          { label: 'Leadership', score: interviewResult.score_cbapa_leadership },
-                          { label: 'Ethical', score: interviewResult.score_cbapa_ethical },
-                          { label: 'Communication', score: interviewResult.score_cbapa_communication },
-                        ];
-                      } else {
-                        breakdown = [
-                          { label: 'Technical', score: interviewResult.score_technical },
-                          { label: 'Problem Solving', score: interviewResult.score_problem_solving },
-                          { label: 'Coding Basics', score: interviewResult.score_coding },
-                          { label: 'Soft Skills', score: interviewResult.score_soft_skills },
-                          { label: 'Communication', score: interviewResult.score_communication },
-                        ];
-                      }
-
-                      return breakdown.map((item, idx) => (
-                        <div key={idx} className={`bg-slate-900 p-4 rounded-2xl border border-slate-800/50 text-center ${breakdown.length % 3 !== 0 && idx === breakdown.length - 1 ? 'sm:col-span-3' : ''}`}>
-                          <p className="text-xs text-slate-400 mb-1 uppercase tracking-wider">{item.label}</p>
-                          <p className={`text-2xl font-black ${isThesisResult(interviewResult) ? 'text-purple-400' : 'text-sky-400'}`}>{item.score || 0}</p>
-                        </div>
-                      ));
-                    })()}
-                  </div>
-
-                  {interviewResult.feedback_summary && (
-                    <div className={`p-6 rounded-2xl mt-6 text-left border ${isThesisResult(interviewResult)
-                        ? 'bg-purple-500/10 border-purple-500/20'
-                        : 'bg-indigo-500/10 border-indigo-500/20'
-                      }`}>
-                      <h4 className={`text-sm uppercase tracking-wider font-bold mb-3 ${isThesisResult(interviewResult) ? 'text-purple-400' : 'text-indigo-400'
-                        }`}>AI Feedback Summary</h4>
-                      <p className="text-sm text-slate-300 leading-relaxed">{interviewResult.feedback_summary}</p>
-                    </div>
-                  )}
-
-                  <button onClick={() => { setInterviewResult(null); setActiveTab(prevTab as any); }} className="w-full mt-6 py-4 bg-slate-800 hover:bg-slate-700 text-white text-base rounded-xl font-bold transition-colors shadow-lg">
-                    Back
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {activeTab === 'profile' && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="max-w-4xl mx-auto space-y-8"
-            >
-              <div>
-                <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Profile</h1>
-                <p className="text-lg text-slate-400 mt-2">Manage your account details and profile picture.</p>
-              </div>
-
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-8">
-                <div className="flex items-center gap-8">
-                  {/* Profile Picture with Camera Overlay */}
-                  <div className="relative group">
-                    <div className="w-24 h-24 rounded-full bg-slate-800 border-2 border-slate-700 overflow-hidden shrink-0 group-hover:border-sky-500/50 transition-colors">
-                      <img
-                        src={profile.profilePicture}
-                        alt="Profile"
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                    {/* Camera Overlay Trigger */}
-                    <label className="absolute bottom-0 right-0 w-8 h-8 bg-sky-500 hover:bg-sky-400 text-black rounded-full flex items-center justify-center cursor-pointer shadow-lg transform translate-x-1 translate-y-1 transition-all hover:scale-110 active:scale-95 z-10 border-2 border-slate-900">
-                      <Camera className="w-4 h-4" />
-                      <input
-                        type="file"
-                        accept="image/png, image/jpeg"
-                        onChange={handleImageUpload}
-                        className="hidden"
-                      />
-                    </label>
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <h3 className="text-2xl font-bold text-slate-100 tracking-tight">{profile.name}</h3>
-                    <p className="text-sm text-slate-400 font-medium">Click the camera to update photo</p>
-                  </div>
-                </div>
+                {renderStatCards()}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Name */}
-                  <div className="space-y-3">
-                    <label className="text-sm font-medium text-slate-300">Full Name</label>
-                    <input
-                      type="text"
-                      value={profile.name}
-                      onChange={(e) => setProfile({ ...profile, name: e.target.value })}
-                      className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
-                    />
+                  <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-xl backdrop-blur-sm">
+                    <h3 className="text-xl font-bold text-slate-100 mb-6 italic tracking-tight">Skill Breakdown</h3>
+                    <div className="space-y-6">
+                      {stats.skillBreakdown.map((skill, idx) => (
+                        <div key={idx} className="space-y-2">
+                          <div className="flex justify-between text-xs font-bold uppercase tracking-wider text-slate-400">
+                            <span>{skill.label}</span>
+                            <span className="text-slate-200">{skill.value}%</span>
+                          </div>
+                          <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
+                            <motion.div
+                              initial={{ width: 0 }}
+                              animate={{ width: `${skill.value}%` }}
+                              transition={{ duration: 1, delay: 0.5 + (idx * 0.1) }}
+                              className={`h-full ${skill.color} rounded-full`}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
-                  {/* Email */}
-                  <div className="space-y-3">
-                    <label className="text-sm font-medium text-slate-300">Email Address <span className="text-slate-500 ml-1 font-normal">(Read only)</span></label>
-                    <input
-                      type="email"
-                      value={profile.email}
-                      readOnly
-                      title="Email address cannot be changed"
-                      className="w-full bg-slate-950/50 border border-slate-800 rounded-xl px-4 py-3 text-slate-500 cursor-not-allowed transition-all duration-300"
-                    />
-                  </div>
-
-                  <div className="space-y-3">
-                    <label className="text-sm font-medium text-slate-300">Password</label>
-                    <input
-                      type="password"
-                      value={profile.password || ''}
-                      onChange={(e) => setProfile({ ...profile, password: e.target.value })}
-                      className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
-                      placeholder="••••••••"
-                    />
-                  </div>
-
-                  {/* Department */}
-                  <div className="space-y-3">
-                    <label className="text-sm font-medium text-slate-300">Department</label>
-                    <input
-                      type="text"
-                      value={profile.department}
-                      onChange={(e) => setProfile({ ...profile, department: e.target.value })}
-                      className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
-                    />
+                  <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-xl backdrop-blur-sm flex flex-col justify-center items-center text-center space-y-4">
+                    <div className="w-16 h-16 rounded-2xl bg-sky-500/10 flex items-center justify-center text-sky-400">
+                      <BarChart2 className="w-8 h-8" />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-100 italic tracking-tight">Insight Generator</h3>
+                    <p className="text-slate-400 text-sm leading-relaxed px-4 italic">
+                      "Your communication clarity is improving! Focus on structural answers for coding sessions to reach 'Excellent' status."
+                    </p>
                   </div>
                 </div>
+              </motion.div>
+            )}
 
-                <div className="pt-4 flex justify-end items-center gap-4">
-                  {isSaved && (
-                    <span className="text-emerald-400 text-sm font-medium animate-pulse">
-                      Settings saved successfully!
-                    </span>
-                  )}
-                  <button
-                    onClick={() => setActiveTab('dashboard')}
-                    className="px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-medium transition-colors border border-slate-700"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleSave}
-                    disabled={isSaving}
-                    className="px-6 py-3 bg-sky-500 hover:bg-sky-400 text-black rounded-xl font-semibold transition-colors shadow-lg shadow-sky-500/20 disabled:opacity-50"
-                  >
-                    {isSaving ? 'Saving...' : 'Save'}
-                  </button>
-                </div>
+            {/* Placeholders for settings tab */}
+            {activeTab === 'settings' && (
+              <div className="flex items-center justify-center h-full">
+                <p className="text-slate-500 text-lg">This section is coming soon.</p>
               </div>
-            </motion.div>
-          )}
+            )}
+
+            {activeTab === 'interview-result' && interviewResult && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="max-w-3xl mx-auto space-y-6"
+              >
+                <div className="text-center">
+                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">
+                    {isThesisResult(interviewResult) ? 'Thesis Defense Result' : 'Past Evaluation'}
+                  </h1>
+                  <p className="text-lg text-slate-400 mt-2">Detailed performance breakdown</p>
+                </div>
+
+                <div className="bg-[#1e293b]/80 backdrop-blur-md rounded-[2rem] p-8 shadow-xl border border-slate-800/80">
+                  <div className="text-center space-y-3 mb-8">
+                    <div className={`mx-auto inline-flex items-center justify-center w-24 h-24 rounded-full mb-2 border-4 ${interviewResult.passed ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
+                      <span className="text-3xl font-black">{interviewResult.total_score || 0}%</span>
+                    </div>
+                    <h2 className="text-2xl font-bold text-slate-100 tracking-tight">
+                      {interviewResult.passed ? 'Passed 🎉' : 'Needs Practice 💡'}
+                    </h2>
+                    {isThesisResult(interviewResult) && (
+                      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-400 text-xs font-bold">
+                        <Shield className="w-3.5 h-3.5" />
+                        Thesis Defense Result
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-6">
+                    <h3 className="text-sm font-bold text-slate-200 border-b border-slate-700/50 pb-2">Performance Breakdown</h3>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {(() => {
+                        const dep = profile.department?.toUpperCase();
+                        let breakdown: { label: string; score: number | null | undefined }[] = [];
+
+                        if (isThesisResult(interviewResult)) {
+                          breakdown = getThesisBreakdown(interviewResult, dep || 'CCIT').map(b => ({ label: b.label, score: b.score }));
+                        } else if (dep === 'CTE') {
+                          breakdown = [
+                            { label: 'Subject Matter', score: interviewResult.score_cte_subject_matter },
+                            { label: 'Teaching Apt.', score: interviewResult.score_cte_teaching },
+                            { label: 'Motivation', score: interviewResult.score_cte_motivation },
+                            { label: 'Acad. Prepared.', score: interviewResult.score_cte_academic },
+                            { label: 'Problem Solving', score: interviewResult.score_cte_problem_solving },
+                            { label: 'Leadership', score: interviewResult.score_cte_leadership },
+                            { label: 'Communication', score: interviewResult.score_cte_communication },
+                          ];
+                        } else if (dep === 'CBAPA') {
+                          breakdown = [
+                            { label: 'Business Fund.', score: interviewResult.score_cbapa_business },
+                            { label: 'Analytical', score: interviewResult.score_cbapa_analytical },
+                            { label: 'Entrepreneurial', score: interviewResult.score_cbapa_entrepreneurial },
+                            { label: 'Acad. Prepared.', score: interviewResult.score_cbapa_academic },
+                            { label: 'Leadership', score: interviewResult.score_cbapa_leadership },
+                            { label: 'Ethical', score: interviewResult.score_cbapa_ethical },
+                            { label: 'Communication', score: interviewResult.score_cbapa_communication },
+                          ];
+                        } else {
+                          breakdown = [
+                            { label: 'Technical', score: interviewResult.score_technical },
+                            { label: 'Problem Solving', score: interviewResult.score_problem_solving },
+                            { label: 'Coding Basics', score: interviewResult.score_coding },
+                            { label: 'Soft Skills', score: interviewResult.score_soft_skills },
+                            { label: 'Communication', score: interviewResult.score_communication },
+                          ];
+                        }
+
+                        return breakdown.map((item, idx) => (
+                          <div key={idx} className={`bg-slate-900 p-4 rounded-2xl border border-slate-800/50 text-center ${breakdown.length % 3 !== 0 && idx === breakdown.length - 1 ? 'sm:col-span-3' : ''}`}>
+                            <p className="text-xs text-slate-400 mb-1 uppercase tracking-wider">{item.label}</p>
+                            <p className={`text-2xl font-black ${isThesisResult(interviewResult) ? 'text-purple-400' : 'text-sky-400'}`}>{item.score || 0}</p>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+
+                    {interviewResult.feedback_summary && (
+                      <div className={`p-6 rounded-2xl mt-6 text-left border ${isThesisResult(interviewResult)
+                        ? 'bg-purple-500/10 border-purple-500/20'
+                        : 'bg-indigo-500/10 border-indigo-500/20'
+                        }`}>
+                        <h4 className={`text-sm uppercase tracking-wider font-bold mb-3 ${isThesisResult(interviewResult) ? 'text-purple-400' : 'text-indigo-400'
+                          }`}>AI Feedback Summary</h4>
+                        <p className="text-sm text-slate-300 leading-relaxed">{interviewResult.feedback_summary}</p>
+                      </div>
+                    )}
+
+                    <button onClick={() => { setInterviewResult(null); setActiveTab(prevTab as any); }} className="w-full mt-6 py-4 bg-slate-800 hover:bg-slate-700 text-white text-base rounded-xl font-bold transition-colors shadow-lg">
+                      Back
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'profile' && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="max-w-4xl mx-auto space-y-8"
+              >
+                <div>
+                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Profile</h1>
+                  <p className="text-lg text-slate-400 mt-2">Manage your account details and profile picture.</p>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-8">
+                  <div className="flex items-center gap-8">
+                    {/* Profile Picture with Camera Overlay */}
+                    <div className="relative group">
+                      <div className="w-24 h-24 rounded-full bg-slate-800 border-2 border-slate-700 overflow-hidden shrink-0 group-hover:border-sky-500/50 transition-colors">
+                        <img
+                          src={profile.profilePicture}
+                          alt="Profile"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      {/* Camera Overlay Trigger */}
+                      <label className="absolute bottom-0 right-0 w-8 h-8 bg-sky-500 hover:bg-sky-400 text-black rounded-full flex items-center justify-center cursor-pointer shadow-lg transform translate-x-1 translate-y-1 transition-all hover:scale-110 active:scale-95 z-10 border-2 border-slate-900">
+                        <Camera className="w-4 h-4" />
+                        <input
+                          type="file"
+                          accept="image/png, image/jpeg"
+                          onChange={handleImageUpload}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <h3 className="text-2xl font-bold text-slate-100 tracking-tight">{profile.name}</h3>
+                      <p className="text-sm text-slate-400 font-medium">Click the camera to update photo</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Name */}
+                    <div className="space-y-3">
+                      <label className="text-sm font-medium text-slate-300">Full Name</label>
+                      <input
+                        type="text"
+                        value={profile.name}
+                        onChange={(e) => setProfile({ ...profile, name: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
+                      />
+                    </div>
+
+                    {/* Email */}
+                    <div className="space-y-3">
+                      <label className="text-sm font-medium text-slate-300">Email Address <span className="text-slate-500 ml-1 font-normal">(Read only)</span></label>
+                      <input
+                        type="email"
+                        value={profile.email}
+                        readOnly
+                        title="Email address cannot be changed"
+                        className="w-full bg-slate-950/50 border border-slate-800 rounded-xl px-4 py-3 text-slate-500 cursor-not-allowed transition-all duration-300"
+                      />
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-sm font-medium text-slate-300">Password</label>
+                      <input
+                        type="password"
+                        value={profile.password || ''}
+                        onChange={(e) => setProfile({ ...profile, password: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
+                        placeholder="••••••••"
+                      />
+                    </div>
+
+                    {/* Department */}
+                    <div className="space-y-3">
+                      <label className="text-sm font-medium text-slate-300">Department</label>
+                      <input
+                        type="text"
+                        value={profile.department}
+                        onChange={(e) => setProfile({ ...profile, department: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-4 flex justify-end items-center gap-4">
+                    {isSaved && (
+                      <span className="text-emerald-400 text-sm font-medium animate-pulse">
+                        Settings saved successfully!
+                      </span>
+                    )}
+                    <button
+                      onClick={() => setActiveTab('dashboard')}
+                      className="px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-medium transition-colors border border-slate-700"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSave}
+                      disabled={isSaving}
+                      className="px-6 py-3 bg-sky-500 hover:bg-sky-400 text-black rounded-xl font-semibold transition-colors shadow-lg shadow-sky-500/20 disabled:opacity-50"
+                    >
+                      {isSaving ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
 
 
 
-        </div>
-      </main>
-    </div>
+          </div>
+        </main>
+      </div>
     </>
   );
 };
