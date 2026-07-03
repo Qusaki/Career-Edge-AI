@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowRight, Dumbbell, LoaderCircle, RefreshCw, Sparkles, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Dumbbell, LoaderCircle, RefreshCw, Sparkles, CheckCircle2 } from 'lucide-react';
 
 type DrillSession = {
   id: number;
@@ -69,7 +69,7 @@ const formatPrompt = (prompt: unknown) => {
   }).join('\n');
 };
 
-export function DrillsPage({ apiUrl }: { apiUrl: string }) {
+export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl: string; onSessionModeChange?: (isSessionMode: boolean) => void }) {
   const [sessions, setSessions] = useState<DrillSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState<string | null>(null);
@@ -134,12 +134,20 @@ export function DrillsPage({ apiUrl }: { apiUrl: string }) {
       setActiveSession(session);
       setActivePrompt(formatPrompt(prompt));
       setNotice(`${drill.title} session #${session.id} is ready.`);
+      onSessionModeChange(true);
       await loadSessions();
     } catch (err) {
       setError(err instanceof Error ? err.message : `Unable to start ${drill.title}.`);
     } finally {
       setStarting(null);
     }
+  };
+
+  const quitDrill = () => {
+    setActiveSession(null);
+    setActivePrompt('');
+    setNotice('Drill exited. Mark it complete later to finish it properly.');
+    onSessionModeChange(false);
   };
 
   const completeDrill = async () => {
@@ -167,6 +175,7 @@ export function DrillsPage({ apiUrl }: { apiUrl: string }) {
       setNotice(`Drill session #${completedSession.id} was marked complete.`);
       setActiveSession(null);
       setActivePrompt('');
+      onSessionModeChange(false);
       await loadSessions();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to complete the drill session.');
@@ -174,6 +183,49 @@ export function DrillsPage({ apiUrl }: { apiUrl: string }) {
       setCompleting(null);
     }
   };
+
+  if (activeSession) {
+    return (
+      <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
+        <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <button
+              onClick={quitDrill}
+              className="flex items-center gap-2 rounded-lg border border-line bg-card px-4 py-2 text-sm font-semibold text-muted transition-colors hover:bg-active hover:text-ink"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Quit
+            </button>
+            <button
+              onClick={completeDrill}
+              disabled={completing !== null}
+              className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {completing === activeSession.id ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
+              {completing === activeSession.id ? 'Completing…' : 'Mark Complete'}
+            </button>
+          </div>
+
+          <section className="flex-1 rounded-lg border border-line bg-card p-5">
+            <div className="mb-4">
+              <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-active text-gold-text">
+                <Sparkles className="h-6 w-6" />
+              </div>
+              <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-gold-text">Drill Session</p>
+              <h1 className="text-3xl font-bold tracking-tight text-ink">Current Drill #{activeSession.id}</h1>
+              <p className="mt-1 text-sm font-bold uppercase tracking-wider text-gold-text">
+                {activeSession.drill_level} · {activeSession.drill_type.replace(/_/g, ' ')}
+              </p>
+            </div>
+
+            <pre className="min-h-[55vh] whitespace-pre-wrap rounded-lg border border-line bg-background p-4 font-sans text-base leading-relaxed text-ink">
+              {activePrompt || 'Prompt loaded.'}
+            </pre>
+          </section>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full">

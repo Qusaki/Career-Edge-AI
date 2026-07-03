@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowRight, BookOpen, CheckCircle2, Headphones, LoaderCircle, RefreshCw, Send } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, Headphones, LoaderCircle, RefreshCw, Send } from 'lucide-react';
 
 type Session = {
   id: number;
@@ -78,7 +78,7 @@ const getBasicActiveListeningEvaluation = (messages: ChatMessage[]) => {
   };
 };
 
-export function PreTestPage({ apiUrl }: { apiUrl: string }) {
+export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl: string; onSessionModeChange?: (isSessionMode: boolean) => void }) {
   const [sessions, setSessions] = useState<(Session & { exercise: string })[]>([]);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState<string | null>(null);
@@ -196,6 +196,7 @@ export function PreTestPage({ apiUrl }: { apiUrl: string }) {
       const session: Session = await response.json();
       setActiveExercise(exercise);
       setActiveSession(session);
+      onSessionModeChange(true);
       if (exercise.kind === 'active-listening') {
         connectActiveListeningChat(session);
       } else {
@@ -207,6 +208,20 @@ export function PreTestPage({ apiUrl }: { apiUrl: string }) {
     } finally {
       setStarting(null);
     }
+  };
+
+  const quitSession = () => {
+    wsRef.current?.close(1000);
+    wsRef.current = null;
+    aiMessageOpenRef.current = false;
+    setActiveExercise(null);
+    setActiveSession(null);
+    setIntroTranscript('');
+    setMessages([]);
+    setReply('');
+    setIsAiResponding(false);
+    setNotice('Exercise exited. Complete the exercise later to finish it properly.');
+    onSessionModeChange(false);
   };
 
   const sendReply = () => {
@@ -251,6 +266,7 @@ export function PreTestPage({ apiUrl }: { apiUrl: string }) {
       setMessages([]);
       setIntroTranscript('');
       setNotice(`${activeExercise.title} session #${completedSession.id} completed.`);
+      onSessionModeChange(false);
       await loadSessions();
     } catch (err) {
       setError(err instanceof Error ? err.message : `Unable to complete ${activeExercise.title}.`);
@@ -258,6 +274,101 @@ export function PreTestPage({ apiUrl }: { apiUrl: string }) {
       setCompleting(false);
     }
   };
+
+  if (activeExercise && activeSession) {
+    return (
+      <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
+        <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <button
+              onClick={quitSession}
+              className="flex items-center gap-2 rounded-lg border border-line bg-card px-4 py-2 text-sm font-semibold text-muted transition-colors hover:bg-active hover:text-ink"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Quit
+            </button>
+            <button
+              onClick={completeActiveExercise}
+              disabled={completing || (activeExercise.kind === 'intro' ? !introTranscript.trim() : messages.length === 0)}
+              className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
+              {completing ? 'Completing…' : 'Complete Exercise'}
+            </button>
+          </div>
+
+          <section className="flex-1 rounded-lg border border-line bg-card p-5">
+            <div className="mb-4">
+              <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-gold-text">Pre-Test Session</p>
+              <h1 className="text-3xl font-bold tracking-tight text-ink">{activeExercise.title} #{activeSession.id}</h1>
+              <p className="mt-1 text-sm text-muted">
+                {activeExercise.kind === 'intro'
+                  ? 'Introduce yourself clearly, completely, and concisely.'
+                  : 'Listen first, then summarize the story or instructions accurately.'}
+              </p>
+            </div>
+
+            {activeExercise.kind === 'intro' ? (
+              <div>
+                <div className="rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
+                  <p className="font-bold text-gold-text">Prompt</p>
+                  <p className="mt-1">
+                    Please introduce yourself. Include your name, course or department, interests, strengths, and why you are preparing for interviews.
+                  </p>
+                </div>
+                <textarea
+                  value={introTranscript}
+                  onChange={event => setIntroTranscript(event.target.value)}
+                  placeholder="Type or paste your self-introduction here…"
+                  className="mt-4 min-h-[45vh] w-full resize-none rounded-lg border border-line bg-background px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+                />
+              </div>
+            ) : (
+              <>
+                <div className="h-[58vh] overflow-y-auto rounded-lg border border-line bg-background p-4">
+                  {messages.length === 0 ? (
+                    <div className="flex h-full items-center justify-center gap-2 text-muted">
+                      <LoaderCircle className="h-5 w-5 animate-spin" /> Waiting for Professor Maxiel…
+                    </div>
+                  ) : messages.map((message, index) => (
+                    <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'bg-accent text-accent-ink' : 'border border-line bg-card text-ink'}`}>
+                        <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Professor Maxiel'}</p>
+                        {message.text}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-4 flex gap-2">
+                  <textarea
+                    value={reply}
+                    onChange={event => setReply(event.target.value)}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault();
+                        sendReply();
+                      }
+                    }}
+                    disabled={isAiResponding}
+                    placeholder={isAiResponding ? 'Professor Maxiel is responding…' : 'Type your summary or answer…'}
+                    className="min-h-12 flex-1 resize-none rounded-lg border border-line bg-background px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:opacity-60"
+                  />
+                  <button
+                    onClick={sendReply}
+                    disabled={!reply.trim() || isAiResponding}
+                    className="flex items-center justify-center rounded-lg bg-accent px-4 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Send className="h-5 w-5" />
+                  </button>
+                </div>
+              </>
+            )}
+          </section>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full">

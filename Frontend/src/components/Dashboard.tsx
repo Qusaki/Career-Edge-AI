@@ -67,6 +67,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     if (window.location.pathname === '/post-test') return 'post-test';
     return 'dashboard';
   });
+  const [isModuleSessionMode, setIsModuleSessionMode] = useState(false);
   const [prevTab, setPrevTab] = useState<string>('dashboard');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [selectedCompanyType, setSelectedCompanyType] = useState('');
@@ -1584,7 +1585,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
       )}
       <div className="dashboard-shell min-h-screen bg-page text-ink flex overflow-hidden">
         {/* Sidebar */}
-        {activeTab !== 'interview-type' && activeTab !== 'university-setup' && activeTab !== 'new-interview' && activeTab !== 'interview-session' && activeTab !== 'thesis-setup' && activeTab !== 'thesis-session' && (
+        {!isModuleSessionMode && activeTab !== 'interview-type' && activeTab !== 'university-setup' && activeTab !== 'new-interview' && activeTab !== 'interview-session' && activeTab !== 'thesis-setup' && activeTab !== 'thesis-session' && (
           <aside className="w-72 bg-card border-r border-line flex flex-col h-screen shrink-0">
             {/* Logo Area */}
             <div className="h-16 px-3 border-b border-line flex items-center shrink-0">
@@ -1713,7 +1714,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
         <main className="min-w-0 flex-1 flex flex-col h-screen overflow-hidden">
           {/* Scrollable Content */}
           <div
-            className="flex-1 overflow-y-auto px-4 pb-3 pt-6 sm:px-8 md:pb-4 md:pt-8 lg:px-10"
+            className={isModuleSessionMode ? "flex-1 overflow-y-auto bg-page" : "flex-1 overflow-y-auto px-4 pb-3 pt-6 sm:px-8 md:pb-4 md:pt-8 lg:px-10"}
             style={activeTab === 'interview-session' ? { backgroundColor: '#02040a' } : undefined}
           >
 
@@ -1784,11 +1785,11 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
               </div>
             )}
 
-            {activeTab === 'pre-test' && <PreTestPage apiUrl={API_URL} />}
+            {activeTab === 'pre-test' && <PreTestPage apiUrl={API_URL} onSessionModeChange={setIsModuleSessionMode} />}
 
-            {activeTab === 'drills' && <DrillsPage apiUrl={API_URL} />}
+            {activeTab === 'drills' && <DrillsPage apiUrl={API_URL} onSessionModeChange={setIsModuleSessionMode} />}
 
-            {activeTab === 'post-test' && <PostTestPage apiUrl={API_URL} />}
+            {activeTab === 'post-test' && <PostTestPage apiUrl={API_URL} onSessionModeChange={setIsModuleSessionMode} />}
 
             {activeTab === 'interview-type' && (
               <div className="relative h-full">
