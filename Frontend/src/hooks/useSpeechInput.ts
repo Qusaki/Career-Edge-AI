@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 type TranscriptHandler = (transcript: string) => void;
 type ErrorHandler = (message: string) => void;
 
+const MAX_RECOGNITION_RETRIES = 2;
+
 const getSpeechRecognition = () => {
   if (typeof window === 'undefined') return null;
   return (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition || null;
@@ -36,7 +38,7 @@ const getSpeechErrorMessage = (event: any) => {
     case 'audio-capture':
       return 'No microphone was found. Check that your microphone is connected and available.';
     case 'network':
-      return 'Speech recognition needs a working internet connection in this browser. Check your connection and try again.';
+      return 'The browser speech service is unavailable right now. Check your internet connection, then try again in Chrome or Edge.';
     case 'no-speech':
       return 'No speech was detected. Try again and speak clearly after pressing the mic.';
     default:
@@ -47,6 +49,7 @@ const getSpeechErrorMessage = (event: any) => {
 export function useSpeechInput() {
   const recognitionRef = useRef<any>(null);
   const listeningRef = useRef(false);
+  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
 
@@ -54,6 +57,7 @@ export function useSpeechInput() {
     setIsSupported(!getSpeechSupportMessage());
 
     return () => {
+      if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
       if (!recognitionRef.current || !listeningRef.current) return;
       try {
         recognitionRef.current.stop();
@@ -64,6 +68,11 @@ export function useSpeechInput() {
   }, []);
 
   const stopListening = useCallback(() => {
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+
     if (!recognitionRef.current || !listeningRef.current) {
       setIsListening(false);
       listeningRef.current = false;
@@ -89,66 +98,91 @@ export function useSpeechInput() {
 
     stopListening();
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(track => track.stop());
-    } catch (err: any) {
-      const message = err?.name === 'NotAllowedError' || err?.name === 'SecurityError'
-        ? 'Microphone access was blocked. Allow microphone permission for this site, then try again.'
-        : err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError'
-          ? 'No microphone was found. Check that your microphone is connected and available.'
-          : 'Unable to access the microphone. Check browser permissions and try again.';
-      onError?.(message);
-      setIsListening(false);
-      listeningRef.current = false;
-      return false;
-    }
-
     const SpeechRecognition = getSpeechRecognition();
-    const recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.lang = 'en-US';
+    let retryCount = 0;
+    let lastTranscript = '';
+    let deliveredTranscript = false;
 
-    recognition.onstart = () => {
-      listeningRef.current = true;
-      setIsListening(true);
+    const startRecognition = () => {
+      retryTimeoutRef.current = null;
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        listeningRef.current = true;
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event: any) => {
+        const transcript = Array.from(event.results)
+          .slice(event.resultIndex ?? 0)
+          .map((result: any) => result[0]?.transcript || '')
+          .join(' ')
+          .trim();
+
+        if (transcript) lastTranscript = transcript;
+
+        const hasFinalResult = Array.from(event.results)
+          .slice(event.resultIndex ?? 0)
+          .some((result: any) => result.isFinal);
+
+        if (hasFinalResult && lastTranscript) {
+          deliveredTranscript = true;
+          onTranscript(lastTranscript);
+          try {
+            recognition.stop();
+          } catch {
+            // The browser may already be stopping recognition.
+          }
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        if (event?.error === 'network' && retryCount < MAX_RECOGNITION_RETRIES) {
+          retryCount += 1;
+          try {
+            recognition.abort();
+          } catch {
+            // Recognition may already be aborted.
+          }
+          retryTimeoutRef.current = setTimeout(startRecognition, 800);
+          return;
+        }
+
+        listeningRef.current = false;
+        setIsListening(false);
+        onError?.(getSpeechErrorMessage(event));
+      };
+
+      recognition.onend = () => {
+        if (recognitionRef.current === recognition) recognitionRef.current = null;
+        if (retryTimeoutRef.current) return;
+
+        listeningRef.current = false;
+        setIsListening(false);
+        if (!deliveredTranscript && lastTranscript) {
+          deliveredTranscript = true;
+          onTranscript(lastTranscript);
+        }
+      };
+
+      recognitionRef.current = recognition;
+
+      try {
+        recognition.start();
+      } catch {
+        recognitionRef.current = null;
+        listeningRef.current = false;
+        setIsListening(false);
+        onError?.('Unable to start the microphone. Please wait a moment and try again.');
+      }
     };
 
-    recognition.onresult = (event: any) => {
-      const transcript = Array.from(event.results)
-        .slice(event.resultIndex ?? 0)
-        .map((result: any) => result[0]?.transcript || '')
-        .join(' ')
-        .trim();
-
-      if (transcript) onTranscript(transcript);
-    };
-
-    recognition.onerror = (event: any) => {
-      listeningRef.current = false;
-      setIsListening(false);
-      onError?.(getSpeechErrorMessage(event));
-    };
-
-    recognition.onend = () => {
-      listeningRef.current = false;
-      setIsListening(false);
-      if (recognitionRef.current === recognition) recognitionRef.current = null;
-    };
-
-    recognitionRef.current = recognition;
-
-    try {
-      recognition.start();
-      return true;
-    } catch {
-      recognitionRef.current = null;
-      listeningRef.current = false;
-      setIsListening(false);
-      onError?.('Unable to start the microphone. Please wait a moment and try again.');
-      return false;
-    }
+    startRecognition();
+    return true;
   }, [stopListening]);
 
   return { isListening, isSupported, startListening, stopListening };
