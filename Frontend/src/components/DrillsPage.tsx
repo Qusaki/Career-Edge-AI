@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, ArrowRight, Dumbbell, LoaderCircle, RefreshCw, Sparkles, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Dumbbell, LoaderCircle, Mic, MicOff, RefreshCw, Sparkles, CheckCircle2, Send } from 'lucide-react';
+import { useSpeechInput } from '../hooks/useSpeechInput';
 
 type DrillSession = {
   id: number;
@@ -19,7 +20,13 @@ type Drill = {
   description: string;
   drillLevel: string;
   drillType: string;
-  generatorEndpoint: string;
+  generatorEndpoint?: string;
+  isNegotiation?: boolean;
+};
+
+type NegotiationMessage = {
+  sender: 'user' | 'bot';
+  text: string;
 };
 
 const drills: Drill[] = [
@@ -45,11 +52,60 @@ const drills: Drill[] = [
     generatorEndpoint: '/drills/generate/emotion',
   },
   {
+    title: 'Synonym Sprint',
+    description: 'Quickly give alternatives for a word to widen your vocabulary.',
+    drillLevel: 'medium',
+    drillType: 'synonym',
+    generatorEndpoint: '/drills/generate/synonym',
+  },
+  {
+    title: 'Fake Profile Pitch',
+    description: 'Create a short introduction from a generated profile.',
+    drillLevel: 'medium',
+    drillType: 'fake_profile',
+    generatorEndpoint: '/drills/generate/fake-profile',
+  },
+  {
+    title: 'Emoji Story',
+    description: 'Turn random emojis into a coherent spoken story.',
+    drillLevel: 'medium',
+    drillType: 'emoji_story',
+    generatorEndpoint: '/drills/generate/emojis',
+  },
+  {
+    title: 'Taboo Explainer',
+    description: 'Explain a topic clearly without using the banned words.',
+    drillLevel: 'hard',
+    drillType: 'taboo',
+    generatorEndpoint: '/drills/generate/taboo',
+  },
+  {
+    title: 'Elevator Pitch',
+    description: 'Practice a persuasive answer under pressure.',
+    drillLevel: 'hard',
+    drillType: 'elevator_pitch',
+    generatorEndpoint: '/drills/generate/elevator-pitch',
+  },
+  {
+    title: 'Plain-Language Rephrase',
+    description: 'Rewrite complex language into something clear and professional.',
+    drillLevel: 'hard',
+    drillType: 'rephrase',
+    generatorEndpoint: '/drills/generate/rephrase',
+  },
+  {
     title: 'Positive Framing',
     description: 'Turn tense feedback into calm, professional language.',
     drillLevel: 'medium',
     drillType: 'positive_framing',
     generatorEndpoint: '/drills/generate/positive-framing',
+  },
+  {
+    title: 'Salary Negotiation',
+    description: 'Practice responding to a strict offer and negotiating professionally.',
+    drillLevel: 'hard',
+    drillType: 'negotiation',
+    isNegotiation: true,
   },
   {
     title: 'Crisis Response',
@@ -76,8 +132,16 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
   const [completing, setCompleting] = useState<number | null>(null);
   const [activeSession, setActiveSession] = useState<DrillSession | null>(null);
   const [activePrompt, setActivePrompt] = useState('');
+  const [spokenResponse, setSpokenResponse] = useState('');
+  const [negotiationMessages, setNegotiationMessages] = useState<NegotiationMessage[]>([]);
+  const [negotiationReply, setNegotiationReply] = useState('');
+  const [negotiationTurn, setNegotiationTurn] = useState(0);
+  const [currentOffer, setCurrentOffer] = useState(35000);
+  const [negotiationGameOver, setNegotiationGameOver] = useState(false);
+  const [negotiationLoading, setNegotiationLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const { isListening, startListening, stopListening } = useSpeechInput();
 
   const loadSessions = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -105,6 +169,12 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
     setStarting(drill.drillType);
     setError(null);
     setNotice(null);
+    setSpokenResponse('');
+    setNegotiationMessages([]);
+    setNegotiationReply('');
+    setNegotiationTurn(0);
+    setCurrentOffer(35000);
+    setNegotiationGameOver(false);
     try {
       const [sessionResponse, promptResponse] = await Promise.all([
         fetch(`${apiUrl}/drills/start`, {
@@ -118,21 +188,32 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
             drill_type: drill.drillType,
           }),
         }),
-        fetch(`${apiUrl}${drill.generatorEndpoint}`, {
+        drill.generatorEndpoint ? fetch(`${apiUrl}${drill.generatorEndpoint}`, {
           headers: { Authorization: `Bearer ${token}` },
-        }),
+        }) : Promise.resolve(null),
       ]);
 
       if (!sessionResponse.ok) {
         const body = await sessionResponse.json().catch(() => null);
         throw new Error(body?.detail || `Unable to start ${drill.title}.`);
       }
-      if (!promptResponse.ok) throw new Error(`Unable to generate a prompt for ${drill.title}.`);
+      if (promptResponse && !promptResponse.ok) throw new Error(`Unable to generate a prompt for ${drill.title}.`);
 
       const session: DrillSession = await sessionResponse.json();
-      const prompt = await promptResponse.json();
+      const prompt = promptResponse ? await promptResponse.json() : {
+        scenario: 'You are negotiating a starting salary. The employer opens with ₱35,000 and is strict about the budget.',
+        instruction: 'Reply professionally. You can accept, negotiate salary, or ask about benefits.',
+      };
       setActiveSession(session);
       setActivePrompt(formatPrompt(prompt));
+      if (drill.isNegotiation) {
+        setNegotiationMessages([
+          {
+            sender: 'bot',
+            text: 'We can offer ₱35,000 for this role. Given our budget constraint, that is already a competitive starting offer. What do you think?',
+          },
+        ]);
+      }
       setNotice(`${drill.title} session #${session.id} is ready.`);
       onSessionModeChange(true);
       await loadSessions();
@@ -146,8 +227,63 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
   const quitDrill = () => {
     setActiveSession(null);
     setActivePrompt('');
+    setSpokenResponse('');
+    setNegotiationMessages([]);
+    setNegotiationReply('');
+    setNegotiationTurn(0);
+    setCurrentOffer(35000);
+    setNegotiationGameOver(false);
     setNotice('Drill exited. Mark it complete later to finish it properly.');
     onSessionModeChange(false);
+  };
+
+  const sendNegotiationReply = async (spokenText = negotiationReply) => {
+    const text = spokenText.trim();
+    if (!text || negotiationLoading || negotiationGameOver) return;
+
+    setNegotiationLoading(true);
+    setError(null);
+    setNegotiationReply('');
+    setNegotiationMessages(prev => [...prev, { sender: 'user', text }]);
+
+    try {
+      const response = await fetch(`${apiUrl}/drills/hard/negotiation/turn`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_message: text,
+          turn_number: negotiationTurn,
+          current_offer: currentOffer,
+        }),
+      });
+      if (!response.ok) throw new Error('Unable to process negotiation turn.');
+      const data: {
+        response: string;
+        agreement_reached: boolean;
+        new_offer: number;
+        is_game_over: boolean;
+      } = await response.json();
+      setCurrentOffer(data.new_offer);
+      setNegotiationTurn(prev => prev + 1);
+      setNegotiationGameOver(data.is_game_over);
+      setNegotiationMessages(prev => [...prev, { sender: 'bot', text: data.response }]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to process negotiation turn.');
+    } finally {
+      setNegotiationLoading(false);
+    }
+  };
+
+  const recordDrillResponse = () => {
+    setError(null);
+    startListening(transcript => {
+      setSpokenResponse(prev => [prev, transcript].filter(Boolean).join(' ').trim());
+    }, setError);
+  };
+
+  const recordNegotiationReply = () => {
+    setError(null);
+    startListening(transcript => sendNegotiationReply(transcript), setError);
   };
 
   const completeDrill = async () => {
@@ -164,7 +300,12 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          evaluation_data: activePrompt ? { prompt: activePrompt } : undefined,
+          evaluation_data: {
+            prompt: activePrompt,
+            spoken_response: spokenResponse || undefined,
+            negotiation_messages: negotiationMessages.length > 0 ? negotiationMessages : undefined,
+            current_offer: negotiationMessages.length > 0 ? currentOffer : undefined,
+          },
         }),
       });
       if (!response.ok) {
@@ -175,6 +316,12 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
       setNotice(`Drill session #${completedSession.id} was marked complete.`);
       setActiveSession(null);
       setActivePrompt('');
+      setSpokenResponse('');
+      setNegotiationMessages([]);
+      setNegotiationReply('');
+      setNegotiationTurn(0);
+      setCurrentOffer(35000);
+      setNegotiationGameOver(false);
       onSessionModeChange(false);
       await loadSessions();
     } catch (err) {
@@ -198,7 +345,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
             </button>
             <button
               onClick={completeDrill}
-              disabled={completing !== null}
+              disabled={completing !== null || (activeSession.drill_type === 'negotiation' ? !negotiationMessages.some(message => message.sender === 'user') : !spokenResponse.trim())}
               className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing === activeSession.id ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
@@ -218,9 +365,66 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
               </p>
             </div>
 
-            <pre className="min-h-[55vh] whitespace-pre-wrap rounded-lg border border-line bg-background p-4 font-sans text-base leading-relaxed text-ink">
-              {activePrompt || 'Prompt loaded.'}
-            </pre>
+            {(error || notice) && (
+              <div className={`mb-4 rounded-lg border p-3 text-sm ${error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-success'}`}>
+                {error || notice}
+              </div>
+            )}
+
+            {activeSession.drill_type === 'negotiation' ? (
+              <>
+                <div className="mb-4 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
+                  <p className="mb-2 font-bold text-gold-text">Scenario</p>
+                  <p className="whitespace-pre-wrap">{activePrompt || 'Prompt loaded.'}</p>
+                </div>
+
+                <div className="h-[44vh] overflow-y-auto rounded-lg border border-line bg-background p-4">
+                  {negotiationMessages.map((message, index) => (
+                    <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'bg-accent text-accent-ink' : 'border border-line bg-card text-ink'}`}>
+                        <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Employer'}</p>
+                        {message.text}
+                      </div>
+                    </div>
+                  ))}
+                  {negotiationLoading && (
+                    <div className="flex items-center gap-2 text-sm text-muted">
+                      <LoaderCircle className="h-4 w-4 animate-spin" /> Employer is responding…
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 flex justify-center">
+                  <button
+                    onClick={isListening ? stopListening : recordNegotiationReply}
+                    disabled={negotiationLoading || negotiationGameOver}
+                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
+                  >
+                    {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                    {isListening ? 'Stop Recording' : negotiationGameOver ? 'Negotiation Ended' : 'Speak Reply'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <pre className="whitespace-pre-wrap rounded-lg border border-line bg-background p-4 font-sans text-base leading-relaxed text-ink">
+                  {activePrompt || 'Prompt loaded.'}
+                </pre>
+                <div className="mt-4 min-h-[28vh] rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
+                  <p className="mb-2 font-bold text-gold-text">Your spoken response</p>
+                  {spokenResponse || <span className="text-muted">Press the mic and answer the drill out loud.</span>}
+                </div>
+                <div className="mt-4 flex justify-center">
+                  <button
+                    onClick={isListening ? stopListening : recordDrillResponse}
+                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
+                  >
+                    {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                    {isListening ? 'Stop Recording' : 'Speak Answer'}
+                  </button>
+                </div>
+              </>
+            )}
           </section>
         </div>
       </div>

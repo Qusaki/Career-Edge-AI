@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, Headphones, LoaderCircle, RefreshCw, Send } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, Headphones, LoaderCircle, Mic, MicOff, RefreshCw, Send } from 'lucide-react';
+import { useSpeechInput } from '../hooks/useSpeechInput';
 
 type Session = {
   id: number;
@@ -93,6 +94,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
   const [notice, setNotice] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const aiMessageOpenRef = useRef(false);
+  const { isListening, startListening, stopListening } = useSpeechInput();
 
   const loadSessions = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -200,7 +202,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
       if (exercise.kind === 'active-listening') {
         connectActiveListeningChat(session);
       } else {
-        setNotice(`Who Am I? session #${session.id} started. Write or paste your introduction below.`);
+        setNotice(`Who Am I? session #${session.id} started. Use the mic to introduce yourself.`);
       }
       await loadSessions();
     } catch (err) {
@@ -224,13 +226,24 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
     onSessionModeChange(false);
   };
 
-  const sendReply = () => {
-    const text = reply.trim();
+  const sendReply = (spokenText = reply) => {
+    const text = spokenText.trim();
     if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || isAiResponding) return;
     aiMessageOpenRef.current = false;
     setMessages(prev => [...prev, { sender: 'user', text }]);
     wsRef.current.send(JSON.stringify({ text }));
-    setReply('');
+  };
+
+  const recordIntro = () => {
+    setError(null);
+    startListening(transcript => {
+      setIntroTranscript(prev => [prev, transcript].filter(Boolean).join(' ').trim());
+    }, setError);
+  };
+
+  const recordAndSendReply = () => {
+    setError(null);
+    startListening(transcript => sendReply(transcript), setError);
   };
 
   const completeActiveExercise = async () => {
@@ -308,6 +321,12 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
               </p>
             </div>
 
+            {(error || notice) && (
+              <div className={`mb-4 rounded-lg border p-3 text-sm ${error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-success'}`}>
+                {error || notice}
+              </div>
+            )}
+
             {activeExercise.kind === 'intro' ? (
               <div>
                 <div className="rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
@@ -316,12 +335,18 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                     Please introduce yourself. Include your name, course or department, interests, strengths, and why you are preparing for interviews.
                   </p>
                 </div>
-                <textarea
-                  value={introTranscript}
-                  onChange={event => setIntroTranscript(event.target.value)}
-                  placeholder="Type or paste your self-introduction here…"
-                  className="mt-4 min-h-[45vh] w-full resize-none rounded-lg border border-line bg-background px-3 py-2 text-sm text-ink outline-none focus:border-accent"
-                />
+                <div className="mt-4 min-h-[35vh] rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
+                  {introTranscript || <span className="text-muted">Press the mic and speak your self-introduction.</span>}
+                </div>
+                <div className="mt-4 flex justify-center">
+                  <button
+                    onClick={isListening ? stopListening : recordIntro}
+                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
+                  >
+                    {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                    {isListening ? 'Stop Recording' : 'Speak Answer'}
+                  </button>
+                </div>
               </div>
             ) : (
               <>
@@ -340,26 +365,14 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                   ))}
                 </div>
 
-                <div className="mt-4 flex gap-2">
-                  <textarea
-                    value={reply}
-                    onChange={event => setReply(event.target.value)}
-                    onKeyDown={event => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault();
-                        sendReply();
-                      }
-                    }}
-                    disabled={isAiResponding}
-                    placeholder={isAiResponding ? 'Professor Maxiel is responding…' : 'Type your summary or answer…'}
-                    className="min-h-12 flex-1 resize-none rounded-lg border border-line bg-background px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:opacity-60"
-                  />
+                <div className="mt-4 flex justify-center">
                   <button
-                    onClick={sendReply}
-                    disabled={!reply.trim() || isAiResponding}
-                    className="flex items-center justify-center rounded-lg bg-accent px-4 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={isListening ? stopListening : recordAndSendReply}
+                    disabled={isAiResponding}
+                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
                   >
-                    <Send className="h-5 w-5" />
+                    {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                    {isListening ? 'Stop Recording' : 'Speak Answer'}
                   </button>
                 </div>
               </>
@@ -454,7 +467,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                   className="min-h-12 flex-1 resize-none rounded-lg border border-line bg-background px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:opacity-60"
                 />
                 <button
-                  onClick={sendReply}
+                  onClick={() => sendReply()}
                   disabled={!reply.trim() || isAiResponding}
                   className="flex items-center justify-center rounded-lg bg-accent px-4 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
                 >

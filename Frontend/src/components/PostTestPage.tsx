@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, LoaderCircle, RefreshCw, Send } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, LoaderCircle, Mic, MicOff, RefreshCw, Send } from 'lucide-react';
+import { useSpeechInput } from '../hooks/useSpeechInput';
 
 type Session = {
   id: number;
@@ -50,6 +51,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
   const [notice, setNotice] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const aiMessageOpenRef = useRef(false);
+  const { isListening, startListening, stopListening } = useSpeechInput();
 
   const loadSessions = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -166,13 +168,18 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
     onSessionModeChange(false);
   };
 
-  const sendReply = () => {
-    const text = reply.trim();
+  const sendReply = (spokenText = reply) => {
+    const text = spokenText.trim();
     if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || isAiResponding) return;
     aiMessageOpenRef.current = false;
     setMessages(prev => [...prev, { sender: 'user', text }]);
     wsRef.current.send(JSON.stringify({ text }));
     setReply('');
+  };
+
+  const recordAndSendReply = () => {
+    setError(null);
+    startListening(transcript => sendReply(transcript), setError);
   };
 
   const completePostTest = async () => {
@@ -240,6 +247,12 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
               <p className="mt-1 text-sm text-muted">Answer Professor Maxiel one question at a time.</p>
             </div>
 
+            {(error || notice) && (
+              <div className={`mb-4 rounded-lg border p-3 text-sm ${error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-success'}`}>
+                {error || notice}
+              </div>
+            )}
+
             <div className="h-[58vh] overflow-y-auto rounded-lg border border-line bg-background p-4">
               {messages.length === 0 ? (
                 <div className="flex h-full items-center justify-center gap-2 text-muted">
@@ -255,26 +268,14 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
               ))}
             </div>
 
-            <div className="mt-4 flex gap-2">
-              <textarea
-                value={reply}
-                onChange={event => setReply(event.target.value)}
-                onKeyDown={event => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault();
-                    sendReply();
-                  }
-                }}
-                disabled={isAiResponding}
-                placeholder={isAiResponding ? 'Professor Maxiel is responding…' : 'Type your answer…'}
-                className="min-h-12 flex-1 resize-none rounded-lg border border-line bg-background px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:opacity-60"
-              />
+            <div className="mt-4 flex justify-center">
               <button
-                onClick={sendReply}
-                disabled={!reply.trim() || isAiResponding}
-                className="flex items-center justify-center rounded-lg bg-accent px-4 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={isListening ? stopListening : recordAndSendReply}
+                disabled={isAiResponding}
+                className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
               >
-                <Send className="h-5 w-5" />
+                {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                {isListening ? 'Stop Recording' : 'Speak Answer'}
               </button>
             </div>
           </section>
@@ -346,7 +347,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
               className="min-h-12 flex-1 resize-none rounded-lg border border-line bg-background px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:opacity-60"
             />
             <button
-              onClick={sendReply}
+              onClick={() => sendReply()}
               disabled={!reply.trim() || isAiResponding}
               className="flex items-center justify-center rounded-lg bg-accent px-4 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
             >
