@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, ArrowRight, Dumbbell, LoaderCircle, Mic, MicOff, RefreshCw, Sparkles, CheckCircle2, Send } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Dumbbell, LoaderCircle, Mic, MicOff, RefreshCw, Sparkles, CheckCircle2 } from 'lucide-react';
 import { useSpeechInput } from '../hooks/useSpeechInput';
+import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 
 type DrillSession = {
   id: number;
@@ -139,9 +140,23 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
   const [currentOffer, setCurrentOffer] = useState(35000);
   const [negotiationGameOver, setNegotiationGameOver] = useState(false);
   const [negotiationLoading, setNegotiationLoading] = useState(false);
+  const [isVoiceSpeaking, setIsVoiceSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const { isListening, startListening, stopListening } = useSpeechInput();
+
+  const speakText = useCallback((text: string) => {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.94;
+    utterance.pitch = 1;
+    utterance.onstart = () => setIsVoiceSpeaking(true);
+    utterance.onend = () => setIsVoiceSpeaking(false);
+    utterance.onerror = () => setIsVoiceSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+  }, []);
 
   const loadSessions = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -204,15 +219,20 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
         scenario: 'You are negotiating a starting salary. The employer opens with ₱35,000 and is strict about the budget.',
         instruction: 'Reply professionally. You can accept, negotiate salary, or ask about benefits.',
       };
+      const formattedPrompt = formatPrompt(prompt);
       setActiveSession(session);
-      setActivePrompt(formatPrompt(prompt));
+      setActivePrompt(formattedPrompt);
       if (drill.isNegotiation) {
+        const openingOffer = 'We can offer ₱35,000 for this role. Given our budget constraint, that is already a competitive starting offer. What do you think?';
         setNegotiationMessages([
           {
             sender: 'bot',
-            text: 'We can offer ₱35,000 for this role. Given our budget constraint, that is already a competitive starting offer. What do you think?',
+            text: openingOffer,
           },
         ]);
+        speakText(openingOffer);
+      } else {
+        speakText(formattedPrompt);
       }
       setNotice(`${drill.title} session #${session.id} is ready.`);
       onSessionModeChange(true);
@@ -225,6 +245,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
   };
 
   const quitDrill = () => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
     setActiveSession(null);
     setActivePrompt('');
     setSpokenResponse('');
@@ -233,6 +254,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
     setNegotiationTurn(0);
     setCurrentOffer(35000);
     setNegotiationGameOver(false);
+    setIsVoiceSpeaking(false);
     setNotice('Drill exited. Mark it complete later to finish it properly.');
     onSessionModeChange(false);
   };
@@ -267,6 +289,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
       setNegotiationTurn(prev => prev + 1);
       setNegotiationGameOver(data.is_game_over);
       setNegotiationMessages(prev => [...prev, { sender: 'bot', text: data.response }]);
+      speakText(data.response);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to process negotiation turn.');
     } finally {
@@ -371,9 +394,14 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
               </div>
             )}
 
+            <SoundWaveInterviewer
+              active={isVoiceSpeaking || negotiationLoading}
+              label={isVoiceSpeaking ? 'Speaking...' : negotiationLoading ? 'Preparing reply...' : 'Audio prompt ready'}
+            />
+
             {activeSession.drill_type === 'negotiation' ? (
               <>
-                <div className="mb-4 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
+                <div className="mb-4 mt-4 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
                   <p className="mb-2 font-bold text-gold-text">Scenario</p>
                   <p className="whitespace-pre-wrap">{activePrompt || 'Prompt loaded.'}</p>
                 </div>

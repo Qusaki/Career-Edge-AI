@@ -1,4 +1,3 @@
-import os
 import json
 import datetime
 from typing import List
@@ -6,10 +5,9 @@ from typing import List
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, status
 # pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
-# pyrefly: ignore [missing-import]
-from openai import AsyncOpenAI
 
 from database import get_db
+from core.ai import close_ai_unavailable, get_ollama_client, get_ollama_model
 from core.deps import get_current_user, get_current_user_ws
 from models.user import User
 from models.pre_test_active_listening import PreTestActiveListeningSession, PreTestActiveListeningMessage
@@ -23,11 +21,24 @@ Your goal is to test the student's active listening skills.
 
 CRITICAL INSTRUCTION: You MUST speak DIRECTLY to the student. DO NOT narrate your actions. DO NOT output thoughts.
 
-1. START BY: Sharing a detailed 2 to 3-minute long story or a set of complex instructions. Make it engaging but detailed enough to test their listening comprehension.
-2. STOP AND WAIT for the student to reply. The student will summarize what they heard.
-3. AFTER the student summarizes, provide constructive feedback on the accuracy of their summary. Did they miss any key details? Were they concise?
-4. Conclude the exercise gracefully after your feedback and instruct them to click 'Complete Exercise'.
+The backend sends the listening story first. After the student summarizes it, provide constructive feedback on the accuracy of their summary. Mention key details they captured, key details they missed, and whether the summary was concise. Conclude gracefully and instruct them to click 'Complete Exercise'.
 """
+
+ACTIVE_LISTENING_PROMPTS = [
+    """
+Listen carefully to this workplace update. On Monday morning, the admissions team received a request to prepare orientation kits for one hundred twenty incoming students. The printed schedules were ready, but the campus maps still had the old library entrance marked, so Mara asked Luis to update the maps before lunch. At two o'clock, the team discovered that thirty scholarship forms were missing signatures from the finance office. Instead of delaying all the kits, they placed a yellow note on those thirty folders and packed the remaining ninety. By four thirty, the updated maps arrived, but only eighty reusable water bottles had been delivered. Mara decided that students from the first two orientation groups would receive bottles immediately, while the rest would pick theirs up the next day at the guidance desk. Now summarize the key details, especially the numbers, times, people, and decisions.
+""".strip(),
+    """
+Please listen to these event instructions. A student leadership workshop will begin at eight thirty in the multimedia hall, but participants must arrive by eight fifteen for attendance and seat assignments. Each group should bring one laptop, two printed copies of their action plan, and a backup copy saved on a flash drive. The morning session focuses on problem identification, the lunch break is from twelve to one, and the afternoon session is for presentation practice. If the projector in the multimedia hall is still unavailable, the workshop will move to Room 204, but registration will remain near the main lobby. After the final presentation, group leaders must submit the attendance sheet and revised action plan to Ms. Reyes before leaving. Summarize the schedule, materials, backup location, and final requirements.
+""".strip(),
+    """
+Here is a short story to summarize. During the community reading program, Jonah volunteered to manage book donations while Aira handled student registration. They expected fifty pupils, but seventy-two arrived because a nearby school joined at the last minute. The team had enough storybooks, but only forty-eight activity sheets, so Jonah photocopied twenty-five more while Aira divided the pupils into six smaller groups. The guest reader was delayed by heavy rain, so the volunteers started with a vocabulary game and moved the storytelling activity after the snack break. By the end of the program, every pupil received a book, but only the first sixty received certificates because the printer ran out of ink. Please summarize the important events, problems, numbers, and solutions.
+""".strip(),
+]
+
+
+def get_active_listening_prompt(session_id: int) -> str:
+    return ACTIVE_LISTENING_PROMPTS[session_id % len(ACTIVE_LISTENING_PROMPTS)]
 
 @router.post("/start", response_model=PreTestActiveListeningSessionResponse)
 def start_session(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -70,8 +81,8 @@ async def active_listening_chat_ws(
 
     await websocket.accept()
     
-    client = AsyncOpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
-    model_name = os.getenv("OLLAMA_MODEL", "llama3.2")
+    client = get_ollama_client()
+    model_name = get_ollama_model()
     
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     
@@ -84,9 +95,12 @@ async def active_listening_chat_ws(
                     if data.get("text"):
                         user_text = data["text"]
                         
-                        # Handle hidden trigger message from frontend to make AI speak first
                         if user_text.strip() == "/start_exercise":
-                            user_text = "I am ready. Please share the story or instructions."
+                            prompt = get_active_listening_prompt(session.id)
+                            messages.append({"role": "assistant", "content": prompt})
+                            await websocket.send_json({"text": prompt})
+                            await websocket.send_json({"type": "turn_complete"})
+                            continue
                             
                         messages.append({"role": "user", "content": user_text})
                         
@@ -121,7 +135,9 @@ async def active_listening_chat_ws(
                         await websocket.send_json({"type": "turn_complete"})
                         
                 except Exception as e:
-                    print(f"[DEBUG] Error handling text message: {e}")
+                    print(f"[DEBUG] Active Listening AI error: {e}")
+                    await close_ai_unavailable(websocket)
+                    return
     except WebSocketDisconnect:
         pass
     except Exception as e:

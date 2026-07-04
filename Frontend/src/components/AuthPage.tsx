@@ -27,7 +27,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
   const [showPassword, setShowPassword] = useState(false);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://13.212.244.55';
+  const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

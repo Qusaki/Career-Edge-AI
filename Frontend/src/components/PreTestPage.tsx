@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, Headphones, LoaderCircle, Mic, MicOff, RefreshCw, Send } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, Headphones, LoaderCircle, Mic, MicOff, RefreshCw } from 'lucide-react';
 import { useSpeechInput } from '../hooks/useSpeechInput';
+import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 
 type Session = {
   id: number;
@@ -48,6 +49,8 @@ const getWebSocketUrl = (apiUrl: string, path: string, token: string) => {
   return url.toString();
 };
 
+const ACTIVE_LISTENING_FIRST_TOKEN_TIMEOUT_MS = 180000;
+
 const getBasicIntroEvaluation = (transcript: string) => {
   const wordCount = transcript.trim().split(/\s+/).filter(Boolean).length;
   const score = wordCount >= 60 ? 3 : wordCount >= 30 ? 2 : 1;
@@ -90,10 +93,13 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [reply, setReply] = useState('');
   const [isAiResponding, setIsAiResponding] = useState(false);
+  const [isVoiceSpeaking, setIsVoiceSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const aiMessageOpenRef = useRef(false);
+  const aiSpeechBufferRef = useRef('');
+  const activeListeningTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { isListening, startListening, stopListening } = useSpeechInput();
 
   const loadSessions = useCallback(async () => {
@@ -122,7 +128,29 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
 
-  useEffect(() => () => wsRef.current?.close(), []);
+  useEffect(() => () => {
+    if (activeListeningTimeoutRef.current) clearTimeout(activeListeningTimeoutRef.current);
+    wsRef.current?.close();
+  }, []);
+
+  const clearActiveListeningTimeout = () => {
+    if (!activeListeningTimeoutRef.current) return;
+    clearTimeout(activeListeningTimeoutRef.current);
+    activeListeningTimeoutRef.current = null;
+  };
+
+  const speakText = useCallback((text: string) => {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.94;
+    utterance.pitch = 1;
+    utterance.onstart = () => setIsVoiceSpeaking(true);
+    utterance.onend = () => setIsVoiceSpeaking(false);
+    utterance.onerror = () => setIsVoiceSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+  }, []);
 
   const connectActiveListeningChat = (session: Session) => {
     const token = localStorage.getItem('token');
@@ -130,24 +158,48 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
 
     wsRef.current?.close();
     aiMessageOpenRef.current = false;
+    aiSpeechBufferRef.current = '';
     const socket = new WebSocket(getWebSocketUrl(apiUrl, `/pre-test-active-listening/${session.id}/chat`, token));
     wsRef.current = socket;
 
     socket.onopen = () => {
       setNotice(`Active Listening session #${session.id} started. Listen to the story, then summarize it.`);
+      setIsAiResponding(true);
       socket.send(JSON.stringify({ text: '/start_exercise' }));
+      clearActiveListeningTimeout();
+      activeListeningTimeoutRef.current = setTimeout(() => {
+        aiMessageOpenRef.current = false;
+        aiSpeechBufferRef.current = '';
+        setIsAiResponding(false);
+        setError('The active listening prompt is taking too long to start. Ollama is reachable, but the local model may still be loading or generating slowly. Please try again.');
+        if (socket.readyState === WebSocket.OPEN) socket.close(1000);
+      }, ACTIVE_LISTENING_FIRST_TOKEN_TIMEOUT_MS);
     };
 
     socket.onmessage = event => {
       const data = JSON.parse(event.data);
       if (data.type === 'turn_complete') {
+        clearActiveListeningTimeout();
         aiMessageOpenRef.current = false;
         setIsAiResponding(false);
+        if (aiSpeechBufferRef.current.trim()) speakText(aiSpeechBufferRef.current.trim());
+        aiSpeechBufferRef.current = '';
+        return;
+      }
+
+      if (data.type === 'error') {
+        clearActiveListeningTimeout();
+        setError(data.message || 'The audio interviewer could not respond. Check that the backend service is running.');
+        aiMessageOpenRef.current = false;
+        setIsAiResponding(false);
+        aiSpeechBufferRef.current = '';
         return;
       }
 
       if (data.text) {
+        clearActiveListeningTimeout();
         setIsAiResponding(true);
+        aiSpeechBufferRef.current += data.text;
         setMessages(prev => {
           if (aiMessageOpenRef.current && prev[prev.length - 1]?.sender === 'ai') {
             return prev.map((message, index) =>
@@ -161,15 +213,19 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
     };
 
     socket.onerror = () => {
-      setError('The active listening chat connection failed. Check that the backend and Ollama service are running.');
+      clearActiveListeningTimeout();
+      setError('The active listening connection failed. Check that the backend and Ollama service are running.');
       setIsAiResponding(false);
+      aiSpeechBufferRef.current = '';
     };
 
     socket.onclose = event => {
+      clearActiveListeningTimeout();
       aiMessageOpenRef.current = false;
       setIsAiResponding(false);
-      if (event.code !== 1000 && activeSession?.status !== 'completed') {
-        setError(event.reason || 'The active listening chat connection closed unexpectedly.');
+      aiSpeechBufferRef.current = '';
+      if (event.code !== 1000) {
+        setError(event.reason || 'The active listening connection closed unexpectedly.');
       }
     };
   };
@@ -213,23 +269,29 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
   };
 
   const quitSession = () => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
+    clearActiveListeningTimeout();
     wsRef.current?.close(1000);
     wsRef.current = null;
     aiMessageOpenRef.current = false;
+    aiSpeechBufferRef.current = '';
     setActiveExercise(null);
     setActiveSession(null);
     setIntroTranscript('');
     setMessages([]);
     setReply('');
     setIsAiResponding(false);
+    setIsVoiceSpeaking(false);
     setNotice('Exercise exited. Complete the exercise later to finish it properly.');
     onSessionModeChange(false);
   };
 
   const sendReply = (spokenText = reply) => {
     const text = spokenText.trim();
-    if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || isAiResponding) return;
+    if (!text || isAiResponding) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     aiMessageOpenRef.current = false;
+    aiSpeechBufferRef.current = '';
     setMessages(prev => [...prev, { sender: 'user', text }]);
     wsRef.current.send(JSON.stringify({ text }));
   };
@@ -302,7 +364,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
             </button>
             <button
               onClick={completeActiveExercise}
-              disabled={completing || (activeExercise.kind === 'intro' ? !introTranscript.trim() : messages.length === 0)}
+              disabled={completing || (activeExercise.kind === 'intro' ? !introTranscript.trim() : !messages.some(message => message.sender === 'user'))}
               className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
@@ -350,15 +412,23 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
               </div>
             ) : (
               <>
+                <SoundWaveInterviewer
+                  active={isVoiceSpeaking || isAiResponding}
+                  label={isVoiceSpeaking ? 'Speaking...' : isAiResponding ? 'Preparing prompt...' : 'Audio interviewer ready'}
+                />
                 <div className="h-[58vh] overflow-y-auto rounded-lg border border-line bg-background p-4">
-                  {messages.length === 0 ? (
+                  {messages.length === 0 && error ? (
+                    <div className="flex h-full items-center justify-center text-center text-sm leading-relaxed text-rose-700">
+                      {error}
+                    </div>
+                  ) : messages.length === 0 ? (
                     <div className="flex h-full items-center justify-center gap-2 text-muted">
-                      <LoaderCircle className="h-5 w-5 animate-spin" /> Waiting for Professor Maxiel…
+                      <LoaderCircle className="h-5 w-5 animate-spin" /> Preparing audio prompt...
                     </div>
                   ) : messages.map((message, index) => (
                     <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                       <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'bg-accent text-accent-ink' : 'border border-line bg-card text-ink'}`}>
-                        <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Professor Maxiel'}</p>
+                        <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Audio Interviewer'}</p>
                         {message.text}
                       </div>
                     </div>
@@ -412,7 +482,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
             </div>
             <button
               onClick={completeActiveExercise}
-              disabled={completing || (activeExercise.kind === 'intro' ? !introTranscript.trim() : messages.length === 0)}
+              disabled={completing || (activeExercise.kind === 'intro' ? !introTranscript.trim() : !messages.some(message => message.sender === 'user'))}
               className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
@@ -428,50 +498,48 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                   Please introduce yourself. Include your name, course or department, interests, strengths, and why you are preparing for interviews.
                 </p>
               </div>
-              <textarea
-                value={introTranscript}
-                onChange={event => setIntroTranscript(event.target.value)}
-                placeholder="Type or paste your self-introduction here…"
-                className="mt-4 min-h-48 w-full resize-none rounded-lg border border-line bg-background px-3 py-2 text-sm text-ink outline-none focus:border-accent"
-              />
+              <div className="mt-4 min-h-48 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
+                {introTranscript || <span className="text-muted">Press the mic and speak your self-introduction.</span>}
+              </div>
+              <div className="mt-4 flex justify-center">
+                <button
+                  onClick={isListening ? stopListening : recordIntro}
+                  className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
+                >
+                  {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                  {isListening ? 'Stop Recording' : 'Speak Answer'}
+                </button>
+              </div>
             </div>
           ) : (
             <>
               <div className="h-96 overflow-y-auto rounded-lg border border-line bg-background p-4">
-                {messages.length === 0 ? (
+                {messages.length === 0 && error ? (
+                  <div className="flex h-full items-center justify-center text-center text-sm leading-relaxed text-rose-700">
+                    {error}
+                  </div>
+                ) : messages.length === 0 ? (
                   <div className="flex h-full items-center justify-center gap-2 text-muted">
-                    <LoaderCircle className="h-5 w-5 animate-spin" /> Waiting for Professor Maxiel…
+                    <LoaderCircle className="h-5 w-5 animate-spin" /> Preparing audio prompt...
                   </div>
                 ) : messages.map((message, index) => (
                   <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'bg-accent text-accent-ink' : 'border border-line bg-card text-ink'}`}>
-                      <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Professor Maxiel'}</p>
+                      <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Audio Interviewer'}</p>
                       {message.text}
                     </div>
                   </div>
                 ))}
               </div>
 
-              <div className="mt-4 flex gap-2">
-                <textarea
-                  value={reply}
-                  onChange={event => setReply(event.target.value)}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault();
-                      sendReply();
-                    }
-                  }}
-                  disabled={isAiResponding}
-                  placeholder={isAiResponding ? 'Professor Maxiel is responding…' : 'Type your summary or answer…'}
-                  className="min-h-12 flex-1 resize-none rounded-lg border border-line bg-background px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:opacity-60"
-                />
+              <div className="mt-4 flex justify-center">
                 <button
-                  onClick={() => sendReply()}
-                  disabled={!reply.trim() || isAiResponding}
-                  className="flex items-center justify-center rounded-lg bg-accent px-4 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={isListening ? stopListening : recordAndSendReply}
+                  disabled={isAiResponding}
+                  className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
                 >
-                  <Send className="h-5 w-5" />
+                  {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                  {isListening ? 'Stop Recording' : 'Speak Answer'}
                 </button>
               </div>
             </>

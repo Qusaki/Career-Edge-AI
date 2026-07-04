@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, LoaderCircle, Mic, MicOff, RefreshCw, Send } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, LoaderCircle, Mic, MicOff, RefreshCw } from 'lucide-react';
 import { useSpeechInput } from '../hooks/useSpeechInput';
+import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 
 type Session = {
   id: number;
@@ -47,11 +48,26 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [reply, setReply] = useState('');
   const [isAiResponding, setIsAiResponding] = useState(false);
+  const [isVoiceSpeaking, setIsVoiceSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const aiMessageOpenRef = useRef(false);
+  const aiSpeechBufferRef = useRef('');
   const { isListening, startListening, stopListening } = useSpeechInput();
+
+  const speakText = useCallback((text: string) => {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.94;
+    utterance.pitch = 1;
+    utterance.onstart = () => setIsVoiceSpeaking(true);
+    utterance.onend = () => setIsVoiceSpeaking(false);
+    utterance.onerror = () => setIsVoiceSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+  }, []);
 
   const loadSessions = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -81,12 +97,13 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
 
     wsRef.current?.close();
     aiMessageOpenRef.current = false;
+    aiSpeechBufferRef.current = '';
     const socket = new WebSocket(getWebSocketUrl(apiUrl, `/post-test-interview/${session.id}/chat`, token));
     wsRef.current = socket;
 
     socket.onopen = () => {
-      setNotice(`Post-test interview #${session.id} started. Professor Maxiel will begin shortly.`);
-      socket.send(JSON.stringify({ text: 'Hello Professor Maxiel, I am ready to begin the post-test interview.' }));
+      setNotice(`Post-test interview #${session.id} started. The audio interviewer will begin shortly.`);
+      socket.send(JSON.stringify({ text: 'I am ready to begin the post-test interview.' }));
     };
 
     socket.onmessage = event => {
@@ -94,11 +111,22 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
       if (data.type === 'turn_complete') {
         aiMessageOpenRef.current = false;
         setIsAiResponding(false);
+        if (aiSpeechBufferRef.current.trim()) speakText(aiSpeechBufferRef.current.trim());
+        aiSpeechBufferRef.current = '';
+        return;
+      }
+
+      if (data.type === 'error') {
+        setError(data.message || 'The audio interviewer could not respond. Check that the backend service is running.');
+        aiMessageOpenRef.current = false;
+        setIsAiResponding(false);
+        aiSpeechBufferRef.current = '';
         return;
       }
 
       if (data.text) {
         setIsAiResponding(true);
+        aiSpeechBufferRef.current += data.text;
         setMessages(prev => {
           if (aiMessageOpenRef.current && prev[prev.length - 1]?.sender === 'ai') {
             return prev.map((message, index) =>
@@ -114,11 +142,13 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
     socket.onerror = () => {
       setError('The post-test chat connection failed. Check that the backend and Ollama service are running.');
       setIsAiResponding(false);
+      aiSpeechBufferRef.current = '';
     };
 
     socket.onclose = event => {
       aiMessageOpenRef.current = false;
       setIsAiResponding(false);
+      aiSpeechBufferRef.current = '';
       if (event.code !== 1000 && activeSession?.status !== 'completed') {
         setError(event.reason || 'The post-test chat connection closed unexpectedly.');
       }
@@ -157,13 +187,16 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
   };
 
   const quitPostTest = () => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
     wsRef.current?.close(1000);
     wsRef.current = null;
     aiMessageOpenRef.current = false;
+    aiSpeechBufferRef.current = '';
     setActiveSession(null);
     setMessages([]);
     setReply('');
     setIsAiResponding(false);
+    setIsVoiceSpeaking(false);
     setNotice('Post-test exited. Complete the interview later to finish it properly.');
     onSessionModeChange(false);
   };
@@ -172,6 +205,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
     const text = spokenText.trim();
     if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || isAiResponding) return;
     aiMessageOpenRef.current = false;
+    aiSpeechBufferRef.current = '';
     setMessages(prev => [...prev, { sender: 'user', text }]);
     wsRef.current.send(JSON.stringify({ text }));
     setReply('');
@@ -232,7 +266,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
             </button>
             <button
               onClick={completePostTest}
-              disabled={completing || messages.length === 0}
+              disabled={completing || !messages.some(message => message.sender === 'user')}
               className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
@@ -244,7 +278,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
             <div className="mb-4">
               <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-gold-text">Post-Test Session</p>
               <h1 className="text-3xl font-bold tracking-tight text-ink">Post-Test Interview #{activeSession.id}</h1>
-              <p className="mt-1 text-sm text-muted">Answer Professor Maxiel one question at a time.</p>
+              <p className="mt-1 text-sm text-muted">Answer the audio interviewer one question at a time.</p>
             </div>
 
             {(error || notice) && (
@@ -253,15 +287,20 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
               </div>
             )}
 
-            <div className="h-[58vh] overflow-y-auto rounded-lg border border-line bg-background p-4">
+            <SoundWaveInterviewer
+              active={isVoiceSpeaking || isAiResponding}
+              label={isVoiceSpeaking ? 'Speaking...' : isAiResponding ? 'Preparing question...' : 'Audio interviewer ready'}
+            />
+
+            <div className="mt-4 h-[58vh] overflow-y-auto rounded-lg border border-line bg-background p-4">
               {messages.length === 0 ? (
                 <div className="flex h-full items-center justify-center gap-2 text-muted">
-                  <LoaderCircle className="h-5 w-5 animate-spin" /> Waiting for Professor Maxiel…
+                  <LoaderCircle className="h-5 w-5 animate-spin" /> Preparing audio question...
                 </div>
               ) : messages.map((message, index) => (
                 <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'bg-accent text-accent-ink' : 'border border-line bg-card text-ink'}`}>
-                    <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Professor Maxiel'}</p>
+                    <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Audio Interviewer'}</p>
                     {message.text}
                   </div>
                 </div>
@@ -305,11 +344,11 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
           <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
             <div>
               <h2 className="text-xl font-bold text-ink">Post-Test Interview #{activeSession.id}</h2>
-              <p className="mt-1 text-sm text-muted">Answer Professor Maxiel one question at a time.</p>
+              <p className="mt-1 text-sm text-muted">Answer the audio interviewer one question at a time.</p>
             </div>
             <button
               onClick={completePostTest}
-              disabled={completing || messages.length === 0}
+              disabled={completing || !messages.some(message => message.sender === 'user')}
               className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
@@ -320,38 +359,26 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
           <div className="h-96 overflow-y-auto rounded-lg border border-line bg-background p-4">
             {messages.length === 0 ? (
               <div className="flex h-full items-center justify-center gap-2 text-muted">
-                <LoaderCircle className="h-5 w-5 animate-spin" /> Waiting for Professor Maxiel…
+                <LoaderCircle className="h-5 w-5 animate-spin" /> Preparing audio question...
               </div>
             ) : messages.map((message, index) => (
               <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'bg-accent text-accent-ink' : 'border border-line bg-card text-ink'}`}>
-                  <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Professor Maxiel'}</p>
+                  <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Audio Interviewer'}</p>
                   {message.text}
                 </div>
               </div>
             ))}
           </div>
 
-          <div className="mt-4 flex gap-2">
-            <textarea
-              value={reply}
-              onChange={event => setReply(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault();
-                  sendReply();
-                }
-              }}
-              disabled={isAiResponding}
-              placeholder={isAiResponding ? 'Professor Maxiel is responding…' : 'Type your answer…'}
-              className="min-h-12 flex-1 resize-none rounded-lg border border-line bg-background px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:opacity-60"
-            />
+          <div className="mt-4 flex justify-center">
             <button
-              onClick={() => sendReply()}
-              disabled={!reply.trim() || isAiResponding}
-              className="flex items-center justify-center rounded-lg bg-accent px-4 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={isListening ? stopListening : recordAndSendReply}
+              disabled={isAiResponding}
+              className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
             >
-              <Send className="h-5 w-5" />
+              {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+              {isListening ? 'Stop Recording' : 'Speak Answer'}
             </button>
           </div>
         </section>

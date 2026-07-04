@@ -1,14 +1,12 @@
-import os
 import json
 import datetime
 # pyrefly: ignore [missing-import]
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, status
 # pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
-# pyrefly: ignore [missing-import]
-from openai import AsyncOpenAI
 
 from database import get_db
+from core.ai import close_ai_unavailable, get_ollama_client, get_ollama_model
 from core.deps import get_current_user, get_current_user_ws
 from core.aws import get_abstract_text_from_s3, delete_abstract_from_s3
 from models.user import User
@@ -124,8 +122,8 @@ async def interview_chat_ws(
 
     system_prompt = get_thesis_system_prompt(current_user.department, abstract_text)
     
-    client = AsyncOpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
-    model_name = os.getenv("OLLAMA_MODEL", "llama3.2")
+    client = get_ollama_client()
+    model_name = get_ollama_model()
     
     messages = [{"role": "system", "content": system_prompt}]
     
@@ -171,7 +169,9 @@ async def interview_chat_ws(
                         await websocket.send_json({"type": "turn_complete"})
                         
                 except Exception as e:
-                    print(f"[DEBUG] Error handling text message: {e}")
+                    print(f"[DEBUG] Thesis Interview AI error: {e}")
+                    await close_ai_unavailable(websocket)
+                    return
             elif "bytes" in msg:
                  pass
     except WebSocketDisconnect:

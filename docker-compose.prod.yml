@@ -18,6 +18,10 @@ services:
       # Pass through the API keys from your production server's .env file
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GOOGLE_APPLICATION_CREDENTIALS=/app/backend/google-credentials.json
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # Mounts the credentials file from the EC2 host securely into the container
       - ./backend/google-credentials.json:/app/backend/google-credentials.json:ro
