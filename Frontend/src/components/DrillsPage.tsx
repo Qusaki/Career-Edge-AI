@@ -191,6 +191,30 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
     setCurrentOffer(35000);
     setNegotiationGameOver(false);
     try {
+      const existingResponse = await fetch(`${apiUrl}/drills/`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (existingResponse.ok) {
+        const existingSessions: DrillSession[] = await existingResponse.json();
+        const existingSession = existingSessions
+          .filter(item =>
+            item.status === 'active' &&
+            item.drill_level === drill.drillLevel &&
+            item.drill_type === drill.drillType
+          )
+          .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())[0];
+
+        if (existingSession) {
+          setActiveSession(existingSession);
+          setActivePrompt('Continue this unfinished drill, then mark it complete when you are done.');
+          setNotice(`${drill.title} session #${existingSession.id} is ready.`);
+          onSessionModeChange(true);
+          await loadSessions();
+          return;
+        }
+      }
+
       const [sessionResponse, promptResponse] = await Promise.all([
         fetch(`${apiUrl}/drills/start`, {
           method: 'POST',

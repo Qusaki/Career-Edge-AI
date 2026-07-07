@@ -86,6 +86,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const [interviewResult, setInterviewResult] = useState<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [interviewHistory, setInterviewHistory] = useState<any[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [communicationHistory, setCommunicationHistory] = useState<any[]>([]);
   const [profile, setProfile] = useState({
     name: '',
     email: '',
@@ -114,18 +116,67 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const [thesisInSessionUploading, setThesisInSessionUploading] = useState(false);
   const [thesisAbstractUpdated, setThesisAbstractUpdated] = useState(false);
   const activeInterviewModeRef = React.useRef<'enrollment' | 'thesis' | null>(null);
+  const getNormalizedScore = (item: any) => {
+    if (item.total_score == null && item.score == null) return null;
+    if (item._source === 'pre-test-intro') return Math.round(((item.total_score || 0) / 18) * 100);
+    if (item._source === 'pre-test-active-listening' || item._source === 'post-test-interview') return Math.round(((item.total_score || 0) / 30) * 100);
+    if (item._source === 'drills') return item.score == null ? null : Math.round(item.score);
+    return Math.round(item.total_score || 0);
+  };
+  const communicationSkillCriteria = [
+    {
+      label: 'Vocabulary Usage',
+      description: 'Measures breadth and appropriateness of word choice in context',
+      field: 'score_vocabulary',
+      color: 'bg-sky-500',
+    },
+    {
+      label: 'Clarity of Speech',
+      description: 'Assesses pronunciation accuracy and how clearly words are articulated',
+      field: 'score_clarity',
+      color: 'bg-emerald-500',
+    },
+    {
+      label: 'Eye Contact',
+      description: 'Evaluates the user’s constant eye contact, signaling proper non-verbal gesture.',
+      field: 'score_eye_contact',
+      color: 'bg-indigo-500',
+    },
+    {
+      label: 'Grammar & Sentence Structure',
+      description: 'Assesses correct use of tenses, subject-verb agreement, and sentence construction',
+      field: 'score_grammar',
+      color: 'bg-amber-500',
+    },
+    {
+      label: 'Courtesy',
+      description: 'Assesses the showcase of empathy and proper manners when communicating',
+      field: 'score_courtesy',
+      color: 'bg-rose-500',
+    },
+    {
+      label: 'Conciseness',
+      description: 'Assesses directness and relevance',
+      field: 'score_conciseness',
+      color: 'bg-purple-500',
+    },
+  ];
 
   // Calculate statistics once for reuse
   const stats = (() => {
     // Only count interviews that have been completed with a score > 0
     const scoredEnrollment = interviewHistory.filter(item => (item.total_score || 0) > 0);
     const scoredThesis = thesisHistory.filter(item => (item.total_score || 0) > 0);
-    const totalInterviews = scoredEnrollment.length + scoredThesis.length;
-    const scoredHistory = scoredEnrollment; // Use enrollment for avg and skill breakdown
-    const scoredCount = scoredHistory.length;
+    const moduleHistory = communicationHistory.filter(item => item.status === 'completed' || (item.total_score || item.score || 0) > 0);
+    const allScoredActivities = [...scoredEnrollment, ...scoredThesis, ...moduleHistory]
+      .map(item => getNormalizedScore(item))
+      .filter((score): score is number => score != null && score > 0);
+    const totalInterviews = scoredEnrollment.length + scoredThesis.length + moduleHistory.length;
+    const scoredCommunication = communicationHistory.filter(item => (item.total_score || 0) > 0);
+    const scoredCount = allScoredActivities.length;
 
     const avgScore = scoredCount > 0
-      ? parseFloat((scoredHistory.reduce((acc, curr) => acc + (curr.total_score || 0), 0) / scoredCount).toFixed(2))
+      ? parseFloat((allScoredActivities.reduce((acc, curr) => acc + curr, 0) / scoredCount).toFixed(2))
       : 0;
 
     let performance = "N/A";
@@ -138,41 +189,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       else { performance = "Needs Practice"; perfColor = "text-rose-400"; perfMsg = "Keep practicing!"; }
     }
 
-    // Calculate skill breakdown averages based on scored interviews only
-    const dep = profile.department?.toUpperCase();
-    let skillBreakdown = [];
+    const communicationScoredHistory = scoredCommunication.filter(item =>
+      communicationSkillCriteria.some(criteria => item[criteria.field] != null)
+    );
+    const skillBreakdown = communicationSkillCriteria.map(criteria => {
+      const recordsWithScore = communicationScoredHistory.filter(item => item[criteria.field] != null);
+      const score = recordsWithScore.length > 0
+        ? parseFloat((recordsWithScore.reduce((acc, curr) => acc + (curr[criteria.field] || 0), 0) / recordsWithScore.length).toFixed(1))
+        : 0;
 
-    if (scoredCount > 0) {
-      if (dep === 'CTE') {
-        skillBreakdown = [
-          { label: "Subject Matter", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cte_subject_matter || 0), 0) / scoredCount), color: 'bg-sky-500' },
-          { label: "Teaching Apt.", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cte_teaching || 0), 0) / scoredCount), color: 'bg-emerald-500' },
-          { label: "Motivation", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cte_motivation || 0), 0) / scoredCount), color: 'bg-indigo-500' },
-          { label: "Problem Solving", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cte_problem_solving || 0), 0) / scoredCount), color: 'bg-amber-500' },
-          { label: "Communication", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cte_communication || 0), 0) / scoredCount), color: 'bg-rose-500' },
-        ];
-      } else if (dep === 'CBAPA') {
-        skillBreakdown = [
-          { label: "Business Fund.", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cbapa_business || 0), 0) / scoredCount), color: 'bg-sky-500' },
-          { label: "Analytical", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cbapa_analytical || 0), 0) / scoredCount), color: 'bg-emerald-500' },
-          { label: "Leadership", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cbapa_leadership || 0), 0) / scoredCount), color: 'bg-indigo-500' },
-          { label: "Ethical", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cbapa_ethical || 0), 0) / scoredCount), color: 'bg-amber-500' },
-          { label: "Communication", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_cbapa_communication || 0), 0) / scoredCount), color: 'bg-rose-500' },
-        ];
-      } else {
-        skillBreakdown = [
-          { label: "Technical", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_technical || 0), 0) / scoredCount), color: 'bg-sky-500' },
-          { label: "Problem Solving", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_problem_solving || 0), 0) / scoredCount), color: 'bg-emerald-500' },
-          { label: "Coding Basics", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_coding || 0), 0) / scoredCount), color: 'bg-indigo-500' },
-          { label: "Soft Skills", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_soft_skills || 0), 0) / scoredCount), color: 'bg-amber-500' },
-          { label: "Communication", value: Math.round(scoredHistory.reduce((acc, curr) => acc + (curr.score_communication || 0), 0) / scoredCount), color: 'bg-rose-500' },
-        ];
-      }
-    } else {
-      // Defaults if no history with scores
-      const labels = dep === 'CTE' ? ["Subject Matter", "Teaching Apt.", "Motivation", "Problem Solving", "Communication"] : dep === 'CBAPA' ? ["Business Fund.", "Analytical", "Leadership", "Ethical", "Communication"] : ["Technical", "Problem Solving", "Coding Basics", "Soft Skills", "Communication"];
-      skillBreakdown = labels.map((label, i) => ({ label, value: 0, color: ['bg-sky-500', 'bg-emerald-500', 'bg-indigo-500', 'bg-amber-500', 'bg-rose-500'][i] }));
-    }
+      return {
+        label: criteria.label,
+        description: criteria.description,
+        score,
+        value: Math.round((score / 5) * 100),
+        scale: '1-5 scale',
+        color: criteria.color,
+      };
+    });
 
     return { totalInterviews, avgScore, performance, perfColor, perfMsg, skillBreakdown };
   })();
@@ -180,10 +214,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const renderStatCards = (delay = 0) => (
     <div className="grid w-full grid-cols-1 md:grid-cols-3 gap-2.5">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: delay + 0.1 }} className="bg-card border border-line rounded-lg p-5 flex flex-col justify-between">
-        <h3 className="text-muted font-medium">Total Interviews</h3>
+        <h3 className="text-muted font-medium">Total Activities</h3>
         <div className="mt-2">
           <span className="text-3xl font-bold text-ink">{stats.totalInterviews}</span>
-          <p className="text-sm mt-1 font-medium text-gold-text">Total lifetime</p>
+          <p className="text-sm mt-1 font-medium text-gold-text">Interviews, tests, and drills</p>
         </div>
       </motion.div>
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: delay + 0.2 }} className="bg-card border border-line rounded-lg p-5 flex flex-col justify-between">
@@ -299,6 +333,45 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     }
   }, [API_URL]);
 
+  const fetchCommunicationHistory = React.useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+
+      const [preTestIntroRes, activeListeningRes, postTestRes, drillsRes] = await Promise.all([
+        fetch(`${API_URL}/pre-test-intro/`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        fetch(`${API_URL}/pre-test-active-listening/`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        fetch(`${API_URL}/post-test-interview/`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        fetch(`${API_URL}/drills/`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+      ]);
+
+      const [preTestIntro, activeListening, postTest, drills] = await Promise.all([
+        preTestIntroRes.ok ? preTestIntroRes.json() : Promise.resolve([]),
+        activeListeningRes.ok ? activeListeningRes.json() : Promise.resolve([]),
+        postTestRes.ok ? postTestRes.json() : Promise.resolve([]),
+        drillsRes.ok ? drillsRes.json() : Promise.resolve([]),
+      ]);
+
+      setCommunicationHistory([
+        ...preTestIntro.map((item: any) => ({ ...item, _source: 'pre-test-intro' })),
+        ...activeListening.map((item: any) => ({ ...item, _source: 'pre-test-active-listening' })),
+        ...postTest.map((item: any) => ({ ...item, _source: 'post-test-interview' })),
+        ...drills.map((item: any) => ({ ...item, _source: 'drills' })),
+      ]);
+    } catch (e) {
+      console.warn("Unable to load communication skill history", e);
+      setCommunicationHistory([]);
+    }
+  }, [API_URL]);
+
   useEffect(() => {
     const syncOfflineData = async () => {
       try {
@@ -339,6 +412,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         // Refresh history
         fetchHistory();
         fetchThesisHistory();
+        fetchCommunicationHistory();
       } catch (e) {
         console.error("Sync failed", e);
       }
@@ -410,7 +484,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     fetchUser();
     fetchHistory();
     fetchThesisHistory();
-  }, [API_URL, onLogout, fetchHistory, fetchThesisHistory]);
+    fetchCommunicationHistory();
+  }, [API_URL, onLogout, fetchHistory, fetchThesisHistory, fetchCommunicationHistory]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2670,12 +2745,18 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-xl backdrop-blur-sm">
                     <h3 className="text-xl font-bold text-slate-100 mb-6 italic tracking-tight">Skill Breakdown</h3>
-                    <div className="space-y-6">
+                    <div className="space-y-5">
                       {stats.skillBreakdown.map((skill, idx) => (
-                        <div key={idx} className="space-y-2">
-                          <div className="flex justify-between text-xs font-bold uppercase tracking-wider text-slate-400">
-                            <span>{skill.label}</span>
-                            <span className="text-slate-200">{skill.value}%</span>
+                        <div key={idx} className="space-y-2 rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+                          <div className="flex items-start justify-between gap-4">
+                            <div>
+                              <h4 className="text-sm font-bold text-slate-100">{skill.label}</h4>
+                              <p className="mt-1 text-xs leading-relaxed text-slate-400">{skill.description}</p>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <p className="text-sm font-black text-slate-100">{skill.score}/5</p>
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{skill.scale}</p>
+                            </div>
                           </div>
                           <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
                             <motion.div

@@ -42,7 +42,14 @@ def get_active_listening_prompt(session_id: int) -> str:
 
 @router.post("/start", response_model=PreTestActiveListeningSessionResponse)
 def start_session(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Creates a new 'Active Listening Pairs' session."""
+    """Starts or resumes the active 'Active Listening Pairs' session."""
+    active_session = db.query(PreTestActiveListeningSession).filter(
+        PreTestActiveListeningSession.user_id == current_user.id,
+        PreTestActiveListeningSession.status == "active",
+    ).order_by(PreTestActiveListeningSession.start_time.desc()).first()
+    if active_session:
+        return active_session
+
     session = PreTestActiveListeningSession(user_id=current_user.id)
     db.add(session)
     db.commit()

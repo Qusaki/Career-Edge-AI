@@ -64,10 +64,17 @@ You are evaluating a BS Computer Science (CCIT) Thesis Defense.
 
 @router.post("/start", response_model=ThesisInterviewSessionResponse)
 def start_interview(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Creates a new thesis interview session."""
+    """Starts or resumes the active thesis interview session."""
     if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
         raise HTTPException(status_code=403, detail="Forbidden: This defense simulation is only available to CCIT, CTE, and CBAPA students.")
-        
+
+    active_session = db.query(ThesisInterviewSession).filter(
+        ThesisInterviewSession.user_id == current_user.id,
+        ThesisInterviewSession.status == "active",
+    ).order_by(ThesisInterviewSession.start_time.desc()).first()
+    if active_session:
+        return active_session
+
     session = ThesisInterviewSession(user_id=current_user.id)
     db.add(session)
     db.commit()

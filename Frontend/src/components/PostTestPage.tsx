@@ -163,18 +163,32 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
     setNotice(null);
     setMessages([]);
     try {
-      const response = await fetch(`${apiUrl}/post-test-interview/start`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+      const existingResponse = await fetch(`${apiUrl}/post-test-interview/`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
-      if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.detail || 'Unable to start the post-test interview.');
+      let session: Session | null = null;
+
+      if (existingResponse.ok) {
+        const existingSessions: Session[] = await existingResponse.json();
+        session = existingSessions
+          .filter(item => item.status === 'active')
+          .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())[0] || null;
       }
-      const session: Session = await response.json();
+
+      if (!session) {
+        const response = await fetch(`${apiUrl}/post-test-interview/start`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.detail || 'Unable to start the post-test interview.');
+        }
+        session = await response.json();
+      }
       setActiveSession(session);
       onSessionModeChange(true);
       connectPostTestChat(session);

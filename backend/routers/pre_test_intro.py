@@ -15,7 +15,14 @@ router = APIRouter()
 
 @router.post("/start", response_model=PreTestIntroSessionResponse)
 def start_intro_session(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Creates a new pre-test 'Who Am I?' introduction session."""
+    """Starts or resumes the active pre-test 'Who Am I?' introduction session."""
+    active_session = db.query(PreTestIntroSession).filter(
+        PreTestIntroSession.user_id == current_user.id,
+        PreTestIntroSession.status == "active",
+    ).order_by(PreTestIntroSession.start_time.desc()).first()
+    if active_session:
+        return active_session
+
     session = PreTestIntroSession(user_id=current_user.id)
     db.add(session)
     db.commit()

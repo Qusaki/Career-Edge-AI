@@ -53,10 +53,17 @@ CRITICAL INSTRUCTION: You MUST speak DIRECTLY to the student. DO NOT narrate you
 
 @router.post("/start", response_model=PostTestInterviewSessionResponse)
 def start_session(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Creates a new Post-test Interview session."""
+    """Starts or resumes the active Post-test Interview session."""
     if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
         raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT, CTE, and CBAPA students.")
-        
+
+    active_session = db.query(PostTestInterviewSession).filter(
+        PostTestInterviewSession.user_id == current_user.id,
+        PostTestInterviewSession.status == "active",
+    ).order_by(PostTestInterviewSession.start_time.desc()).first()
+    if active_session:
+        return active_session
+
     session = PostTestInterviewSession(user_id=current_user.id)
     db.add(session)
     db.commit()

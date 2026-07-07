@@ -63,7 +63,14 @@ CRITICAL INSTRUCTION: You MUST speak DIRECTLY to the student. DO NOT narrate you
 
 @router.post("/start", response_model=CustomSkillsSessionResponse)
 def start_session(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Creates a new Custom Skills AI session."""
+    """Starts or resumes the active Custom Skills AI session."""
+    active_session = db.query(CustomSkillsSession).filter(
+        CustomSkillsSession.user_id == current_user.id,
+        CustomSkillsSession.status == "active",
+    ).order_by(CustomSkillsSession.start_time.desc()).first()
+    if active_session:
+        return active_session
+
     weak_skills = get_weakest_skills(db, current_user.id)
     
     session = CustomSkillsSession(

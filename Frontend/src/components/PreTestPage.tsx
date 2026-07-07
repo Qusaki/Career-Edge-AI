@@ -240,18 +240,32 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
     setMessages([]);
     setReply('');
     try {
-      const response = await fetch(`${apiUrl}${exercise.endpoint}/start`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+      const existingResponse = await fetch(`${apiUrl}${exercise.endpoint}/`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
-      if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.detail || `Unable to start ${exercise.title}.`);
+      let session: Session | null = null;
+
+      if (existingResponse.ok) {
+        const existingSessions: Session[] = await existingResponse.json();
+        session = existingSessions
+          .filter(item => item.status === 'active')
+          .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())[0] || null;
       }
-      const session: Session = await response.json();
+
+      if (!session) {
+        const response = await fetch(`${apiUrl}${exercise.endpoint}/start`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.detail || `Unable to start ${exercise.title}.`);
+        }
+        session = await response.json();
+      }
       setActiveExercise(exercise);
       setActiveSession(session);
       onSessionModeChange(true);
@@ -350,6 +364,8 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
     }
   };
 
+  const visibleActiveListeningMessages = messages.filter(message => message.sender === 'user');
+
   if (activeExercise && activeSession) {
     return (
       <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
@@ -417,18 +433,24 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                   label={isVoiceSpeaking ? 'Speaking...' : isAiResponding ? 'Preparing prompt...' : 'Audio interviewer ready'}
                 />
                 <div className="h-[58vh] overflow-y-auto rounded-lg border border-line bg-background p-4">
-                  {messages.length === 0 && error ? (
+                  {visibleActiveListeningMessages.length === 0 && error ? (
                     <div className="flex h-full items-center justify-center text-center text-sm leading-relaxed text-rose-700">
                       {error}
                     </div>
-                  ) : messages.length === 0 ? (
-                    <div className="flex h-full items-center justify-center gap-2 text-muted">
-                      <LoaderCircle className="h-5 w-5 animate-spin" /> Preparing audio prompt...
+                  ) : visibleActiveListeningMessages.length === 0 ? (
+                    <div className="flex h-full items-center justify-center gap-2 text-center text-muted">
+                      {messages.length === 0 ? (
+                        <>
+                          <LoaderCircle className="h-5 w-5 animate-spin" /> Preparing audio prompt...
+                        </>
+                      ) : (
+                        'Listen to the audio prompt, then speak your answer.'
+                      )}
                     </div>
-                  ) : messages.map((message, index) => (
+                  ) : visibleActiveListeningMessages.map((message, index) => (
                     <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                       <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'bg-accent text-accent-ink' : 'border border-line bg-card text-ink'}`}>
-                        <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Audio Interviewer'}</p>
+                        <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">You</p>
                         {message.text}
                       </div>
                     </div>
@@ -514,18 +536,24 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
           ) : (
             <>
               <div className="h-96 overflow-y-auto rounded-lg border border-line bg-background p-4">
-                {messages.length === 0 && error ? (
+                {visibleActiveListeningMessages.length === 0 && error ? (
                   <div className="flex h-full items-center justify-center text-center text-sm leading-relaxed text-rose-700">
                     {error}
                   </div>
-                ) : messages.length === 0 ? (
-                  <div className="flex h-full items-center justify-center gap-2 text-muted">
-                    <LoaderCircle className="h-5 w-5 animate-spin" /> Preparing audio prompt...
+                ) : visibleActiveListeningMessages.length === 0 ? (
+                  <div className="flex h-full items-center justify-center gap-2 text-center text-muted">
+                    {messages.length === 0 ? (
+                      <>
+                        <LoaderCircle className="h-5 w-5 animate-spin" /> Preparing audio prompt...
+                      </>
+                    ) : (
+                      'Listen to the audio prompt, then speak your answer.'
+                    )}
                   </div>
-                ) : messages.map((message, index) => (
+                ) : visibleActiveListeningMessages.map((message, index) => (
                   <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'bg-accent text-accent-ink' : 'border border-line bg-card text-ink'}`}>
-                      <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Audio Interviewer'}</p>
+                      <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">You</p>
                       {message.text}
                     </div>
                   </div>

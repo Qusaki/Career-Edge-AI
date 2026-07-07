@@ -169,7 +169,16 @@ def negotiation_turn(request: NegotiationTurnRequest):
 
 @router.post("/start", response_model=DrillSessionResponse)
 def start_drill_session(request: DrillStartRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Initializes a new drill session."""
+    """Starts or resumes the active drill session for this drill."""
+    active_session = db.query(DrillSession).filter(
+        DrillSession.user_id == current_user.id,
+        DrillSession.drill_level == request.drill_level,
+        DrillSession.drill_type == request.drill_type,
+        DrillSession.status == "active",
+    ).order_by(DrillSession.start_time.desc()).first()
+    if active_session:
+        return active_session
+
     session = DrillSession(
         user_id=current_user.id,
         drill_level=request.drill_level,
