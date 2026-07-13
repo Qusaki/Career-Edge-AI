@@ -7,7 +7,6 @@ from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisco
 from sqlalchemy.orm import Session
 
 from database import get_db
-from core.ai import close_ai_unavailable, get_ollama_client, get_ollama_model
 from core.deps import get_current_user, get_current_user_ws
 from models.user import User
 from models.post_test_interview import PostTestInterviewSession, PostTestInterviewMessage
@@ -15,41 +14,47 @@ from schemas.post_test_interview import PostTestInterviewSessionResponse, PostTe
 
 router = APIRouter()
 
-def get_post_test_interview_system_prompt(department: str) -> str:
+def get_post_test_questions(department: str) -> List[str]:
+    """Dedicated Post-Test questions; never use enrollment/application prompts here."""
     dep = department.upper() if department else ""
     if dep == "CTE":
-        return """
-You are Professor Maxiel, an expert interviewer at the College of Teacher Education (CTE).
-Your sole purpose is to interview an incoming college freshman for a Post-Test evaluation.
-CRITICAL INSTRUCTION: You MUST speak DIRECTLY to the student. DO NOT narrate your actions. DO NOT explain what you are going to do. DO NOT output thoughts. Just speak exactly what you want the student to hear out loud.
-
-1. START BY: Formally introducing yourself and politely asking what specific major they are choosing. Stop and wait for their answer.
-2. Ask exactly ONE question at a time. Be warm but challenging.
-3. Keep the interview to exactly 5 questions total.
-4. Conclude gracefully when finished and instruct them to click 'Complete Interview'.
-"""
+        context_question = (
+            "Tell me about a time you explained a difficult lesson or idea to someone. "
+            "How did you make sure they understood you?"
+        )
     elif dep == "CBAPA":
-        return """
-You are Professor Maxiel, an expert interviewer at the College of Business, Accountancy, and Public Administration (CBAPA).
-Your sole purpose is to interview an incoming college freshman for a Post-Test evaluation.
-CRITICAL INSTRUCTION: You MUST speak DIRECTLY to the student. DO NOT narrate your actions. DO NOT explain what you are going to do. DO NOT output thoughts. Just speak exactly what you want the student to hear out loud.
-
-1. START BY: Formally introducing yourself and politely asking what specific major they are choosing. Stop and wait for their answer.
-2. Ask exactly ONE question at a time. Be warm but challenging.
-3. Keep the interview to exactly 5 questions total.
-4. Conclude gracefully when finished and instruct them to click 'Complete Interview'.
-"""
+        context_question = (
+            "Tell me about a time you explained difficult business, financial, or policy information. "
+            "How did you make it clear to your listener?"
+        )
     else:
-        return """
-You are Professor Maxiel, an expert Computer Science Professor interviewing an incoming college freshman for a Post-Test evaluation.
-Your sole purpose is to interview an incoming college freshman for a prestigious CS program.
-CRITICAL INSTRUCTION: You MUST speak DIRECTLY to the student. DO NOT narrate your actions. DO NOT explain what you are going to do. DO NOT output thoughts. Just speak exactly what you want the student to hear out loud.
+        context_question = (
+            "Tell me about a time you explained a difficult technical idea to someone. "
+            "How did you make sure they understood you?"
+        )
 
-1. START BY: Formally introducing yourself and politely asking what specific track they are pursuing (e.g., Software Engineering, Data Science). Stop and wait for their answer.
-2. Ask exactly ONE question at a time. Be warm but challenging.
-3. Keep the interview to exactly 5 questions total.
-4. Conclude gracefully when finished and instruct them to click 'Complete Interview'.
-"""
+    return [
+        (
+            "Please introduce yourself briefly and describe one "
+            "communication skill you have improved during your training."
+        ),
+        context_question,
+        (
+            "Can you describe a challenging situation where you had "
+            "to solve a problem, explain the steps you took, and share what you learned from the experience?"
+        ),
+        (
+            "Imagine that you disagree with a teammate during an important "
+            "task. How would you communicate your concern respectfully and help the group reach a decision?"
+        ),
+        (
+            "What communication skill do you still want to improve, and what "
+            "specific actions will you take to improve it?"
+        ),
+    ]
+
+def get_post_test_question_three() -> str:
+    return get_post_test_questions("")[2]
 
 @router.post("/start", response_model=PostTestInterviewSessionResponse)
 def start_session(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -62,7 +67,19 @@ def start_session(db: Session = Depends(get_db), current_user: User = Depends(ge
         PostTestInterviewSession.status == "active",
     ).order_by(PostTestInterviewSession.start_time.desc()).first()
     if active_session:
-        return active_session
+        first_ai_turn = db.query(PostTestInterviewMessage).filter(
+            PostTestInterviewMessage.session_id == active_session.id,
+            PostTestInterviewMessage.role == "ai",
+        ).order_by(PostTestInterviewMessage.timestamp.asc(), PostTestInterviewMessage.id.asc()).first()
+        expected_first_question = get_post_test_questions(current_user.department)[0]
+        if first_ai_turn and first_ai_turn.content == expected_first_question:
+            return active_session
+
+        # Enrollment-contaminated and pre-persistence sessions cannot resume
+        # with the dedicated Post-Test sequence, so replace them cleanly.
+        active_session.status = "expired"
+        active_session.end_time = datetime.datetime.utcnow()
+        db.commit()
 
     session = PostTestInterviewSession(user_id=current_user.id)
     db.add(session)
@@ -105,13 +122,11 @@ async def post_test_chat_ws(
         return
 
     await websocket.accept()
-    
-    system_prompt = get_post_test_interview_system_prompt(current_user.department)
-    
-    client = get_ollama_client()
-    model_name = get_ollama_model()
-    
-    messages = [{"role": "system", "content": system_prompt}]
+
+    post_test_questions = get_post_test_questions(current_user.department)
+    stored_history = db.query(PostTestInterviewMessage).filter(
+        PostTestInterviewMessage.session_id == session.id
+    ).order_by(PostTestInterviewMessage.timestamp.asc(), PostTestInterviewMessage.id.asc()).all()
     
     try:
         while True:
@@ -121,48 +136,92 @@ async def post_test_chat_ws(
                     data = json.loads(msg["text"])
                     if data.get("text"):
                         user_text = data["text"]
-                            
-                        messages.append({"role": "user", "content": user_text})
-                        
-                        response_stream = await client.chat.completions.create(
-                            model=model_name,
-                            messages=messages,
-                            stream=True
+
+                        if user_text.strip() == "/start_interview":
+                            latest_ai_message = next(
+                                (item for item in reversed(stored_history) if item.role == "ai"),
+                                None,
+                            )
+                            if latest_ai_message:
+                                await websocket.send_json({"text": latest_ai_message.content})
+                                await websocket.send_json({"type": "turn_complete"})
+                                continue
+
+                            opening_prompt = post_test_questions[0]
+                            opening_message = PostTestInterviewMessage(
+                                session_id=session.id,
+                                role="ai",
+                                content=opening_prompt,
+                            )
+                            db.add(opening_message)
+                            db.commit()
+                            db.refresh(opening_message)
+                            stored_history.append(opening_message)
+                            await websocket.send_json({"text": opening_prompt})
+                            await websocket.send_json({"type": "turn_complete"})
+                            continue
+
+                        user_message = PostTestInterviewMessage(
+                            session_id=session.id,
+                            role="user",
+                            content=user_text,
                         )
-                        
-                        full_response = ""
-                        sentence_buffer = ""
-                        
-                        async for chunk in response_stream:
-                            if chunk.choices and len(chunk.choices) > 0:
-                                content = chunk.choices[0].delta.content
-                                if content:
-                                    full_response += content
-                                    sentence_buffer += content
-                                    
-                                    await websocket.send_json({"text": content})
-                                    
-                                    delimiters = ['. ', '! ', '? ', '.\n', '!\n', '?\n', ': ', '; ', ', ', '\n']
-                                    for punctuation in delimiters:
-                                        if punctuation in sentence_buffer:
-                                            parts = sentence_buffer.split(punctuation)
-                                            sentence_buffer = punctuation.join(parts[1:])
-                                            break
-                            
-                        messages.append({"role": "assistant", "content": full_response})
-                        
-                        # Signal turn complete
+                        db.add(user_message)
+                        db.commit()
+                        db.refresh(user_message)
+                        stored_history.append(user_message)
+
+                        completed_question_count = sum(
+                            1 for item in stored_history
+                            if item.role == "ai" and item.content in post_test_questions
+                        )
+                        if completed_question_count < len(post_test_questions):
+                            next_question = post_test_questions[completed_question_count]
+                            next_question_message = PostTestInterviewMessage(
+                                session_id=session.id,
+                                role="ai",
+                                content=next_question,
+                            )
+                            db.add(next_question_message)
+                            db.commit()
+                            db.refresh(next_question_message)
+                            stored_history.append(next_question_message)
+                            await websocket.send_json({"text": next_question})
+                            await websocket.send_json({"type": "turn_complete"})
+                            continue
+
+                        completion_message = (
+                            "You have completed all five Post-Test questions. "
+                            "Please click Complete Interview to view your assessment."
+                        )
+                        completion_ai_message = PostTestInterviewMessage(
+                            session_id=session.id,
+                            role="ai",
+                            content=completion_message,
+                        )
+                        db.add(completion_ai_message)
+                        db.commit()
+                        db.refresh(completion_ai_message)
+                        stored_history.append(completion_ai_message)
+                        await websocket.send_json({"text": completion_message})
                         await websocket.send_json({"type": "turn_complete"})
                         
                 except Exception as e:
-                    print(f"[DEBUG] Post-Test Interview AI error: {e}")
-                    await close_ai_unavailable(websocket)
+                    print(f"[DEBUG] Post-Test question flow error: {e}")
+                    try:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "The Post-Test question could not be loaded. Please try again.",
+                        })
+                        await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+                    except Exception:
+                        pass
                     return
     except WebSocketDisconnect:
         pass
     except Exception as e:
         try:
-            await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Failed to connect to AI.")
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Post-Test question flow failed.")
         except:
             pass
 

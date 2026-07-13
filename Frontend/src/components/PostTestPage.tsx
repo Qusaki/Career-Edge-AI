@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, LoaderCircle, Mic, MicOff, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, LoaderCircle, Mic, MicOff, RefreshCw, Volume2 } from 'lucide-react';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 
@@ -39,6 +39,8 @@ const getBasicPostTestEvaluation = (messages: ChatMessage[]) => {
   };
 };
 
+const POST_TEST_FIRST_PROMPT_TIMEOUT_MS = 30000;
+
 export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl: string; onSessionModeChange?: (isSessionMode: boolean) => void }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,11 +51,13 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
   const [reply, setReply] = useState('');
   const [isAiResponding, setIsAiResponding] = useState(false);
   const [isVoiceSpeaking, setIsVoiceSpeaking] = useState(false);
+  const [latestAiQuestion, setLatestAiQuestion] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const aiMessageOpenRef = useRef(false);
   const aiSpeechBufferRef = useRef('');
+  const firstPromptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { isListening, startListening, stopListening } = useSpeechInput();
 
   const speakText = useCallback((text: string) => {
@@ -68,6 +72,17 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
     utterance.onerror = () => setIsVoiceSpeaking(false);
     window.speechSynthesis.speak(utterance);
   }, []);
+
+  const cancelSpeech = () => {
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    setIsVoiceSpeaking(false);
+  };
+
+  const replayLatestQuestion = () => {
+    if (!latestAiQuestion.trim() || isAiResponding || isVoiceSpeaking) return;
+    setError(null);
+    speakText(latestAiQuestion);
+  };
 
   const loadSessions = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -89,7 +104,17 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
 
-  useEffect(() => () => wsRef.current?.close(), []);
+  useEffect(() => () => {
+    if (firstPromptTimeoutRef.current) clearTimeout(firstPromptTimeoutRef.current);
+    wsRef.current?.close();
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  }, []);
+
+  const clearFirstPromptTimeout = () => {
+    if (!firstPromptTimeoutRef.current) return;
+    clearTimeout(firstPromptTimeoutRef.current);
+    firstPromptTimeoutRef.current = null;
+  };
 
   const connectPostTestChat = (session: Session) => {
     const token = localStorage.getItem('token');
@@ -98,25 +123,41 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
     wsRef.current?.close();
     aiMessageOpenRef.current = false;
     aiSpeechBufferRef.current = '';
+    setLatestAiQuestion('');
     const socket = new WebSocket(getWebSocketUrl(apiUrl, `/post-test-interview/${session.id}/chat`, token));
     wsRef.current = socket;
 
     socket.onopen = () => {
-      setNotice(`Post-test interview #${session.id} started. The audio interviewer will begin shortly.`);
-      socket.send(JSON.stringify({ text: 'I am ready to begin the post-test interview.' }));
+      setNotice('Post-Test session started. The audio interviewer will begin shortly.');
+      setIsAiResponding(true);
+      socket.send(JSON.stringify({ text: '/start_interview' }));
+      clearFirstPromptTimeout();
+      firstPromptTimeoutRef.current = setTimeout(() => {
+        aiMessageOpenRef.current = false;
+        aiSpeechBufferRef.current = '';
+        setIsAiResponding(false);
+        setError('The Post-Test audio prompt did not start. Please restart the backend service and try again.');
+        if (socket.readyState === WebSocket.OPEN) socket.close(1000);
+      }, POST_TEST_FIRST_PROMPT_TIMEOUT_MS);
     };
 
     socket.onmessage = event => {
       const data = JSON.parse(event.data);
       if (data.type === 'turn_complete') {
+        clearFirstPromptTimeout();
         aiMessageOpenRef.current = false;
         setIsAiResponding(false);
-        if (aiSpeechBufferRef.current.trim()) speakText(aiSpeechBufferRef.current.trim());
+        if (aiSpeechBufferRef.current.trim()) {
+          const completedQuestion = aiSpeechBufferRef.current.trim();
+          setLatestAiQuestion(completedQuestion);
+          speakText(completedQuestion);
+        }
         aiSpeechBufferRef.current = '';
         return;
       }
 
       if (data.type === 'error') {
+        clearFirstPromptTimeout();
         setError(data.message || 'The audio interviewer could not respond. Check that the backend service is running.');
         aiMessageOpenRef.current = false;
         setIsAiResponding(false);
@@ -125,6 +166,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
       }
 
       if (data.text) {
+        clearFirstPromptTimeout();
         setIsAiResponding(true);
         aiSpeechBufferRef.current += data.text;
         setMessages(prev => {
@@ -140,12 +182,14 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
     };
 
     socket.onerror = () => {
+      clearFirstPromptTimeout();
       setError('The post-test chat connection failed. Check that the backend and Ollama service are running.');
       setIsAiResponding(false);
       aiSpeechBufferRef.current = '';
     };
 
     socket.onclose = event => {
+      clearFirstPromptTimeout();
       aiMessageOpenRef.current = false;
       setIsAiResponding(false);
       aiSpeechBufferRef.current = '';
@@ -162,32 +206,31 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
     setError(null);
     setNotice(null);
     setMessages([]);
+    setLatestAiQuestion('');
+    cancelSpeech();
     try {
-      const existingResponse = await fetch(`${apiUrl}/post-test-interview/`, {
+      const response = await fetch(`${apiUrl}/post-test-interview/start`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.detail || 'Unable to start the post-test interview.');
+      }
+      const session: Session = await response.json();
+
+      const sessionDetailResponse = await fetch(`${apiUrl}/post-test-interview/${session.id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      let session: Session | null = null;
-
-      if (existingResponse.ok) {
-        const existingSessions: Session[] = await existingResponse.json();
-        session = existingSessions
-          .filter(item => item.status === 'active')
-          .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())[0] || null;
-      }
-
-      if (!session) {
-        const response = await fetch(`${apiUrl}/post-test-interview/start`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
-        if (!response.ok) {
-          const body = await response.json().catch(() => null);
-          throw new Error(body?.detail || 'Unable to start the post-test interview.');
-        }
-        session = await response.json();
+      if (sessionDetailResponse.ok) {
+        const sessionDetail: { messages?: Array<{ role: string; content: string }> } = await sessionDetailResponse.json();
+        setMessages((sessionDetail.messages || []).map(message => ({
+          sender: message.role === 'ai' ? 'ai' : 'user',
+          text: message.content,
+        })));
       }
       setActiveSession(session);
       onSessionModeChange(true);
@@ -201,7 +244,8 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
   };
 
   const quitPostTest = () => {
-    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
+    cancelSpeech();
+    clearFirstPromptTimeout();
     wsRef.current?.close(1000);
     wsRef.current = null;
     aiMessageOpenRef.current = false;
@@ -211,13 +255,14 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
     setReply('');
     setIsAiResponding(false);
     setIsVoiceSpeaking(false);
+    setLatestAiQuestion('');
     setNotice('Post-test exited. Complete the interview later to finish it properly.');
     onSessionModeChange(false);
   };
 
   const sendReply = (spokenText = reply) => {
     const text = spokenText.trim();
-    if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || isAiResponding) return;
+    if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || isAiResponding || isVoiceSpeaking) return;
     aiMessageOpenRef.current = false;
     aiSpeechBufferRef.current = '';
     setMessages(prev => [...prev, { sender: 'user', text }]);
@@ -253,10 +298,12 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
         throw new Error(body?.detail || 'Unable to complete the post-test interview.');
       }
       wsRef.current?.close(1000);
+      cancelSpeech();
       const completedSession: Session = await response.json();
       setActiveSession(null);
       setMessages([]);
-      setNotice(`Post-test interview #${completedSession.id} completed.`);
+      setLatestAiQuestion('');
+      setNotice(`Post-Test session ${completedSession.id} completed.`);
       onSessionModeChange(false);
       await loadSessions();
     } catch (err) {
@@ -265,6 +312,12 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
       setCompleting(false);
     }
   };
+
+  const visibleUserMessages = messages.filter(message => message.sender === 'user');
+  const askedQuestionCount = messages.filter(message =>
+    message.sender === 'ai' && !message.text.startsWith('You have completed all five Post-Test questions.')
+  ).length;
+  const currentQuestionNumber = Math.min(Math.max(askedQuestionCount, 1), 5);
 
   if (activeSession) {
     return (
@@ -291,8 +344,13 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
           <section className="flex-1 rounded-lg border border-line bg-card p-5">
             <div className="mb-4">
               <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-gold-text">Post-Test Session</p>
-              <h1 className="text-3xl font-bold tracking-tight text-ink">Post-Test Interview #{activeSession.id}</h1>
-              <p className="mt-1 text-sm text-muted">Answer the audio interviewer one question at a time.</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="text-3xl font-bold tracking-tight text-ink">Post-Test Interview</h1>
+                <span className="rounded-full bg-active px-3 py-1 text-sm font-bold text-gold-text">
+                  Question {currentQuestionNumber} of 5
+                </span>
+              </div>
+              <p className="mt-1 text-sm text-muted">Answer the audio interviewer one question at a time. Session ID: {activeSession.id}</p>
             </div>
 
             {(error || notice) && (
@@ -303,28 +361,49 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
 
             <SoundWaveInterviewer
               active={isVoiceSpeaking || isAiResponding}
-              label={isVoiceSpeaking ? 'Speaking...' : isAiResponding ? 'Preparing question...' : 'Audio interviewer ready'}
+              label={isVoiceSpeaking ? `Speaking Question ${currentQuestionNumber}...` : isAiResponding ? `Preparing Question ${currentQuestionNumber}...` : `Question ${currentQuestionNumber} ready`}
             />
 
-            <div className="mt-4 h-[58vh] overflow-y-auto rounded-lg border border-line bg-background p-4">
+            <div className="mt-4 flex min-h-[38vh] flex-col items-center justify-center rounded-lg border border-line bg-background p-6 text-center">
               {messages.length === 0 ? (
                 <div className="flex h-full items-center justify-center gap-2 text-muted">
                   <LoaderCircle className="h-5 w-5 animate-spin" /> Preparing audio question...
                 </div>
-              ) : messages.map((message, index) => (
-                <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'bg-accent text-accent-ink' : 'border border-line bg-card text-ink'}`}>
-                    <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Audio Interviewer'}</p>
-                    {message.text}
-                  </div>
-                </div>
-              ))}
+              ) : (
+                <>
+                  <Volume2 className={`mb-4 h-10 w-10 ${isVoiceSpeaking ? 'text-gold-text' : 'text-muted'}`} />
+                  <p className="max-w-lg text-sm leading-relaxed text-muted">
+                    {isVoiceSpeaking
+                      ? 'Listen carefully to the interviewer, then answer after the audio finishes.'
+                      : isAiResponding
+                        ? 'The interviewer is preparing the next question.'
+                        : 'The question is audio-only. Replay it if you need to listen again.'}
+                  </p>
+                  <button
+                    onClick={replayLatestQuestion}
+                    disabled={!latestAiQuestion || isAiResponding || isVoiceSpeaking}
+                    className="mt-5 flex items-center gap-2 rounded-lg border border-line bg-card px-4 py-2 text-sm font-semibold text-ink transition-colors hover:bg-active disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Volume2 className="h-4 w-4" /> Replay Question
+                  </button>
+                  {visibleUserMessages.length > 0 && (
+                    <div className="mt-6 w-full max-w-2xl space-y-3 border-t border-line pt-5 text-left">
+                      {visibleUserMessages.map((message, index) => (
+                        <div key={index} className="ml-auto max-w-[82%] rounded-lg bg-accent px-4 py-3 text-sm leading-relaxed text-accent-ink">
+                          <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">You</p>
+                          {message.text}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
             <div className="mt-4 flex justify-center">
               <button
                 onClick={isListening ? stopListening : recordAndSendReply}
-                disabled={isAiResponding}
+                disabled={isAiResponding || isVoiceSpeaking}
                 className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
               >
                 {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
@@ -357,8 +436,8 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
         <section className="rounded-lg border border-line bg-card p-5">
           <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
             <div>
-              <h2 className="text-xl font-bold text-ink">Post-Test Interview #{activeSession.id}</h2>
-              <p className="mt-1 text-sm text-muted">Answer the audio interviewer one question at a time.</p>
+              <h2 className="text-xl font-bold text-ink">Post-Test Interview</h2>
+              <p className="mt-1 text-sm text-muted">Question {currentQuestionNumber} of 5 · Session ID: {activeSession.id}</p>
             </div>
             <button
               onClick={completePostTest}
@@ -370,19 +449,8 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
             </button>
           </div>
 
-          <div className="h-96 overflow-y-auto rounded-lg border border-line bg-background p-4">
-            {messages.length === 0 ? (
-              <div className="flex h-full items-center justify-center gap-2 text-muted">
-                <LoaderCircle className="h-5 w-5 animate-spin" /> Preparing audio question...
-              </div>
-            ) : messages.map((message, index) => (
-              <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'bg-accent text-accent-ink' : 'border border-line bg-card text-ink'}`}>
-                  <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Audio Interviewer'}</p>
-                  {message.text}
-                </div>
-              </div>
-            ))}
+          <div className="flex h-96 items-center justify-center rounded-lg border border-line bg-background p-4 text-center text-muted">
+            Listen to the audio question, then speak your answer.
           </div>
 
           <div className="mt-4 flex justify-center">
@@ -437,7 +505,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
           ) : sessions.slice(0, 8).map(session => (
             <div key={session.id} className="flex items-center justify-between border-b border-line px-4 py-3 last:border-b-0">
               <div>
-                <p className="font-semibold text-ink">Post-Test Interview #{session.id}</p>
+                <p className="font-semibold text-ink">Post-Test Session #{session.id}</p>
                 <p className="mt-0.5 text-xs text-muted">{new Date(session.start_time).toLocaleString()}</p>
               </div>
               <div className="text-right">
