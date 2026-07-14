@@ -10,6 +10,8 @@ type Session = {
   total_score?: number | null;
   passed?: boolean | null;
   feedback_summary?: string | null;
+  question_number?: number;
+  answered_questions?: number;
 };
 
 type ChatMessage = {
@@ -258,6 +260,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
     setLatestAiQuestion('');
     setNotice('Post-test exited. Complete the interview later to finish it properly.');
     onSessionModeChange(false);
+    void loadSessions();
   };
 
   const sendReply = (spokenText = reply) => {
@@ -350,7 +353,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
                   Question {currentQuestionNumber} of 5
                 </span>
               </div>
-              <p className="mt-1 text-sm text-muted">Answer the audio interviewer one question at a time. Session ID: {activeSession.id}</p>
+              <p className="mt-1 text-sm text-muted">Answer the audio interviewer one question at a time.</p>
             </div>
 
             {(error || notice) && (
@@ -437,7 +440,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
           <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
             <div>
               <h2 className="text-xl font-bold text-ink">Post-Test Interview</h2>
-              <p className="mt-1 text-sm text-muted">Question {currentQuestionNumber} of 5 · Session ID: {activeSession.id}</p>
+              <p className="mt-1 text-sm text-muted">Question {currentQuestionNumber} of 5</p>
             </div>
             <button
               onClick={completePostTest}
@@ -505,7 +508,9 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
           ) : sessions.slice(0, 8).map(session => (
             <div key={session.id} className="flex items-center justify-between border-b border-line px-4 py-3 last:border-b-0">
               <div>
-                <p className="font-semibold text-ink">Post-Test Session #{session.id}</p>
+                <p className="font-semibold text-ink">
+                  Post-Test — Question {session.question_number || 1} of 5
+                </p>
                 <p className="mt-0.5 text-xs text-muted">{new Date(session.start_time).toLocaleString()}</p>
               </div>
               <div className="text-right">

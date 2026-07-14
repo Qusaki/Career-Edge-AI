@@ -29,6 +29,8 @@ class PostTestInterviewSessionResponse(BaseModel):
     total_score: Optional[float] = None
     passed: Optional[bool] = None
     feedback_summary: Optional[str] = None
+    question_number: int = 1
+    answered_questions: int = 0
 
     class Config:
         from_attributes = True

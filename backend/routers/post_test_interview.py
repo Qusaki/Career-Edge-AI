@@ -91,6 +91,20 @@ def start_session(db: Session = Depends(get_db), current_user: User = Depends(ge
 def get_user_sessions(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Fetches all past post-test interview sessions for the user."""
     sessions = db.query(PostTestInterviewSession).filter(PostTestInterviewSession.user_id == current_user.id).order_by(PostTestInterviewSession.start_time.desc()).all()
+    session_ids = [session.id for session in sessions]
+    answered_by_session = {session_id: 0 for session_id in session_ids}
+    if session_ids:
+        user_messages = db.query(PostTestInterviewMessage.session_id).filter(
+            PostTestInterviewMessage.session_id.in_(session_ids),
+            PostTestInterviewMessage.role == "user",
+        ).all()
+        for (session_id,) in user_messages:
+            answered_by_session[session_id] += 1
+
+    for session in sessions:
+        answered_questions = answered_by_session[session.id]
+        session.answered_questions = answered_questions
+        session.question_number = min(answered_questions + 1, 5)
     return sessions
 
 @router.websocket("/{session_id}/chat")
