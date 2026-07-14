@@ -56,23 +56,23 @@ def complete_intro_session(session_id: int, request: PreTestIntroCompleteRequest
         session.score_courtesy = evaluation.get("score_courtesy", 1)
         session.score_correctness = evaluation.get("score_correctness", 1)
         session.score_conciseness = evaluation.get("score_conciseness", 1)
-        session.score_eye_contact = evaluation.get("score_eye_contact", 1)
+        # Eye contact is camera-based and is only evaluated in Enrollment and Thesis interviews.
+        session.score_eye_contact = None
         session.feedback_summary = evaluation.get("feedback_summary", "")
         session.transcript = request.transcript
         
-        # Calculate total score out of 18 (6 criteria * 3 max points)
+        # Calculate total score out of 15 (5 criteria * 3 max points).
         total = (
             session.score_clarity +
             session.score_completeness +
             session.score_courtesy +
             session.score_correctness +
-            session.score_conciseness +
-            session.score_eye_contact
+            session.score_conciseness
         )
         
         session.total_score = float(total)
-        # Assuming passing threshold is 12 (average of 2/3 per criterion)
-        session.passed = session.total_score >= 12.0
+        # Passing threshold remains two-thirds of the available points.
+        session.passed = session.total_score >= 10.0
         
         session.status = "completed"
         session.end_time = datetime.datetime.utcnow()

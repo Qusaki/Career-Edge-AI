@@ -123,8 +123,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   );
   const getNormalizedScore = (item: any) => {
     if (item.total_score == null && item.score == null) return null;
-    if (item._source === 'pre-test-intro') return Math.round(((item.total_score || 0) / 18) * 100);
-    if (item._source === 'pre-test-active-listening' || item._source === 'post-test-interview') return Math.round(((item.total_score || 0) / 30) * 100);
+    // Remove legacy fabricated Eye Contact points from camera-free assessments.
+    const scoreWithoutLegacyEyeContact = Math.max(0, (item.total_score || 0) - (item.score_eye_contact || 0));
+    if (item._source === 'pre-test-intro') return Math.round((scoreWithoutLegacyEyeContact / 15) * 100);
+    if (item._source === 'pre-test-active-listening' || item._source === 'post-test-interview') return Math.round((scoreWithoutLegacyEyeContact / 25) * 100);
     if (item._source === 'drills') return item.score == null ? null : Math.round(item.score);
     return Math.round(item.total_score || 0);
   };
@@ -143,7 +145,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     },
     {
       label: 'Eye Contact',
-      description: 'Evaluates the user’s constant eye contact, signaling proper non-verbal gesture.',
+      description: 'Camera-based face alignment measured only during University Enrollment and Thesis Defense interviews.',
       field: 'score_eye_contact',
       color: 'bg-indigo-500',
     },
@@ -195,9 +197,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     }
 
     const communicationScoredHistory = scoredCommunication.filter(item =>
-      communicationSkillCriteria.some(criteria => item[criteria.field] != null)
+      communicationSkillCriteria.some(criteria => criteria.field !== 'score_eye_contact' && item[criteria.field] != null)
     );
     const skillBreakdown = communicationSkillCriteria.map(criteria => {
+      if (criteria.field === 'score_eye_contact') {
+        const cameraRecords = [...scoredEnrollment, ...scoredThesis].filter(item =>
+          (item.eye_contact_samples || 0) > 0 && item.score_eye_contact != null
+        );
+        const cameraPercentage = cameraRecords.length > 0
+          ? parseFloat((cameraRecords.reduce((acc, curr) => acc + Number(curr.score_eye_contact), 0) / cameraRecords.length).toFixed(1))
+          : null;
+
+        return {
+          label: criteria.label,
+          description: criteria.description,
+          score: cameraPercentage == null ? 0 : parseFloat((cameraPercentage / 20).toFixed(1)),
+          displayScore: cameraPercentage == null ? 'N/A' : `${cameraPercentage}%`,
+          value: cameraPercentage == null ? 0 : Math.round(cameraPercentage),
+          scale: cameraPercentage == null ? 'No camera data' : 'Camera-based',
+          color: criteria.color,
+        };
+      }
+
       const recordsWithScore = communicationScoredHistory.filter(item => item[criteria.field] != null);
       const score = recordsWithScore.length > 0
         ? parseFloat((recordsWithScore.reduce((acc, curr) => acc + (curr[criteria.field] || 0), 0) / recordsWithScore.length).toFixed(1))
@@ -207,6 +228,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         label: criteria.label,
         description: criteria.description,
         score,
+        displayScore: `${score}/5`,
         value: Math.round((score / 5) * 100),
         scale: '1-5 scale',
         color: criteria.color,
@@ -491,6 +513,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     fetchThesisHistory();
     fetchCommunicationHistory();
   }, [API_URL, onLogout, fetchHistory, fetchThesisHistory, fetchCommunicationHistory]);
+
+  useEffect(() => {
+    if (activeTab === 'analytics') fetchCommunicationHistory();
+  }, [activeTab, fetchCommunicationHistory]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2858,7 +2884,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                               <p className="mt-1 text-xs leading-relaxed text-slate-400">{skill.description}</p>
                             </div>
                             <div className="shrink-0 text-right">
-                              <p className="text-sm font-black text-slate-100">{skill.score}/5</p>
+                              <p className="text-sm font-black text-slate-100">{skill.displayScore}</p>
                               <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{skill.scale}</p>
                             </div>
                           </div>

@@ -9,11 +9,38 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from core.deps import get_current_user
+from core.drill_scoring import calculate_drill_score
 from models.user import User
 from models.drills import DrillSession
 from schemas.drills import DrillSessionResponse, DrillStartRequest, DrillCompleteRequest, NegotiationTurnRequest
 
 router = APIRouter()
+
+
+def apply_drill_score(session: DrillSession, evaluation_data: dict) -> None:
+    calculation = calculate_drill_score(session.drill_type, evaluation_data)
+    session.score = calculation["score"]
+    session.passed = calculation["passed"]
+    session.feedback_summary = calculation["feedback_summary"]
+    session.evaluation_data = json.dumps({
+        **evaluation_data,
+        "scoring": calculation["scoring"],
+    })
+
+
+def backfill_drill_score(session: DrillSession) -> bool:
+    if session.status != "completed" or session.score is not None or not session.evaluation_data:
+        return False
+
+    try:
+        evaluation_data = json.loads(session.evaluation_data)
+        if not isinstance(evaluation_data, dict):
+            return False
+        apply_drill_score(session, evaluation_data)
+        return True
+    except (TypeError, ValueError, json.JSONDecodeError):
+        # Historical records without a usable response remain unscored.
+        return False
 
 # --- Generator Endpoints ---
 
@@ -193,6 +220,14 @@ def start_drill_session(request: DrillStartRequest, db: Session = Depends(get_db
 def get_user_drill_sessions(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Fetches all past drill sessions for the user."""
     sessions = db.query(DrillSession).filter(DrillSession.user_id == current_user.id).order_by(DrillSession.start_time.desc()).all()
+    backfilled = False
+    for session in sessions:
+        if backfill_drill_score(session):
+            backfilled = True
+    if backfilled:
+        db.commit()
+        for session in sessions:
+            db.refresh(session)
     return sessions
 
 @router.post("/{session_id}/complete", response_model=DrillSessionResponse)
@@ -205,13 +240,15 @@ def complete_drill_session(session_id: int, request: DrillCompleteRequest, db: S
     if session.status == "completed":
         return session
         
+    if not request.evaluation_data:
+        raise HTTPException(status_code=400, detail="Missing Drill response data.")
+
     try:
-        session.score = request.score
-        session.passed = request.passed
-        session.feedback_summary = request.feedback_summary
-        
-        if request.evaluation_data:
-            session.evaluation_data = json.dumps(request.evaluation_data)
+        apply_drill_score(session, request.evaluation_data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    try:
             
         session.status = "completed"
         session.end_time = datetime.datetime.utcnow()
@@ -229,4 +266,7 @@ def get_drill_session(session_id: int, db: Session = Depends(get_db), current_us
     session = db.query(DrillSession).filter(DrillSession.id == session_id, DrillSession.user_id == current_user.id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Drill session not found.")
+    if backfill_drill_score(session):
+        db.commit()
+        db.refresh(session)
     return session

@@ -265,25 +265,25 @@ def complete_session(session_id: int, request: PostTestInterviewCompleteRequest,
         
         session.score_vocabulary = evaluation.get("score_vocabulary", 1)
         session.score_clarity = evaluation.get("score_clarity", 1)
-        session.score_eye_contact = evaluation.get("score_eye_contact", 1)
+        # Eye contact is camera-based and is only evaluated in Enrollment and Thesis interviews.
+        session.score_eye_contact = None
         session.score_grammar = evaluation.get("score_grammar", 1)
         session.score_courtesy = evaluation.get("score_courtesy", 1)
         session.score_conciseness = evaluation.get("score_conciseness", 1)
         session.feedback_summary = evaluation.get("feedback_summary", "")
         
-        # Calculate total score out of 30 (6 criteria * 5 max points)
+        # Calculate total score out of 25 (5 criteria * 5 max points).
         total = (
             session.score_vocabulary +
             session.score_clarity +
-            session.score_eye_contact +
             session.score_grammar +
             session.score_courtesy +
             session.score_conciseness
         )
         
         session.total_score = float(total)
-        # Passing threshold is 20
-        session.passed = session.total_score >= 20.0
+        # Passing threshold remains approximately two-thirds of the available points.
+        session.passed = session.total_score >= 17.0
         
         session.status = "completed"
         session.end_time = datetime.datetime.utcnow()

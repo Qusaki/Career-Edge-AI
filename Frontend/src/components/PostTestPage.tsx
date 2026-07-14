@@ -8,6 +8,7 @@ type Session = {
   start_time: string;
   status: string;
   total_score?: number | null;
+  score_eye_contact?: number | null;
   passed?: boolean | null;
   feedback_summary?: string | null;
   question_number?: number;
@@ -33,7 +34,6 @@ const getBasicPostTestEvaluation = (messages: ChatMessage[]) => {
   return {
     score_vocabulary: baseScore,
     score_clarity: baseScore,
-    score_eye_contact: 3,
     score_grammar: baseScore,
     score_courtesy: 4,
     score_conciseness: baseScore,
@@ -515,7 +515,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
               </div>
               <div className="text-right">
                 <span className="rounded-full bg-active px-2.5 py-1 text-xs font-bold capitalize text-gold-text">{session.status}</span>
-                {session.total_score != null && <p className="mt-1 text-sm font-bold text-ink">{session.total_score}/30</p>}
+                {session.total_score != null && <p className="mt-1 text-sm font-bold text-ink">{Math.max(0, session.total_score - (session.score_eye_contact || 0))}/25</p>}
               </div>
             </div>
           ))}

@@ -28,12 +28,11 @@ def get_weakest_skills(db: Session, user_id: int) -> str:
         return "Vocabulary and Conciseness" # Default if no data
         
     scores = {
-        "Vocabulary": latest_post_test.score_vocabulary or 5,
-        "Clarity": latest_post_test.score_clarity or 5,
-        "Eye Contact": latest_post_test.score_eye_contact or 5,
-        "Grammar": latest_post_test.score_grammar or 5,
-        "Courtesy": latest_post_test.score_courtesy or 5,
-        "Conciseness": latest_post_test.score_conciseness or 5
+        "Vocabulary": latest_post_test.score_vocabulary if latest_post_test.score_vocabulary is not None else 5,
+        "Clarity": latest_post_test.score_clarity if latest_post_test.score_clarity is not None else 5,
+        "Grammar": latest_post_test.score_grammar if latest_post_test.score_grammar is not None else 5,
+        "Courtesy": latest_post_test.score_courtesy if latest_post_test.score_courtesy is not None else 5,
+        "Conciseness": latest_post_test.score_conciseness if latest_post_test.score_conciseness is not None else 5,
     }
     
     # Sort by lowest score

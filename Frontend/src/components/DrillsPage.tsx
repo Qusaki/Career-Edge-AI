@@ -569,7 +569,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
               </div>
               <div className="text-right">
                 <span className="rounded-full bg-active px-2.5 py-1 text-xs font-bold capitalize text-gold-text">{session.status}</span>
-                {session.score != null && <p className="mt-1 text-sm font-bold text-ink">{session.score} points</p>}
+                {session.score != null && <p className="mt-1 text-sm font-bold text-ink">{Math.round(session.score)}%</p>}
               </div>
             </div>
           ))}

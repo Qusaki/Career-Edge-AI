@@ -8,6 +8,7 @@ type Session = {
   start_time: string;
   status: string;
   total_score?: number | null;
+  score_eye_contact?: number | null;
   passed?: boolean | null;
   feedback_summary?: string | null;
 };
@@ -61,7 +62,6 @@ const getBasicIntroEvaluation = (transcript: string) => {
     score_courtesy: 3,
     score_correctness: score,
     score_conciseness: wordCount <= 140 ? 3 : 2,
-    score_eye_contact: 2,
     feedback_summary: 'Introduction submitted. Review clarity, completeness, courtesy, correctness, conciseness, and delivery.',
   };
 };
@@ -74,7 +74,6 @@ const getBasicActiveListeningEvaluation = (messages: ChatMessage[]) => {
   return {
     score_vocabulary: score,
     score_clarity: score,
-    score_eye_contact: 3,
     score_grammar: score,
     score_courtesy: 4,
     score_conciseness: score,
@@ -617,7 +616,11 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
               </div>
               <div className="text-right">
                 <span className="rounded-full bg-active px-2.5 py-1 text-xs font-bold capitalize text-gold-text">{session.status}</span>
-                {session.total_score != null && <p className="mt-1 text-sm font-bold text-ink">{session.total_score} points</p>}
+                {session.total_score != null && (
+                  <p className="mt-1 text-sm font-bold text-ink">
+                    {Math.max(0, session.total_score - (session.score_eye_contact || 0))}/{session.exercise === 'Who Am I?' ? 15 : 25}
+                  </p>
+                )}
               </div>
             </div>
           ))}
