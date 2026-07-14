@@ -2,6 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 type TranscriptHandler = (transcript: string) => void;
 type ErrorHandler = (message: string) => void;
+type RecognitionSession = {
+  onTranscript: TranscriptHandler;
+  onError?: ErrorHandler;
+  finalParts: string[];
+  interimTranscript: string;
+  delivered: boolean;
+  retryCount: number;
+  fatalError: boolean;
+};
 
 const MAX_RECOGNITION_RETRIES = 2;
 
@@ -39,8 +48,6 @@ const getSpeechErrorMessage = (event: any) => {
       return 'No microphone was found. Check that your microphone is connected and available.';
     case 'network':
       return 'The browser speech service is unavailable right now. Check your internet connection, then try again in Chrome or Edge.';
-    case 'no-speech':
-      return 'No speech was detected. Try again and speak clearly after pressing the mic.';
     default:
       return 'Speech recognition stopped unexpectedly. Please try the mic again.';
   }
@@ -49,44 +56,73 @@ const getSpeechErrorMessage = (event: any) => {
 export function useSpeechInput() {
   const recognitionRef = useRef<any>(null);
   const listeningRef = useRef(false);
-  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionRef = useRef<RecognitionSession | null>(null);
+  const restartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startRecognitionRef = useRef<(() => void) | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
+
+  const clearRestart = useCallback(() => {
+    if (!restartTimeoutRef.current) return;
+    clearTimeout(restartTimeoutRef.current);
+    restartTimeoutRef.current = null;
+  }, []);
+
+  const deliverTranscript = useCallback(() => {
+    const session = sessionRef.current;
+    if (!session) return;
+    if (session.delivered) {
+      sessionRef.current = null;
+      return;
+    }
+
+    session.delivered = true;
+    const transcript = [...session.finalParts, session.interimTranscript]
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    sessionRef.current = null;
+    if (transcript) session.onTranscript(transcript);
+  }, []);
+
+  const stopListening = useCallback(() => {
+    listeningRef.current = false;
+    clearRestart();
+
+    const recognition = recognitionRef.current;
+    if (!recognition) {
+      setIsListening(false);
+      deliverTranscript();
+      return;
+    }
+
+    try {
+      // stop() asks the browser to flush its last result before onend.
+      recognition.stop();
+    } catch {
+      recognitionRef.current = null;
+      setIsListening(false);
+      deliverTranscript();
+    }
+  }, [clearRestart, deliverTranscript]);
 
   useEffect(() => {
     setIsSupported(!getSpeechSupportMessage());
 
     return () => {
-      if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
-      if (!recognitionRef.current || !listeningRef.current) return;
+      listeningRef.current = false;
+      clearRestart();
+      sessionRef.current = null;
       try {
-        recognitionRef.current.stop();
+        recognitionRef.current?.abort();
       } catch {
         // Chrome can throw when recognition already ended.
       }
+      recognitionRef.current = null;
     };
-  }, []);
-
-  const stopListening = useCallback(() => {
-    if (retryTimeoutRef.current) {
-      clearTimeout(retryTimeoutRef.current);
-      retryTimeoutRef.current = null;
-    }
-
-    if (!recognitionRef.current || !listeningRef.current) {
-      setIsListening(false);
-      listeningRef.current = false;
-      return;
-    }
-
-    try {
-      recognitionRef.current.stop();
-    } catch {
-      // The recognizer may already be stopped by the browser.
-    }
-    setIsListening(false);
-    listeningRef.current = false;
-  }, []);
+  }, [clearRestart]);
 
   const startListening = useCallback(async (onTranscript: TranscriptHandler, onError?: ErrorHandler) => {
     const supportMessage = getSpeechSupportMessage();
@@ -96,94 +132,110 @@ export function useSpeechInput() {
       return false;
     }
 
-    stopListening();
+    // A second click is handled by stopListening through the UI. Do not replace
+    // an active session and lose the transcript already collected.
+    if (listeningRef.current) return true;
 
+    clearRestart();
     const SpeechRecognition = getSpeechRecognition();
-    let retryCount = 0;
-    let lastTranscript = '';
-    let deliveredTranscript = false;
+    sessionRef.current = {
+      onTranscript,
+      onError,
+      finalParts: [],
+      interimTranscript: '',
+      delivered: false,
+      retryCount: 0,
+      fatalError: false,
+    };
+    listeningRef.current = true;
+    setIsListening(true);
+
+    const scheduleRestart = (delay: number) => {
+      if (!listeningRef.current || restartTimeoutRef.current) return;
+      restartTimeoutRef.current = setTimeout(() => {
+        restartTimeoutRef.current = null;
+        startRecognitionRef.current?.();
+      }, delay);
+    };
 
     const startRecognition = () => {
-      retryTimeoutRef.current = null;
+      const session = sessionRef.current;
+      if (!listeningRef.current || !session || session.fatalError) return;
+
       const recognition = new SpeechRecognition();
-      recognition.continuous = false;
+      recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = 'en-US';
       recognition.maxAlternatives = 1;
 
       recognition.onstart = () => {
-        listeningRef.current = true;
-        setIsListening(true);
+        if (listeningRef.current) setIsListening(true);
       };
 
       recognition.onresult = (event: any) => {
-        const transcript = Array.from(event.results)
-          .slice(event.resultIndex ?? 0)
-          .map((result: any) => result[0]?.transcript || '')
-          .join(' ')
-          .trim();
-
-        if (transcript) lastTranscript = transcript;
-
-        const hasFinalResult = Array.from(event.results)
-          .slice(event.resultIndex ?? 0)
-          .some((result: any) => result.isFinal);
-
-        if (hasFinalResult && lastTranscript) {
-          deliveredTranscript = true;
-          onTranscript(lastTranscript);
-          try {
-            recognition.stop();
-          } catch {
-            // The browser may already be stopping recognition.
-          }
+        session.retryCount = 0;
+        let currentInterim = '';
+        for (let index = event.resultIndex ?? 0; index < event.results.length; index += 1) {
+          const text = (event.results[index][0]?.transcript || '').trim();
+          if (!text) continue;
+          if (event.results[index].isFinal) session.finalParts.push(text);
+          else currentInterim = [currentInterim, text].filter(Boolean).join(' ');
         }
+        session.interimTranscript = currentInterim;
       };
 
       recognition.onerror = (event: any) => {
-        if (event?.error === 'network' && retryCount < MAX_RECOGNITION_RETRIES) {
-          retryCount += 1;
-          try {
-            recognition.abort();
-          } catch {
-            // Recognition may already be aborted.
-          }
-          retryTimeoutRef.current = setTimeout(startRecognition, 800);
+        // Chrome may end recognition after silence even in continuous mode.
+        // Keep the requested recording session alive until the user stops it.
+        if (event?.error === 'no-speech' || event?.error === 'aborted') return;
+
+        if (event?.error === 'network' && session.retryCount < MAX_RECOGNITION_RETRIES) {
+          session.retryCount += 1;
+          scheduleRestart(800);
           return;
         }
 
+        session.fatalError = true;
+        session.delivered = true;
         listeningRef.current = false;
         setIsListening(false);
-        onError?.(getSpeechErrorMessage(event));
+        session.onError?.(getSpeechErrorMessage(event));
       };
 
       recognition.onend = () => {
         if (recognitionRef.current === recognition) recognitionRef.current = null;
-        if (retryTimeoutRef.current) return;
 
-        listeningRef.current = false;
-        setIsListening(false);
-        if (!deliveredTranscript && lastTranscript) {
-          deliveredTranscript = true;
-          onTranscript(lastTranscript);
+        if (listeningRef.current && !session.fatalError) {
+          scheduleRestart(250);
+          return;
         }
+
+        setIsListening(false);
+        deliverTranscript();
       };
 
       recognitionRef.current = recognition;
-
       try {
         recognition.start();
       } catch {
         recognitionRef.current = null;
-        listeningRef.current = false;
-        setIsListening(false);
-        onError?.('Unable to start the microphone. Please wait a moment and try again.');
+        if (session.retryCount < MAX_RECOGNITION_RETRIES) {
+          session.retryCount += 1;
+          scheduleRestart(500);
+        } else {
+          session.fatalError = true;
+          listeningRef.current = false;
+          setIsListening(false);
+          session.onError?.('Unable to start the microphone. Please wait a moment and try again.');
+          deliverTranscript();
+        }
       }
     };
 
+    startRecognitionRef.current = startRecognition;
     startRecognition();
     return true;
-  }, [stopListening]);
+  }, [clearRestart, deliverTranscript]);
 
   return { isListening, isSupported, startListening, stopListening };
 }

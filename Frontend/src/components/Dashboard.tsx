@@ -620,6 +620,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
   const transcriptRef = React.useRef('');
   const isListeningRef = React.useRef(false);
+  const submitTranscriptOnEndRef = React.useRef(false);
+  const recognitionRestartTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const userAudioContextRef = React.useRef<AudioContext | null>(null);
   const userAnalyserRef = React.useRef<AnalyserNode | null>(null);
   const userMediaStreamRef = React.useRef<MediaStream | null>(null);
@@ -1071,12 +1073,50 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     }
   };
 
-  const stopListening = () => {
+  const submitInterviewTranscript = () => {
+    setIsMicTransitioning(false);
+    submitTranscriptOnEndRef.current = false;
+    const finalTranscript = transcriptRef.current.replace(/\s+/g, ' ').trim();
+    if (!finalTranscript) return;
+
+    const turn = { sender: 'user' as const, text: finalTranscript };
+    if (activeInterviewModeRef.current === 'thesis') {
+      setThesisConversationLog(prev => [...prev, turn]);
+    } else {
+      setConversationLog(prev => [...prev, turn]);
+    }
+
+    setChatMessages((prev) => {
+      const newMessages = [...prev, { role: 'user', content: finalTranscript }];
+      setTimeout(() => handleLocalWebLLM(finalTranscript, prev), 0);
+      return newMessages;
+    });
+  };
+
+  const stopListening = (submitTranscript = false) => {
     setIsListening(false);
     isListeningRef.current = false;
+    submitTranscriptOnEndRef.current = submitTranscript;
+    setIsMicTransitioning(submitTranscript);
+
+    if (recognitionRestartTimeoutRef.current) {
+      clearTimeout(recognitionRestartTimeoutRef.current);
+      recognitionRestartTimeoutRef.current = null;
+    }
 
     if (recognitionRef.current) {
-      recognitionRef.current.stop();
+      try {
+        // Let SpeechRecognition flush its last phrase before onend submits it.
+        recognitionRef.current.stop();
+      } catch {
+        recognitionRef.current = null;
+        if (submitTranscriptOnEndRef.current) submitInterviewTranscript();
+        else setIsMicTransitioning(false);
+      }
+    } else if (submitTranscriptOnEndRef.current) {
+      submitInterviewTranscript();
+    } else {
+      setIsMicTransitioning(false);
     }
 
     if (processorRef.current) {
@@ -1543,8 +1583,9 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
   // to allow Gemini's server-side Voice Activity Detection to operate.
 
   const toggleListening = async () => {
+    if (isMicTransitioning) return;
     if (isListeningRef.current) {
-      stopListening();
+      stopListening(true);
     } else {
       setTranscript('');
       transcriptRef.current = '';
@@ -1596,27 +1637,36 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
             }
 
             if (finalTranscript) {
-              setTranscript(prev => prev + ' ' + finalTranscript);
-              const turn = { sender: 'user' as const, text: finalTranscript.trim() };
-              if (activeInterviewModeRef.current === 'thesis') {
-                setThesisConversationLog(prev => [...prev, turn]);
-              } else {
-                setConversationLog(prev => [...prev, turn]);
-              }
-              const activeWs = activeInterviewModeRef.current === 'thesis' ? thesisWsRef.current : wsRef.current;
-              setChatMessages((prev) => {
-                const newMessages = [...prev, { role: 'user', content: finalTranscript.trim() }];
-                setTimeout(() => handleLocalWebLLM(finalTranscript.trim(), prev), 0);
-                return newMessages;
-              });
-              stopListening();
+              transcriptRef.current = [transcriptRef.current, finalTranscript.trim()]
+                .filter(Boolean)
+                .join(' ');
+              setTranscript(transcriptRef.current);
             }
           };
 
-          recognition.onerror = (e: any) => console.error("STT Error", e);
+          recognition.onerror = (e: any) => {
+            if (e?.error === 'no-speech' || e?.error === 'aborted') return;
+            console.error("STT Error", e);
+            stopListening(false);
+          };
           recognition.onend = () => {
+            if (recognitionRef.current === recognition) recognitionRef.current = null;
             if (isListeningRef.current) {
-              recognition.start();
+              recognitionRestartTimeoutRef.current = setTimeout(() => {
+                recognitionRestartTimeoutRef.current = null;
+                if (!isListeningRef.current) return;
+                recognitionRef.current = recognition;
+                try {
+                  recognition.start();
+                } catch (error) {
+                  console.error("Unable to restart speech recognition", error);
+                  stopListening(false);
+                }
+              }, 250);
+            } else if (submitTranscriptOnEndRef.current) {
+              submitInterviewTranscript();
+            } else {
+              setIsMicTransitioning(false);
             }
           }
 
@@ -2340,7 +2390,13 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     </div>
 
                     {/* Mic visualiser — center */}
-                    <div className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800 shadow-slate-900/40'} text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl`}>
+                    <button
+                      type="button"
+                      onClick={toggleListening}
+                      className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800 shadow-slate-900/40'} text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl`}
+                      title={isListening ? 'Stop recording and submit answer' : 'Start recording'}
+                      aria-label={isListening ? 'Stop recording and submit answer' : 'Start recording'}
+                    >
                       {isListening ? (
                         <div className="flex items-center justify-center gap-1.5 h-8 w-full relative z-10 px-4">
                           {[...userAudioData, ...Array.from(userAudioData).reverse()].map((height, i) => (
@@ -2351,7 +2407,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         <Mic className="w-8 h-8 relative z-10 text-slate-400" />
                       )}
                       {isListening && <span className="absolute inset-0 rounded-[2rem] border-4 border-emerald-400 opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }} />}
-                    </div>
+                    </button>
 
                     {/* Leave */}
                     <button
@@ -2616,7 +2672,13 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       )}
                     </div>
 
-                    <div className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800 shadow-slate-900/40'} text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl`}>
+                    <button
+                      type="button"
+                      onClick={toggleListening}
+                      className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800 shadow-slate-900/40'} text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl`}
+                      title={isListening ? 'Stop recording and submit answer' : 'Start recording'}
+                      aria-label={isListening ? 'Stop recording and submit answer' : 'Start recording'}
+                    >
                       {isListening ? (
                         <div className="flex items-center justify-center gap-1.5 h-8 w-full relative z-10 px-4">
                           {[...userAudioData, ...Array.from(userAudioData).reverse()].map((height, i) => (
@@ -2627,7 +2689,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         <Mic className={`w-8 h-8 relative z-10 ${isMicTransitioning ? 'text-sky-400' : 'text-slate-400'}`} />
                       )}
                       {isListening && <span className="absolute inset-0 rounded-[2rem] border-4 border-emerald-400 opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }} />}
-                    </div>
+                    </button>
 
                     <button
                       onClick={() => setIsLeaveModalOpen(true)}
