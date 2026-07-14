@@ -247,6 +247,13 @@ def complete_interview(session_id: int, request: UpcomingStudentCompleteIntervie
         
     try:
         evaluation = request.evaluation
+        session.eye_contact_samples = max(0, int(evaluation.get("eye_contact_samples", 0)))
+        eye_contact_score = evaluation.get("eye_contact_score")
+        session.score_eye_contact = (
+            max(0.0, min(100.0, float(eye_contact_score)))
+            if session.eye_contact_samples > 0 and eye_contact_score is not None
+            else None
+        )
         
         if current_user.department.upper() == "CTE":
             session.score_cte_subject_matter = evaluation.get("subject_matter_score", 0)

@@ -19,6 +19,8 @@ class UpcomingStudentInterviewSession(Base):
     score_coding = Column(Float, nullable=True)          # 20%
     score_communication = Column(Float, nullable=True)   # 15%
     score_soft_skills = Column(Float, nullable=True)     # 10%
+    score_eye_contact = Column(Float, nullable=True)
+    eye_contact_samples = Column(Integer, nullable=True)
     
     # CTE Grading criteria (0.0 to 100.0)
     score_cte_subject_matter = Column(Float, nullable=True)     # 25%

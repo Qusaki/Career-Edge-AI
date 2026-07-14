@@ -266,6 +266,13 @@ def complete_interview(session_id: int, request: ThesisCompleteInterviewRequest,
             session.abstract_s3_key = None
             
         evaluation = request.evaluation
+        session.eye_contact_samples = max(0, int(evaluation.get("eye_contact_samples", 0)))
+        eye_contact_score = evaluation.get("eye_contact_score")
+        session.score_eye_contact = (
+            max(0.0, min(100.0, float(eye_contact_score)))
+            if session.eye_contact_samples > 0 and eye_contact_score is not None
+            else None
+        )
         
         if current_user.department.upper() == "CTE":
             session.score_cte_pedagogical_innovation = evaluation.get("pedagogical_innovation_score", 0)

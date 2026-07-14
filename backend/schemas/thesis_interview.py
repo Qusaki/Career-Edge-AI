@@ -24,6 +24,8 @@ class ThesisInterviewSessionResponse(BaseModel):
     score_ccit_experimental_validation: Optional[float] = None
     score_ccit_literature_review: Optional[float] = None
     score_ccit_demo_quality: Optional[float] = None
+    score_eye_contact: Optional[float] = None
+    eye_contact_samples: Optional[int] = None
     
     # CTE Scores
     score_cte_pedagogical_innovation: Optional[float] = None

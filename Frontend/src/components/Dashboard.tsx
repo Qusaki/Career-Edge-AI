@@ -7,6 +7,7 @@ import { PreTestPage } from './PreTestPage';
 import { DrillsPage } from './DrillsPage';
 import { PostTestPage } from './PostTestPage';
 import { useWebLLM } from '../hooks/useWebLLM';
+import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 import { db } from '../db';
 import * as pdfjsLib from 'pdfjs-dist';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.mjs`;
@@ -116,6 +117,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const [thesisInSessionUploading, setThesisInSessionUploading] = useState(false);
   const [thesisAbstractUpdated, setThesisAbstractUpdated] = useState(false);
   const activeInterviewModeRef = React.useRef<'enrollment' | 'thesis' | null>(null);
+  const eyeTracker = useEyeContactTracker(
+    (activeTab === 'interview-session' && !interviewResult) ||
+    (activeTab === 'thesis-session' && !thesisResult)
+  );
   const getNormalizedScore = (item: any) => {
     if (item.total_score == null && item.score == null) return null;
     if (item._source === 'pre-test-intro') return Math.round(((item.total_score || 0) / 18) * 100);
@@ -1148,6 +1153,13 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
         }
       }
 
+      evaluation = {
+        ...(evaluation || {}),
+        eye_contact_score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+        score_eye_contact: eyeTracker.samples > 0 ? eyeTracker.score : null,
+        eye_contact_samples: eyeTracker.samples,
+      };
+
       if (String(sessionId).startsWith('local_')) {
         // It's an offline session, save to IndexedDB directly
         await db.offlineSessions.put({
@@ -1441,6 +1453,13 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
           console.error("Failed to parse local thesis evaluation", e);
         }
       }
+
+      evaluation = {
+        ...(evaluation || {}),
+        eye_contact_score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+        score_eye_contact: eyeTracker.samples > 0 ? eyeTracker.score : null,
+        eye_contact_samples: eyeTracker.samples,
+      };
 
       if (String(thesisSessionIdRef.current).startsWith('local_')) {
         // Offline mode
@@ -2172,6 +2191,13 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       <Shield className="w-3.5 h-3.5" />
                       Thesis Defense · Prof. Maxiel
                     </div>
+                    <div className="absolute bottom-4 right-4 z-20 w-44 overflow-hidden rounded-xl border border-purple-400/40 bg-slate-950 shadow-xl">
+                      <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
+                      <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-slate-200">
+                        <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unsupported' ? 'Tracking unsupported' : 'Starting camera'}</span>
+                        <span className="text-purple-300">{eyeTracker.samples > 0 ? `${eyeTracker.score}%` : '—'}</span>
+                      </div>
+                    </div>
                   </motion.div>
 
                   {/* RIGHT: Transcript / Result */}
@@ -2199,6 +2225,10 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                                 <p className="text-[9px] text-slate-600 mt-0.5">{item.weight}</p>
                               </div>
                             ))}
+                          </div>
+                          <div className="mt-3 flex items-center justify-between rounded-xl border border-purple-500/20 bg-purple-500/10 p-3">
+                            <span className="text-xs font-bold uppercase tracking-wider text-purple-300">Camera Eye Contact</span>
+                            <span className="text-xl font-black text-purple-400">{(thesisResult.eye_contact_samples || 0) > 0 ? `${Math.round(thesisResult.score_eye_contact)}%` : 'Unavailable'}</span>
                           </div>
                           {thesisResult.feedback_summary && (
                             <div className="bg-purple-500/10 border border-purple-500/20 p-4 rounded-xl mt-4">
@@ -2386,6 +2416,13 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         />
                       </Canvas>
                     </div>
+                    <div className="absolute bottom-4 right-4 z-20 w-44 overflow-hidden rounded-xl border border-sky-400/40 bg-slate-950 shadow-xl">
+                      <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
+                      <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-slate-200">
+                        <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unsupported' ? 'Tracking unsupported' : 'Starting camera'}</span>
+                        <span className="text-sky-300">{eyeTracker.samples > 0 ? `${eyeTracker.score}%` : '—'}</span>
+                      </div>
+                    </div>
                   </motion.div>
 
                   {/* RIGHT COLUMN: USER RESPONSES & EVALUATION */}
@@ -2450,6 +2487,11 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                                 </div>
                               ));
                             })()}
+                          </div>
+
+                          <div className="mt-3 flex items-center justify-between rounded-xl border border-sky-500/20 bg-sky-500/10 p-3">
+                            <span className="text-xs font-bold uppercase tracking-wider text-sky-300">Camera Eye Contact</span>
+                            <span className="text-xl font-black text-sky-400">{(interviewResult.eye_contact_samples || 0) > 0 ? `${Math.round(interviewResult.score_eye_contact)}%` : 'Unavailable'}</span>
                           </div>
 
                           {interviewResult.feedback_summary && (

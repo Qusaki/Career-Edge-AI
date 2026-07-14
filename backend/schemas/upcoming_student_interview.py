@@ -22,6 +22,8 @@ class UpcomingStudentInterviewSessionResponse(BaseModel):
     score_coding: Optional[float] = None
     score_communication: Optional[float] = None
     score_soft_skills: Optional[float] = None
+    score_eye_contact: Optional[float] = None
+    eye_contact_samples: Optional[int] = None
     
     # CTE Scores
     score_cte_subject_matter: Optional[float] = None
