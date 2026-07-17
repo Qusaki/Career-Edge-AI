@@ -648,6 +648,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const isListeningRef = React.useRef(false);
   const submitTranscriptOnEndRef = React.useRef(false);
   const recognitionRestartTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recognitionStopTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restartInterviewRecognitionRef = React.useRef<(() => void) | null>(null);
   const userAudioContextRef = React.useRef<AudioContext | null>(null);
   const userAnalyserRef = React.useRef<AnalyserNode | null>(null);
   const userMediaStreamRef = React.useRef<MediaStream | null>(null);
@@ -658,6 +660,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const [isMicTransitioning, setIsMicTransitioning] = useState(false);
 
   const processorRef = React.useRef<ScriptProcessorNode | null>(null);
+
+  useEffect(() => {
+    const resumeInterviewMic = () => {
+      if (
+        document.visibilityState === 'visible' &&
+        isListeningRef.current &&
+        !recognitionRef.current &&
+        !recognitionRestartTimeoutRef.current
+      ) {
+        restartInterviewRecognitionRef.current?.();
+      }
+    };
+    document.addEventListener('visibilitychange', resumeInterviewMic);
+    return () => document.removeEventListener('visibilitychange', resumeInterviewMic);
+  }, []);
 
 
 
@@ -1099,7 +1116,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     }
   };
 
+  const releaseInterviewMicrophone = () => {
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
+    userMediaStreamRef.current?.getTracks().forEach(track => track.stop());
+    userMediaStreamRef.current = null;
+    if (userAudioContextRef.current) {
+      void userAudioContextRef.current.close();
+      userAudioContextRef.current = null;
+    }
+    cancelAnimationFrame(userAnimationRef.current);
+    setUserAudioData([8, 8, 8]);
+  };
+
   const submitInterviewTranscript = () => {
+    if (recognitionStopTimeoutRef.current) {
+      clearTimeout(recognitionStopTimeoutRef.current);
+      recognitionStopTimeoutRef.current = null;
+    }
+    releaseInterviewMicrophone();
     setIsMicTransitioning(false);
     submitTranscriptOnEndRef.current = false;
     const finalTranscript = transcriptRef.current.replace(/\s+/g, ' ').trim();
@@ -1129,11 +1166,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       clearTimeout(recognitionRestartTimeoutRef.current);
       recognitionRestartTimeoutRef.current = null;
     }
+    if (recognitionStopTimeoutRef.current) {
+      clearTimeout(recognitionStopTimeoutRef.current);
+      recognitionStopTimeoutRef.current = null;
+    }
 
     if (recognitionRef.current) {
       try {
         // Let SpeechRecognition flush its last phrase before onend submits it.
         recognitionRef.current.stop();
+        if (submitTranscript) {
+          const recognition = recognitionRef.current;
+          recognitionStopTimeoutRef.current = setTimeout(() => {
+            if (recognitionRef.current === recognition) recognitionRef.current = null;
+            submitInterviewTranscript();
+          }, 1500);
+        }
       } catch {
         recognitionRef.current = null;
         if (submitTranscriptOnEndRef.current) submitInterviewTranscript();
@@ -1145,23 +1193,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       setIsMicTransitioning(false);
     }
 
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-      processorRef.current = null;
-    }
-
-    if (userMediaStreamRef.current) {
-      userMediaStreamRef.current.getTracks().forEach(track => track.stop());
-      userMediaStreamRef.current = null;
-    }
-
-    if (userAudioContextRef.current) {
-      userAudioContextRef.current.close();
-      userAudioContextRef.current = null;
-    }
-
-    cancelAnimationFrame(userAnimationRef.current);
-    setUserAudioData([8, 8, 8]);
+    if (!submitTranscript) releaseInterviewMicrophone();
   };
 
   const exitInterview = () => {
@@ -1648,58 +1680,88 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
 
         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (SpeechRecognition) {
-          const recognition = new SpeechRecognition();
-          recognition.continuous = true;
-          recognition.interimResults = true;
-          recognition.lang = 'en-US';
+          let recognitionRetryCount = 0;
 
-          recognition.onresult = (e: any) => {
-            if (isAiSpeakingRef.current) return;
-            let finalTranscript = '';
-            for (let i = e.resultIndex; i < e.results.length; i++) {
-              if (e.results[i].isFinal) {
-                finalTranscript += e.results[i][0].transcript;
-              }
-            }
-
-            if (finalTranscript) {
-              transcriptRef.current = [transcriptRef.current, finalTranscript.trim()]
-                .filter(Boolean)
-                .join(' ');
-              setTranscript(transcriptRef.current);
-            }
+          const scheduleRecognitionRestart = (delay = 250) => {
+            if (!isListeningRef.current || recognitionRestartTimeoutRef.current) return;
+            recognitionRestartTimeoutRef.current = setTimeout(() => {
+              recognitionRestartTimeoutRef.current = null;
+              startRecognition();
+            }, delay);
           };
 
-          recognition.onerror = (e: any) => {
-            if (e?.error === 'no-speech' || e?.error === 'aborted') return;
-            console.error("STT Error", e);
-            stopListening(false);
-          };
-          recognition.onend = () => {
-            if (recognitionRef.current === recognition) recognitionRef.current = null;
-            if (isListeningRef.current) {
-              recognitionRestartTimeoutRef.current = setTimeout(() => {
-                recognitionRestartTimeoutRef.current = null;
-                if (!isListeningRef.current) return;
-                recognitionRef.current = recognition;
-                try {
-                  recognition.start();
-                } catch (error) {
-                  console.error("Unable to restart speech recognition", error);
-                  stopListening(false);
+          function startRecognition() {
+            if (!isListeningRef.current) return;
+
+            const recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+
+            recognition.onresult = (e: any) => {
+              if (isAiSpeakingRef.current) return;
+              recognitionRetryCount = 0;
+              let finalTranscript = '';
+              for (let i = e.resultIndex; i < e.results.length; i++) {
+                if (e.results[i].isFinal) {
+                  finalTranscript += e.results[i][0].transcript;
                 }
-              }, 250);
-            } else if (submitTranscriptOnEndRef.current) {
-              submitInterviewTranscript();
-            } else {
-              setIsMicTransitioning(false);
+              }
+
+              if (finalTranscript) {
+                transcriptRef.current = [transcriptRef.current, finalTranscript.trim()]
+                  .filter(Boolean)
+                  .join(' ');
+                setTranscript(transcriptRef.current);
+              }
+            };
+
+            recognition.onerror = (e: any) => {
+              if (e?.error === 'no-speech' || e?.error === 'aborted' || e?.error === 'network') {
+                if (recognitionRef.current === recognition) recognitionRef.current = null;
+                recognitionRetryCount += 1;
+                try {
+                  recognition.abort();
+                } catch {
+                  // The browser may already have ended this recognizer.
+                }
+                const delay = e?.error === 'network'
+                  ? Math.min(4000, 500 * (2 ** Math.min(recognitionRetryCount, 3)))
+                  : 250;
+                scheduleRecognitionRestart(delay);
+                return;
+              }
+
+              console.error("STT Error", e);
+              stopListening(false);
+            };
+            recognition.onend = () => {
+              if (recognitionRef.current === recognition) recognitionRef.current = null;
+              if (isListeningRef.current) {
+                scheduleRecognitionRestart(250);
+              } else if (submitTranscriptOnEndRef.current) {
+                submitInterviewTranscript();
+              } else {
+                setIsMicTransitioning(false);
+              }
+            };
+
+            recognitionRef.current = recognition;
+            try {
+              recognition.start();
+            } catch (error) {
+              if (recognitionRef.current === recognition) recognitionRef.current = null;
+              console.warn("Speech recognition is temporarily busy; retrying.", error);
+              recognitionRetryCount += 1;
+              scheduleRecognitionRestart(Math.min(2000, 300 * recognitionRetryCount));
             }
           }
 
-          recognitionRef.current = recognition;
-          recognition.start();
+          restartInterviewRecognitionRef.current = startRecognition;
+          startRecognition();
         } else {
           console.warn("Speech Recognition not supported in this browser.");
+          stopListening(false);
         }
       } catch (err) {
         console.error("Could not capture local audio for streaming:", err);

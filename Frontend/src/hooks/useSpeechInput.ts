@@ -12,8 +12,6 @@ type RecognitionSession = {
   fatalError: boolean;
 };
 
-const MAX_RECOGNITION_RETRIES = 2;
-
 const getSpeechRecognition = () => {
   if (typeof window === 'undefined') return null;
   return (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition || null;
@@ -55,9 +53,12 @@ const getSpeechErrorMessage = (event: any) => {
 
 export function useSpeechInput() {
   const recognitionRef = useRef<any>(null);
+  const microphoneStreamRef = useRef<MediaStream | null>(null);
   const listeningRef = useRef(false);
+  const startingRef = useRef(false);
   const sessionRef = useRef<RecognitionSession | null>(null);
   const restartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startRecognitionRef = useRef<(() => void) | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
@@ -68,7 +69,16 @@ export function useSpeechInput() {
     restartTimeoutRef.current = null;
   }, []);
 
+  const releaseMicrophone = useCallback(() => {
+    microphoneStreamRef.current?.getTracks().forEach(track => track.stop());
+    microphoneStreamRef.current = null;
+  }, []);
+
   const deliverTranscript = useCallback(() => {
+    if (stopTimeoutRef.current) {
+      clearTimeout(stopTimeoutRef.current);
+      stopTimeoutRef.current = null;
+    }
     const session = sessionRef.current;
     if (!session) return;
     if (session.delivered) {
@@ -84,8 +94,9 @@ export function useSpeechInput() {
       .trim();
 
     sessionRef.current = null;
+    releaseMicrophone();
     if (transcript) session.onTranscript(transcript);
-  }, []);
+  }, [releaseMicrophone]);
 
   const stopListening = useCallback(() => {
     listeningRef.current = false;
@@ -101,6 +112,11 @@ export function useSpeechInput() {
     try {
       // stop() asks the browser to flush its last result before onend.
       recognition.stop();
+      stopTimeoutRef.current = setTimeout(() => {
+        if (recognitionRef.current === recognition) recognitionRef.current = null;
+        setIsListening(false);
+        deliverTranscript();
+      }, 1500);
     } catch {
       recognitionRef.current = null;
       setIsListening(false);
@@ -111,9 +127,25 @@ export function useSpeechInput() {
   useEffect(() => {
     setIsSupported(!getSpeechSupportMessage());
 
+    const resumeAfterVisibilityChange = () => {
+      if (
+        document.visibilityState === 'visible' &&
+        listeningRef.current &&
+        !recognitionRef.current &&
+        !restartTimeoutRef.current
+      ) {
+        startRecognitionRef.current?.();
+      }
+    };
+    document.addEventListener('visibilitychange', resumeAfterVisibilityChange);
+
     return () => {
+      document.removeEventListener('visibilitychange', resumeAfterVisibilityChange);
       listeningRef.current = false;
+      startingRef.current = false;
       clearRestart();
+      if (stopTimeoutRef.current) clearTimeout(stopTimeoutRef.current);
+      stopTimeoutRef.current = null;
       sessionRef.current = null;
       try {
         recognitionRef.current?.abort();
@@ -121,8 +153,9 @@ export function useSpeechInput() {
         // Chrome can throw when recognition already ended.
       }
       recognitionRef.current = null;
+      releaseMicrophone();
     };
-  }, [clearRestart]);
+  }, [clearRestart, releaseMicrophone]);
 
   const startListening = useCallback(async (onTranscript: TranscriptHandler, onError?: ErrorHandler) => {
     const supportMessage = getSpeechSupportMessage();
@@ -134,10 +167,26 @@ export function useSpeechInput() {
 
     // A second click is handled by stopListening through the UI. Do not replace
     // an active session and lose the transcript already collected.
-    if (listeningRef.current) return true;
+    if (listeningRef.current || startingRef.current) return true;
 
     clearRestart();
     const SpeechRecognition = getSpeechRecognition();
+    startingRef.current = true;
+    try {
+      microphoneStreamRef.current = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+    } catch {
+      startingRef.current = false;
+      onError?.('Microphone access was blocked or unavailable. Allow microphone permission, then try again.');
+      return false;
+    }
+    startingRef.current = false;
+
     sessionRef.current = {
       onTranscript,
       onError,
@@ -185,13 +234,21 @@ export function useSpeechInput() {
       };
 
       recognition.onerror = (event: any) => {
-        // Chrome may end recognition after silence even in continuous mode.
-        // Keep the requested recording session alive until the user stops it.
-        if (event?.error === 'no-speech' || event?.error === 'aborted') return;
-
-        if (event?.error === 'network' && session.retryCount < MAX_RECOGNITION_RETRIES) {
+        // Mobile and desktop browsers may stop their speech service after silence,
+        // a temporary network interruption, or an internal recognition timeout.
+        // These conditions must not turn off a user-controlled recording session.
+        if (event?.error === 'no-speech' || event?.error === 'aborted' || event?.error === 'network') {
+          if (recognitionRef.current === recognition) recognitionRef.current = null;
           session.retryCount += 1;
-          scheduleRestart(800);
+          try {
+            recognition.abort();
+          } catch {
+            // The browser may already have ended this recognizer.
+          }
+          const delay = event?.error === 'network'
+            ? Math.min(4000, 500 * (2 ** Math.min(session.retryCount, 3)))
+            : 250;
+          scheduleRestart(delay);
           return;
         }
 
@@ -199,6 +256,7 @@ export function useSpeechInput() {
         session.delivered = true;
         listeningRef.current = false;
         setIsListening(false);
+        releaseMicrophone();
         session.onError?.(getSpeechErrorMessage(event));
       };
 
@@ -219,23 +277,17 @@ export function useSpeechInput() {
         recognition.start();
       } catch {
         recognitionRef.current = null;
-        if (session.retryCount < MAX_RECOGNITION_RETRIES) {
-          session.retryCount += 1;
-          scheduleRestart(500);
-        } else {
-          session.fatalError = true;
-          listeningRef.current = false;
-          setIsListening(false);
-          session.onError?.('Unable to start the microphone. Please wait a moment and try again.');
-          deliverTranscript();
-        }
+        // A recognizer can remain temporarily busy after onend, especially on
+        // mobile browsers. Keep retrying until the user explicitly presses Stop.
+        session.retryCount += 1;
+        scheduleRestart(Math.min(2000, 300 * session.retryCount));
       }
     };
 
     startRecognitionRef.current = startRecognition;
     startRecognition();
     return true;
-  }, [clearRestart, deliverTranscript]);
+  }, [clearRestart, deliverTranscript, releaseMicrophone]);
 
   return { isListening, isSupported, startListening, stopListening };
 }
