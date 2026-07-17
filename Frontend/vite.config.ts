@@ -16,7 +16,8 @@ export default defineConfig(({mode}) => {
       VitePWA({
         registerType: 'autoUpdate',
         devOptions: {
-          enabled: true
+          // Prevent stale development bundles from being served after code changes.
+          enabled: false
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,json,wasm}'],

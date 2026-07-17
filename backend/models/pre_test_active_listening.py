@@ -21,7 +21,7 @@ class PreTestActiveListeningSession(Base):
     score_courtesy = Column(Integer, nullable=True)
     score_conciseness = Column(Integer, nullable=True)
     
-    total_score = Column(Float, nullable=True) # out of 30
+    total_score = Column(Float, nullable=True) # out of 25
     passed = Column(Boolean, nullable=True)
     feedback_summary = Column(String, nullable=True)
     

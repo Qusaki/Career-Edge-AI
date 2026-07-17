@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from core.ai import close_ai_unavailable, get_ollama_client, get_ollama_model
 from core.deps import get_current_user, get_current_user_ws
+from core.scoring import bounded_integer_score, bounded_score
 from core.aws import get_abstract_text_from_s3, delete_abstract_from_s3
 from models.user import User
 from models.thesis_interview import ThesisInterviewSession, ThesisInterviewMessage
@@ -266,21 +267,26 @@ def complete_interview(session_id: int, request: ThesisCompleteInterviewRequest,
             session.abstract_s3_key = None
             
         evaluation = request.evaluation
-        session.eye_contact_samples = max(0, int(evaluation.get("eye_contact_samples", 0)))
+        def score(key: str) -> float:
+            return bounded_score(evaluation, key, minimum=0, maximum=100, default=0)
+
+        session.eye_contact_samples = bounded_integer_score(
+            evaluation, "eye_contact_samples", minimum=0, maximum=10_000_000, default=0
+        )
         eye_contact_score = evaluation.get("eye_contact_score")
         session.score_eye_contact = (
-            max(0.0, min(100.0, float(eye_contact_score)))
+            score("eye_contact_score")
             if session.eye_contact_samples > 0 and eye_contact_score is not None
             else None
         )
         
         if current_user.department.upper() == "CTE":
-            session.score_cte_pedagogical_innovation = evaluation.get("pedagogical_innovation_score", 0)
-            session.score_cte_action_research = evaluation.get("action_research_score", 0)
-            session.score_cte_learning_outcomes = evaluation.get("learning_outcomes_score", 0)
-            session.score_cte_literature_alignment = evaluation.get("literature_alignment_score", 0)
-            session.score_cte_teaching_demo = evaluation.get("teaching_demo_score", 0)
-            session.score_cte_scalability_policy = evaluation.get("scalability_policy_score", 0)
+            session.score_cte_pedagogical_innovation = score("pedagogical_innovation_score")
+            session.score_cte_action_research = score("action_research_score")
+            session.score_cte_learning_outcomes = score("learning_outcomes_score")
+            session.score_cte_literature_alignment = score("literature_alignment_score")
+            session.score_cte_teaching_demo = score("teaching_demo_score")
+            session.score_cte_scalability_policy = score("scalability_policy_score")
             session.feedback_summary = evaluation.get("feedback_summary", "")
             
             total = (
@@ -292,11 +298,11 @@ def complete_interview(session_id: int, request: ThesisCompleteInterviewRequest,
                 (session.score_cte_scalability_policy * 0.10)
             )
         elif current_user.department.upper() == "CBAPA":
-            session.score_cbapa_research_problem = evaluation.get("research_problem_score", 0)
-            session.score_cbapa_methodology_analysis = evaluation.get("methodology_analysis_score", 0)
-            session.score_cbapa_practical_roi = evaluation.get("practical_roi_score", 0)
-            session.score_cbapa_literature_theoretical = evaluation.get("literature_theoretical_score", 0)
-            session.score_cbapa_professional_delivery = evaluation.get("professional_delivery_score", 0)
+            session.score_cbapa_research_problem = score("research_problem_score")
+            session.score_cbapa_methodology_analysis = score("methodology_analysis_score")
+            session.score_cbapa_practical_roi = score("practical_roi_score")
+            session.score_cbapa_literature_theoretical = score("literature_theoretical_score")
+            session.score_cbapa_professional_delivery = score("professional_delivery_score")
             session.feedback_summary = evaluation.get("feedback_summary", "")
             
             total = (
@@ -307,11 +313,11 @@ def complete_interview(session_id: int, request: ThesisCompleteInterviewRequest,
                 (session.score_cbapa_professional_delivery * 0.15)
             )
         else: # CCIT
-            session.score_ccit_technical_innovation = evaluation.get("technical_innovation_score", 0)
-            session.score_ccit_system_implementation = evaluation.get("system_implementation_score", 0)
-            session.score_ccit_experimental_validation = evaluation.get("experimental_validation_score", 0)
-            session.score_ccit_literature_review = evaluation.get("literature_review_score", 0)
-            session.score_ccit_demo_quality = evaluation.get("demo_quality_score", 0)
+            session.score_ccit_technical_innovation = score("technical_innovation_score")
+            session.score_ccit_system_implementation = score("system_implementation_score")
+            session.score_ccit_experimental_validation = score("experimental_validation_score")
+            session.score_ccit_literature_review = score("literature_review_score")
+            session.score_ccit_demo_quality = score("demo_quality_score")
             session.feedback_summary = evaluation.get("feedback_summary", "")
             
             # Calculate weighted total

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from core.deps import get_current_user
+from core.scoring import bounded_integer_score
 from models.user import User
 from models.pre_test_intro import PreTestIntroSession
 from schemas.pre_test_intro import PreTestIntroSessionResponse, PreTestIntroCompleteRequest
@@ -51,11 +52,11 @@ def complete_intro_session(session_id: int, request: PreTestIntroCompleteRequest
     try:
         evaluation = request.evaluation
         
-        session.score_clarity = evaluation.get("score_clarity", 1)
-        session.score_completeness = evaluation.get("score_completeness", 1)
-        session.score_courtesy = evaluation.get("score_courtesy", 1)
-        session.score_correctness = evaluation.get("score_correctness", 1)
-        session.score_conciseness = evaluation.get("score_conciseness", 1)
+        session.score_clarity = bounded_integer_score(evaluation, "score_clarity", minimum=1, maximum=3, default=1)
+        session.score_completeness = bounded_integer_score(evaluation, "score_completeness", minimum=1, maximum=3, default=1)
+        session.score_courtesy = bounded_integer_score(evaluation, "score_courtesy", minimum=1, maximum=3, default=1)
+        session.score_correctness = bounded_integer_score(evaluation, "score_correctness", minimum=1, maximum=3, default=1)
+        session.score_conciseness = bounded_integer_score(evaluation, "score_conciseness", minimum=1, maximum=3, default=1)
         # Eye contact is camera-based and is only evaluated in Enrollment and Thesis interviews.
         session.score_eye_contact = None
         session.feedback_summary = evaluation.get("feedback_summary", "")

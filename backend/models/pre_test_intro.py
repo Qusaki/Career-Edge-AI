@@ -21,7 +21,7 @@ class PreTestIntroSession(Base):
     score_conciseness = Column(Integer, nullable=True)
     score_eye_contact = Column(Integer, nullable=True)
     
-    total_score = Column(Float, nullable=True) # Usually out of 18
+    total_score = Column(Float, nullable=True) # out of 15
     passed = Column(Boolean, nullable=True)
     feedback_summary = Column(String, nullable=True)
     transcript = Column(String, nullable=True)

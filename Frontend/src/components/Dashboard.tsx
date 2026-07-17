@@ -9,6 +9,13 @@ import { PostTestPage } from './PostTestPage';
 import { useWebLLM } from '../hooks/useWebLLM';
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 import { db } from '../db';
+import { API_URL } from '../config/api';
+import {
+  getEnrollmentEvaluationTotal,
+  getNormalizedActivityScore,
+  getThesisEvaluationTotal,
+  isCompletedActivity,
+} from '../utils/analytics';
 import * as pdfjsLib from 'pdfjs-dist';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.mjs`;
 import {
@@ -53,6 +60,13 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'pre-test' | 'drills' | 'post-test' | 'history' | 'analytics' | 'profile' | 'settings' | 'interview-type' | 'university-setup' | 'new-interview' | 'interview-session' | 'interview-result' | 'thesis-setup' | 'thesis-session'>(() => {
+    if (window.location.pathname === '/pre-test') return 'pre-test';
+    if (window.location.pathname === '/drills') return 'drills';
+    if (window.location.pathname === '/post-test') return 'post-test';
+    return 'dashboard';
+  });
+  const shouldLoadInterviewAI = ['interview-type', 'university-setup', 'new-interview', 'interview-session', 'thesis-setup', 'thesis-session'].includes(activeTab);
   const {
     engine: webLLMEngine,
     isLoading: isLlmLoading,
@@ -62,13 +76,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     isReady: isLlmReady,
     hasError: hasLlmError,
     retry: retryWebLLM
-  } = useWebLLM();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'pre-test' | 'drills' | 'post-test' | 'history' | 'analytics' | 'profile' | 'settings' | 'interview-type' | 'university-setup' | 'new-interview' | 'interview-session' | 'interview-result' | 'thesis-setup' | 'thesis-session'>(() => {
-    if (window.location.pathname === '/pre-test') return 'pre-test';
-    if (window.location.pathname === '/drills') return 'drills';
-    if (window.location.pathname === '/post-test') return 'post-test';
-    return 'dashboard';
-  });
+  } = useWebLLM('Llama-3.2-1B-Instruct-q4f16_1-MLC', shouldLoadInterviewAI);
   const [isModuleSessionMode, setIsModuleSessionMode] = useState(false);
   const [prevTab, setPrevTab] = useState<string>('dashboard');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -125,15 +133,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       (activeTab === 'thesis-session' && !thesisResult)
     )
   );
-  const getNormalizedScore = (item: any) => {
-    if (item.total_score == null && item.score == null) return null;
-    // Remove legacy fabricated Eye Contact points from camera-free assessments.
-    const scoreWithoutLegacyEyeContact = Math.max(0, (item.total_score || 0) - (item.score_eye_contact || 0));
-    if (item._source === 'pre-test-intro') return Math.round((scoreWithoutLegacyEyeContact / 15) * 100);
-    if (item._source === 'pre-test-active-listening' || item._source === 'post-test-interview') return Math.round((scoreWithoutLegacyEyeContact / 25) * 100);
-    if (item._source === 'drills') return item.score == null ? null : Math.round(item.score);
-    return Math.round(item.total_score || 0);
-  };
   const communicationSkillCriteria = [
     {
       label: 'Vocabulary Usage',
@@ -175,15 +174,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
   // Calculate statistics once for reuse
   const stats = (() => {
-    // Only count interviews that have been completed with a score > 0
-    const scoredEnrollment = interviewHistory.filter(item => (item.total_score || 0) > 0);
-    const scoredThesis = thesisHistory.filter(item => (item.total_score || 0) > 0);
-    const moduleHistory = communicationHistory.filter(item => item.status === 'completed' || (item.total_score || item.score || 0) > 0);
-    const allScoredActivities = [...scoredEnrollment, ...scoredThesis, ...moduleHistory]
-      .map(item => getNormalizedScore(item))
-      .filter((score): score is number => score != null && score > 0);
-    const totalInterviews = scoredEnrollment.length + scoredThesis.length + moduleHistory.length;
-    const scoredCommunication = communicationHistory.filter(item => (item.total_score || 0) > 0);
+    const completedEnrollment = interviewHistory.filter(isCompletedActivity);
+    const completedThesis = thesisHistory.filter(isCompletedActivity);
+    const completedModules = communicationHistory.filter(isCompletedActivity);
+    const completedActivities = [...completedEnrollment, ...completedThesis, ...completedModules];
+    const allScoredActivities = completedActivities
+      .map(item => getNormalizedActivityScore(item))
+      .filter((score): score is number => score != null);
+    const totalInterviews = completedActivities.length;
+    const scoredCommunication = completedModules.filter(item => item._source !== 'drills');
     const scoredCount = allScoredActivities.length;
 
     const avgScore = scoredCount > 0
@@ -205,11 +204,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     );
     const skillBreakdown = communicationSkillCriteria.map(criteria => {
       if (criteria.field === 'score_eye_contact') {
-        const cameraRecords = [...scoredEnrollment, ...scoredThesis].filter(item =>
+        const cameraRecords = [...completedEnrollment, ...completedThesis].filter(item =>
           (item.eye_contact_samples || 0) > 0 && item.score_eye_contact != null
         );
-        const cameraPercentage = cameraRecords.length > 0
-          ? parseFloat((cameraRecords.reduce((acc, curr) => acc + Number(curr.score_eye_contact), 0) / cameraRecords.length).toFixed(1))
+        const totalCameraSamples = cameraRecords.reduce((sum, item) => sum + Number(item.eye_contact_samples || 0), 0);
+        const cameraPercentage = totalCameraSamples > 0
+          ? parseFloat((cameraRecords.reduce(
+              (sum, item) => sum + (Number(item.score_eye_contact) * Number(item.eye_contact_samples || 0)),
+              0,
+            ) / totalCameraSamples).toFixed(1))
           : null;
 
         return {
@@ -226,20 +229,56 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       const recordsWithScore = communicationScoredHistory.filter(item => item[criteria.field] != null);
       const score = recordsWithScore.length > 0
         ? parseFloat((recordsWithScore.reduce((acc, curr) => acc + (curr[criteria.field] || 0), 0) / recordsWithScore.length).toFixed(1))
-        : 0;
+        : null;
 
       return {
         label: criteria.label,
         description: criteria.description,
-        score,
-        displayScore: `${score}/5`,
-        value: Math.round((score / 5) * 100),
-        scale: '1-5 scale',
+        score: score || 0,
+        displayScore: score == null ? 'N/A' : `${score}/5`,
+        value: score == null ? 0 : Math.round((score / 5) * 100),
+        scale: score == null ? 'No scored data' : '1-5 scale',
         color: criteria.color,
       };
     });
 
-    return { totalInterviews, avgScore, performance, perfColor, perfMsg, skillBreakdown };
+    const activityGroups = [
+      { label: 'University Enrollment', records: completedEnrollment },
+      { label: 'Thesis Defense', records: completedThesis },
+      { label: 'Pre-Test: Who Am I?', records: completedModules.filter(item => item._source === 'pre-test-intro') },
+      { label: 'Pre-Test: Active Listening', records: completedModules.filter(item => item._source === 'pre-test-active-listening') },
+      { label: 'Post-Test', records: completedModules.filter(item => item._source === 'post-test-interview') },
+      { label: 'Drills', records: completedModules.filter(item => item._source === 'drills') },
+    ].map(group => {
+      const scores = group.records
+        .map(item => getNormalizedActivityScore(item))
+        .filter((score): score is number => score != null);
+      return {
+        label: group.label,
+        completed: group.records.length,
+        scored: scores.length,
+        average: scores.length > 0
+          ? Number((scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(2))
+          : null,
+      };
+    });
+
+    const skillsWithData = skillBreakdown.filter(skill => skill.displayScore !== 'N/A');
+    const strongestSkill = skillsWithData.reduce<(typeof skillsWithData)[number] | null>(
+      (best, skill) => !best || skill.value > best.value ? skill : best,
+      null,
+    );
+    const improvementSkill = skillsWithData.reduce<(typeof skillsWithData)[number] | null>(
+      (lowest, skill) => !lowest || skill.value < lowest.value ? skill : lowest,
+      null,
+    );
+    const insight = scoredCount === 0
+      ? 'Complete a scored activity to generate a performance insight.'
+      : strongestSkill && improvementSkill
+        ? `Your strongest recorded skill is ${strongestSkill.label}. Focus next on ${improvementSkill.label} to improve your overall average.`
+        : `Your current average is ${avgScore}% across ${scoredCount} scored ${scoredCount === 1 ? 'activity' : 'activities'}. Complete communication exercises to unlock skill-level insights.`;
+
+    return { totalInterviews, avgScore, performance, perfColor, perfMsg, skillBreakdown, activityGroups, insight };
   })();
 
   const renderStatCards = (delay = 0) => (
@@ -267,9 +306,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       </motion.div>
     </div>
   );
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
 
   useEffect(() => {
     const routes: Partial<Record<typeof activeTab, string>> = {
@@ -309,29 +345,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       const res = await fetch(`${API_URL}/upcoming-student-interview/`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (res.ok) {
-        const data = await res.json();
-        setInterviewHistory(data);
-        db.history.put({ id: 1, type: 'upcoming', data: data, timestamp: Date.now() }).catch(console.error);
-      }
+      if (!res.ok) throw new Error(`Enrollment history request failed with ${res.status}.`);
+      const data = await res.json();
+      setInterviewHistory(data);
+      db.history.put({ id: 1, type: 'upcoming', data: data, timestamp: Date.now() }).catch(console.error);
     } catch (e) {
       console.warn("Offline: loading interview history from cache");
       const cached = await db.history.get(1);
       const data = cached ? cached.data : [];
 
       const offlineSessions = await db.offlineSessions.toArray();
-      const offlineUpcoming = offlineSessions.filter(s => s.type === 'upcoming').map(s => ({
-        id: s.localId,
-        status: s.status === 'pending_sync' ? 'pending_sync' : 'completed',
-        start_time: new Date(s.timestamp).toISOString(),
-        total_score: s.evaluation?.total_score || s.evaluation?.technical_score || 0,
-        passed: true,
-        isOffline: true
-      }));
+      const offlineUpcoming = offlineSessions.filter(s => s.type === 'upcoming').map(s => {
+        const totalScore = getEnrollmentEvaluationTotal(s.evaluation || {}, profile.department);
+        return {
+          id: s.localId,
+          status: s.status === 'pending_sync' ? 'pending_sync' : 'completed',
+          start_time: new Date(s.timestamp).toISOString(),
+          total_score: totalScore,
+          passed: totalScore >= 70,
+          isOffline: true
+        };
+      });
 
       setInterviewHistory([...offlineUpcoming, ...data]);
     }
-  }, [API_URL]);
+  }, [API_URL, profile.department]);
 
   const fetchThesisHistory = React.useCallback(async () => {
     try {
@@ -340,29 +378,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       const res = await fetch(`${API_URL}/thesis-interview/`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (res.ok) {
-        const data = await res.json();
-        setThesisHistory(data);
-        db.history.put({ id: 2, type: 'thesis', data: data, timestamp: Date.now() }).catch(console.error);
-      }
+      if (!res.ok) throw new Error(`Thesis history request failed with ${res.status}.`);
+      const data = await res.json();
+      setThesisHistory(data);
+      db.history.put({ id: 2, type: 'thesis', data: data, timestamp: Date.now() }).catch(console.error);
     } catch (e) {
       console.warn("Offline: loading thesis history from cache");
       const cached = await db.history.get(2);
       const data = cached ? cached.data : [];
 
       const offlineSessions = await db.offlineSessions.toArray();
-      const offlineThesis = offlineSessions.filter(s => s.type === 'thesis').map(s => ({
-        id: s.localId,
-        status: s.status === 'pending_sync' ? 'pending_sync' : 'completed',
-        start_time: new Date(s.timestamp).toISOString(),
-        total_score: s.evaluation?.total_score || s.evaluation?.score_ccit_technical_innovation || 0,
-        passed: true,
-        isOffline: true
-      }));
+      const offlineThesis = offlineSessions.filter(s => s.type === 'thesis').map(s => {
+        const totalScore = getThesisEvaluationTotal(s.evaluation || {}, profile.department);
+        return {
+          id: s.localId,
+          status: s.status === 'pending_sync' ? 'pending_sync' : 'completed',
+          start_time: new Date(s.timestamp).toISOString(),
+          total_score: totalScore,
+          passed: totalScore >= 70,
+          isOffline: true
+        };
+      });
 
       setThesisHistory([...offlineThesis, ...data]);
     }
-  }, [API_URL]);
+  }, [API_URL, profile.department]);
 
   const fetchCommunicationHistory = React.useCallback(async () => {
     try {
@@ -391,6 +431,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         drillsRes.ok ? drillsRes.json() : Promise.resolve([]),
       ]);
 
+      if (![preTestIntroRes, activeListeningRes, postTestRes, drillsRes].every(response => response.ok)) {
+        throw new Error('One or more analytics history endpoints failed.');
+      }
+
       setCommunicationHistory([
         ...preTestIntro.map((item: any) => ({ ...item, _source: 'pre-test-intro' })),
         ...activeListening.map((item: any) => ({ ...item, _source: 'pre-test-active-listening' })),
@@ -399,7 +443,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       ]);
     } catch (e) {
       console.warn("Unable to load communication skill history", e);
-      setCommunicationHistory([]);
     }
   }, [API_URL]);
 
@@ -519,8 +562,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   }, [API_URL, onLogout, fetchHistory, fetchThesisHistory, fetchCommunicationHistory]);
 
   useEffect(() => {
-    if (activeTab === 'analytics') fetchCommunicationHistory();
-  }, [activeTab, fetchCommunicationHistory]);
+    if (activeTab === 'analytics') {
+      fetchHistory();
+      fetchThesisHistory();
+      fetchCommunicationHistory();
+    }
+  }, [activeTab, fetchHistory, fetchThesisHistory, fetchCommunicationHistory]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1232,16 +1279,36 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
     try {
       if (webLLMEngine) {
-        const gradingPrompt = `You are a strict grading algorithm. You will evaluate the following transcript of an incoming college freshman interview. 
-Extract 5 scores out of 100 based on the rubric. Respond in STRICT JSON matching this schema exactly:
-{
+        const department = profile.department.trim().toUpperCase();
+        const gradingSchema = department === 'CTE' ? `{
+  "subject_matter_score": 0,
+  "teaching_aptitude_score": 0,
+  "communication_score": 0,
+  "motivation_score": 0,
+  "academic_preparedness_score": 0,
+  "problem_solving_score": 0,
+  "leadership_score": 0,
+  "feedback_summary": "string"
+}` : department === 'CBAPA' ? `{
+  "business_fundamentals_score": 0,
+  "analytical_score": 0,
+  "communication_score": 0,
+  "entrepreneurial_score": 0,
+  "academic_preparedness_score": 0,
+  "leadership_score": 0,
+  "ethical_score": 0,
+  "feedback_summary": "string"
+}` : `{
   "technical_score": 0,
   "problem_solving_score": 0,
   "coding_score": 0,
   "communication_score": 0,
   "soft_skills_score": 0,
   "feedback_summary": "string"
-}
+}`;
+        const gradingPrompt = `You are a strict grading algorithm. You will evaluate the following transcript of an incoming college freshman interview.
+Score every listed criterion from 0 to 100. Respond in STRICT JSON matching this schema exactly:
+${gradingSchema}
 Transcript:
 ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
 
@@ -1263,6 +1330,8 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
         score_eye_contact: eyeTracker.samples > 0 ? eyeTracker.score : null,
         eye_contact_samples: eyeTracker.samples,
       };
+      const offlineTotalScore = getEnrollmentEvaluationTotal(evaluation, profile.department);
+      evaluation.total_score = offlineTotalScore;
 
       if (String(sessionId).startsWith('local_')) {
         // It's an offline session, save to IndexedDB directly
@@ -1275,7 +1344,7 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
           timestamp: Date.now()
         });
 
-        setInterviewResult({ ...evaluation, total_score: evaluation?.total_score || evaluation?.technical_score || 0, passed: true });
+        setInterviewResult({ ...evaluation, total_score: offlineTotalScore, passed: offlineTotalScore >= 70 });
         stopListening();
         setIsLeaveModalOpen(false);
         setIsAiSpeaking(false);
@@ -1316,7 +1385,8 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
         timestamp: Date.now()
       });
 
-      setInterviewResult({ ...evaluation, total_score: evaluation?.total_score || evaluation?.technical_score || 0, passed: true });
+      const offlineTotalScore = getEnrollmentEvaluationTotal(evaluation || {}, profile.department);
+      setInterviewResult({ ...evaluation, total_score: offlineTotalScore, passed: offlineTotalScore >= 70 });
       stopListening();
       setIsLeaveModalOpen(false);
       setIsAiSpeaking(false);
@@ -1532,16 +1602,33 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
 
     try {
       if (webLLMEngine) {
-        const gradingPrompt = `You are a strict grading algorithm. Evaluate the transcript of this thesis defense.
-Extract scores out of 100 based on the rubric. Respond in STRICT JSON matching this schema exactly:
-{
+        const department = profile.department.trim().toUpperCase();
+        const gradingSchema = department === 'CTE' ? `{
+  "pedagogical_innovation_score": 0,
+  "action_research_score": 0,
+  "learning_outcomes_score": 0,
+  "literature_alignment_score": 0,
+  "teaching_demo_score": 0,
+  "scalability_policy_score": 0,
+  "feedback_summary": "string"
+}` : department === 'CBAPA' ? `{
+  "research_problem_score": 0,
+  "methodology_analysis_score": 0,
+  "practical_roi_score": 0,
+  "literature_theoretical_score": 0,
+  "professional_delivery_score": 0,
+  "feedback_summary": "string"
+}` : `{
   "technical_innovation_score": 0,
   "system_implementation_score": 0,
   "experimental_validation_score": 0,
   "literature_review_score": 0,
   "demo_quality_score": 0,
   "feedback_summary": "string"
-}
+}`;
+        const gradingPrompt = `You are a strict grading algorithm. Evaluate the transcript of this thesis defense.
+Score every listed criterion from 0 to 100. Respond in STRICT JSON matching this schema exactly:
+${gradingSchema}
 Transcript:
 ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
 
@@ -1566,6 +1653,8 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
         score_eye_contact: eyeTracker.samples > 0 ? eyeTracker.score : null,
         eye_contact_samples: eyeTracker.samples,
       };
+      const offlineTotalScore = getThesisEvaluationTotal(evaluation, profile.department);
+      evaluation.total_score = offlineTotalScore;
 
       if (String(thesisSessionIdRef.current).startsWith('local_')) {
         // Offline mode
@@ -1578,7 +1667,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
           timestamp: Date.now()
         });
 
-        setThesisResult({ ...evaluation, total_score: evaluation?.total_score || evaluation?.score_ccit_technical_innovation || 0, passed: true });
+        setThesisResult({ ...evaluation, total_score: offlineTotalScore, passed: offlineTotalScore >= 70 });
         stopListening();
         setThesisIsLeaveModalOpen(false);
         setIsAiSpeaking(false);
@@ -1619,7 +1708,8 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
         timestamp: Date.now()
       });
 
-      setThesisResult({ ...evaluation, total_score: evaluation?.total_score || evaluation?.score_ccit_technical_innovation || 0, passed: true });
+      const offlineTotalScore = getThesisEvaluationTotal(evaluation || {}, profile.department);
+      setThesisResult({ ...evaluation, total_score: offlineTotalScore, passed: offlineTotalScore >= 70 });
       stopListening();
       setThesisIsLeaveModalOpen(false);
       setIsAiSpeaking(false);
@@ -2963,10 +3053,34 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
               >
                 <div>
                   <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Analytics</h1>
-                  <p className="text-lg text-slate-400 mt-2">In-depth overview of your overall interview performance.</p>
+                  <p className="text-lg text-slate-400 mt-2">In-depth overview of all interviews, tests, and drills.</p>
                 </div>
 
                 {renderStatCards()}
+
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl backdrop-blur-sm">
+                  <div className="mb-6">
+                    <h3 className="text-xl font-bold text-slate-100 italic tracking-tight">Activity Coverage</h3>
+                    <p className="mt-1 text-sm text-slate-400">Completed records and normalized averages for every assessment type.</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {stats.activityGroups.map(activity => (
+                      <div key={activity.label} className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+                        <p className="text-sm font-bold text-slate-100">{activity.label}</p>
+                        <div className="mt-3 flex items-end justify-between gap-4">
+                          <div>
+                            <p className="text-2xl font-black text-gold-text">{activity.completed}</p>
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Completed</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-2xl font-black text-sky-400">{activity.average == null ? 'N/A' : `${activity.average}%`}</p>
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{activity.scored} scored</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-xl backdrop-blur-sm">
@@ -3002,9 +3116,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       <BarChart2 className="w-8 h-8" />
                     </div>
                     <h3 className="text-xl font-bold text-slate-100 italic tracking-tight">Insight Generator</h3>
-                    <p className="text-slate-400 text-sm leading-relaxed px-4 italic">
-                      "Your communication clarity is improving! Focus on structural answers for coding sessions to reach 'Excellent' status."
-                    </p>
+                    <p className="text-slate-400 text-sm leading-relaxed px-4 italic">“{stats.insight}”</p>
                   </div>
                 </div>
               </motion.div>

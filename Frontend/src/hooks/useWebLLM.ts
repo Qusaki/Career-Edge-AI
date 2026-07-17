@@ -15,9 +15,9 @@ const getErrorMessage = (error: unknown) => {
   return 'Unable to initialize WebLLM.';
 };
 
-export function useWebLLM(modelId: string = "Llama-3.2-1B-Instruct-q4f16_1-MLC") {
+export function useWebLLM(modelId: string = "Llama-3.2-1B-Instruct-q4f16_1-MLC", enabled = true) {
   const [engine, setEngine] = useState<MLCEngine | null>(globalEngine);
-  const [isLoading, setIsLoading] = useState(!globalEngine);
+  const [isLoading, setIsLoading] = useState(enabled && !globalEngine);
   const [progress, setProgress] = useState(globalEngine ? 100 : 0);
   const [status, setStatus] = useState(globalEngine ? "Model loaded and ready!" : "Initializing...");
   const [error, setError] = useState<string | null>(globalError);
@@ -39,6 +39,13 @@ export function useWebLLM(modelId: string = "Llama-3.2-1B-Instruct-q4f16_1-MLC")
 
   useEffect(() => {
     let cancelled = false;
+
+    if (!enabled) {
+      setIsLoading(false);
+      setLoadState(globalEngine ? 'ready' : 'loading');
+      setStatus(globalEngine ? 'Model loaded and ready!' : 'Interview AI will load when needed.');
+      return;
+    }
 
     if (globalEngine) {
       setEngine(globalEngine);
@@ -105,7 +112,7 @@ export function useWebLLM(modelId: string = "Llama-3.2-1B-Instruct-q4f16_1-MLC")
     return () => {
       cancelled = true;
     };
-  }, [modelId, retryNonce]);
+  }, [enabled, modelId, retryNonce]);
 
   return {
     engine,

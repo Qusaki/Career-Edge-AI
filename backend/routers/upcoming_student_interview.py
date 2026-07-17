@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from core.ai import close_ai_unavailable, get_ollama_client, get_ollama_model
 from core.deps import get_current_user, get_current_user_ws
+from core.scoring import bounded_integer_score, bounded_score
 from models.user import User
 from models.upcoming_student_interview import UpcomingStudentInterviewSession, UpcomingStudentInterviewMessage
 from schemas.upcoming_student_interview import UpcomingStudentInterviewSessionResponse, UpcomingStudentInterviewSessionWithMessagesResponse, UpcomingStudentCompleteInterviewRequest
@@ -247,22 +248,27 @@ def complete_interview(session_id: int, request: UpcomingStudentCompleteIntervie
         
     try:
         evaluation = request.evaluation
-        session.eye_contact_samples = max(0, int(evaluation.get("eye_contact_samples", 0)))
+        def score(key: str) -> float:
+            return bounded_score(evaluation, key, minimum=0, maximum=100, default=0)
+
+        session.eye_contact_samples = bounded_integer_score(
+            evaluation, "eye_contact_samples", minimum=0, maximum=10_000_000, default=0
+        )
         eye_contact_score = evaluation.get("eye_contact_score")
         session.score_eye_contact = (
-            max(0.0, min(100.0, float(eye_contact_score)))
+            score("eye_contact_score")
             if session.eye_contact_samples > 0 and eye_contact_score is not None
             else None
         )
         
         if current_user.department.upper() == "CTE":
-            session.score_cte_subject_matter = evaluation.get("subject_matter_score", 0)
-            session.score_cte_teaching = evaluation.get("teaching_aptitude_score", 0)
-            session.score_cte_communication = evaluation.get("communication_score", 0)
-            session.score_cte_motivation = evaluation.get("motivation_score", 0)
-            session.score_cte_academic = evaluation.get("academic_preparedness_score", 0)
-            session.score_cte_problem_solving = evaluation.get("problem_solving_score", 0)
-            session.score_cte_leadership = evaluation.get("leadership_score", 0)
+            session.score_cte_subject_matter = score("subject_matter_score")
+            session.score_cte_teaching = score("teaching_aptitude_score")
+            session.score_cte_communication = score("communication_score")
+            session.score_cte_motivation = score("motivation_score")
+            session.score_cte_academic = score("academic_preparedness_score")
+            session.score_cte_problem_solving = score("problem_solving_score")
+            session.score_cte_leadership = score("leadership_score")
             session.feedback_summary = evaluation.get("feedback_summary", "")
             
             total = (
@@ -275,13 +281,13 @@ def complete_interview(session_id: int, request: UpcomingStudentCompleteIntervie
                 (session.score_cte_leadership * 0.05)
             )
         elif current_user.department.upper() == "CBAPA":
-            session.score_cbapa_business = evaluation.get("business_fundamentals_score", 0)
-            session.score_cbapa_analytical = evaluation.get("analytical_score", 0)
-            session.score_cbapa_communication = evaluation.get("communication_score", 0)
-            session.score_cbapa_entrepreneurial = evaluation.get("entrepreneurial_score", 0)
-            session.score_cbapa_academic = evaluation.get("academic_preparedness_score", 0)
-            session.score_cbapa_leadership = evaluation.get("leadership_score", 0)
-            session.score_cbapa_ethical = evaluation.get("ethical_score", 0)
+            session.score_cbapa_business = score("business_fundamentals_score")
+            session.score_cbapa_analytical = score("analytical_score")
+            session.score_cbapa_communication = score("communication_score")
+            session.score_cbapa_entrepreneurial = score("entrepreneurial_score")
+            session.score_cbapa_academic = score("academic_preparedness_score")
+            session.score_cbapa_leadership = score("leadership_score")
+            session.score_cbapa_ethical = score("ethical_score")
             session.feedback_summary = evaluation.get("feedback_summary", "")
             
             total = (
@@ -294,11 +300,11 @@ def complete_interview(session_id: int, request: UpcomingStudentCompleteIntervie
                 (session.score_cbapa_ethical * 0.05)
             )
         else:
-            session.score_technical = evaluation.get("technical_score", 0)
-            session.score_problem_solving = evaluation.get("problem_solving_score", 0)
-            session.score_coding = evaluation.get("coding_score", 0)
-            session.score_communication = evaluation.get("communication_score", 0)
-            session.score_soft_skills = evaluation.get("soft_skills_score", 0)
+            session.score_technical = score("technical_score")
+            session.score_problem_solving = score("problem_solving_score")
+            session.score_coding = score("coding_score")
+            session.score_communication = score("communication_score")
+            session.score_soft_skills = score("soft_skills_score")
             session.feedback_summary = evaluation.get("feedback_summary", "")
             
             # Calculate weighted total

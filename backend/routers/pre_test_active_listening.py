@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from core.ai import close_ai_unavailable, get_ollama_client, get_ollama_model
 from core.deps import get_current_user, get_current_user_ws
+from core.scoring import bounded_integer_score
 from models.user import User
 from models.pre_test_active_listening import PreTestActiveListeningSession, PreTestActiveListeningMessage
 from schemas.pre_test_active_listening import PreTestActiveListeningSessionResponse, PreTestActiveListeningSessionWithMessagesResponse, PreTestActiveListeningCompleteRequest
@@ -180,13 +181,13 @@ def complete_session(session_id: int, request: PreTestActiveListeningCompleteReq
     try:
         evaluation = request.evaluation
         
-        session.score_vocabulary = evaluation.get("score_vocabulary", 1)
-        session.score_clarity = evaluation.get("score_clarity", 1)
+        session.score_vocabulary = bounded_integer_score(evaluation, "score_vocabulary", minimum=1, maximum=5, default=1)
+        session.score_clarity = bounded_integer_score(evaluation, "score_clarity", minimum=1, maximum=5, default=1)
         # Eye contact is camera-based and is only evaluated in Enrollment and Thesis interviews.
         session.score_eye_contact = None
-        session.score_grammar = evaluation.get("score_grammar", 1)
-        session.score_courtesy = evaluation.get("score_courtesy", 1)
-        session.score_conciseness = evaluation.get("score_conciseness", 1)
+        session.score_grammar = bounded_integer_score(evaluation, "score_grammar", minimum=1, maximum=5, default=1)
+        session.score_courtesy = bounded_integer_score(evaluation, "score_courtesy", minimum=1, maximum=5, default=1)
+        session.score_conciseness = bounded_integer_score(evaluation, "score_conciseness", minimum=1, maximum=5, default=1)
         session.feedback_summary = evaluation.get("feedback_summary", "")
         
         # Calculate total score out of 25 (5 criteria * 5 max points).

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { API_URL } from '../config/api';
 import { motion, AnimatePresence } from 'motion/react';
 import { Mail, Lock, User, ArrowRight, ArrowLeft, Eye, EyeOff } from 'lucide-react';
 
@@ -27,7 +28,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
   const [showPassword, setShowPassword] = useState(false);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
