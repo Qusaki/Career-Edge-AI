@@ -9,6 +9,7 @@ import { PostTestPage } from './PostTestPage';
 import { useWebLLM } from '../hooks/useWebLLM';
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 import { db } from '../db';
+import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME, getClearSpeechTimeoutMs } from '../utils/speech';
 import { API_URL } from '../config/api';
 import {
   getEnrollmentEvaluationTotal,
@@ -1003,14 +1004,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
           const utterance = new SpeechSynthesisUtterance(text);
           utterance.lang = detectSpeechLang(text);
-          utterance.rate = 0.95;
-          utterance.pitch = 1;
+          utterance.rate = CLEAR_AI_SPEECH_RATE;
+          utterance.pitch = CLEAR_AI_SPEECH_PITCH;
+          utterance.volume = CLEAR_AI_SPEECH_VOLUME;
           const voices = window.speechSynthesis.getVoices();
           const preferredVoice = selectPreferredFemaleVoice(voices, utterance.lang);
           if (preferredVoice) utterance.voice = preferredVoice;
 
           let finished = false;
-          const fallbackTimeoutMs = Math.max(5000, text.length * 140);
+          const fallbackTimeoutMs = getClearSpeechTimeoutMs(text);
           const fallbackTimer = window.setTimeout(() => {
             console.warn("Speech synthesis timed out before onend fired.");
             finish();

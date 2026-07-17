@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, LoaderCircle, Mic, MicOff, RefreshCw, Volume2 } from 'lucide-react';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
+import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
 
 type Session = {
   id: number;
@@ -67,8 +68,9 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'en-US';
-    utterance.rate = 0.94;
-    utterance.pitch = 1;
+    utterance.rate = CLEAR_AI_SPEECH_RATE;
+    utterance.pitch = CLEAR_AI_SPEECH_PITCH;
+    utterance.volume = CLEAR_AI_SPEECH_VOLUME;
     utterance.onstart = () => setIsVoiceSpeaking(true);
     utterance.onend = () => setIsVoiceSpeaking(false);
     utterance.onerror = () => setIsVoiceSpeaking(false);

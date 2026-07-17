@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, ArrowRight, Dumbbell, LoaderCircle, Mic, MicOff, RefreshCw, Sparkles, CheckCircle2 } from 'lucide-react';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
+import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
 
 type DrillSession = {
   id: number;
@@ -150,8 +151,9 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'en-US';
-    utterance.rate = 0.94;
-    utterance.pitch = 1;
+    utterance.rate = CLEAR_AI_SPEECH_RATE;
+    utterance.pitch = CLEAR_AI_SPEECH_PITCH;
+    utterance.volume = CLEAR_AI_SPEECH_VOLUME;
     utterance.onstart = () => setIsVoiceSpeaking(true);
     utterance.onend = () => setIsVoiceSpeaking(false);
     utterance.onerror = () => setIsVoiceSpeaking(false);
