@@ -42,6 +42,7 @@ import {
   Eye,
   EyeOff,
   Camera,
+  CameraOff,
   BookOpen,
   Dumbbell,
   ClipboardCheck
@@ -117,9 +118,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const [thesisInSessionUploading, setThesisInSessionUploading] = useState(false);
   const [thesisAbstractUpdated, setThesisAbstractUpdated] = useState(false);
   const activeInterviewModeRef = React.useRef<'enrollment' | 'thesis' | null>(null);
+  const [isCameraEnabled, setIsCameraEnabled] = useState(false);
   const eyeTracker = useEyeContactTracker(
-    (activeTab === 'interview-session' && !interviewResult) ||
-    (activeTab === 'thesis-session' && !thesisResult)
+    isCameraEnabled && (
+      (activeTab === 'interview-session' && !interviewResult) ||
+      (activeTab === 'thesis-session' && !thesisResult)
+    )
   );
   const getNormalizedScore = (item: any) => {
     if (item.total_score == null && item.score == null) return null;
@@ -1103,6 +1107,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     }
 
     if (sid) {
+      setIsCameraEnabled(false);
       sessionIdRef.current = sid as number;
       setSessionId(sid as number);
       activeInterviewModeRef.current = 'enrollment';
@@ -1205,6 +1210,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     setSessionId(null);
     setConversationLog([]);
     setInterviewResult(null);
+    setIsCameraEnabled(false);
     sessionIdRef.current = null;
     if (audioPlayerRef.current) {
       audioPlayerRef.current.pause();
@@ -1442,6 +1448,7 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
     }
 
     if (sid) {
+      setIsCameraEnabled(false);
       thesisSessionIdRef.current = sid as number;
       setThesisSessionId(sid as number);
 
@@ -1506,6 +1513,7 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
     thesisSessionIdRef.current = null;
     setThesisConversationLog([]);
     setThesisResult(null);
+    setIsCameraEnabled(false);
     setThesisAbstractFile(null);
     setThesisElapsedSeconds(0);
     setAiResponseText('');
@@ -2329,13 +2337,15 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       <Shield className="w-3.5 h-3.5" />
                       Thesis Defense · Prof. Maxiel
                     </div>
-                    <div className="absolute bottom-4 right-4 z-20 w-44 overflow-hidden rounded-xl border border-purple-400/40 bg-slate-950 shadow-xl">
-                      <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
-                      <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-slate-200">
-                        <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unsupported' ? 'Tracking unsupported' : 'Starting camera'}</span>
-                        <span className="text-purple-300">{eyeTracker.samples > 0 ? `${eyeTracker.score}%` : '—'}</span>
+                    {isCameraEnabled && (
+                      <div className="absolute bottom-4 right-4 z-20 w-44 overflow-hidden rounded-xl border border-purple-400/40 bg-slate-950 shadow-xl">
+                        <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
+                        <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-slate-200">
+                          <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unsupported' ? 'Tracking unsupported' : 'Starting camera'}</span>
+                          <span className="text-purple-300">{eyeTracker.samples > 0 ? `${eyeTracker.score}%` : '—'}</span>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </motion.div>
 
                   {/* RIGHT: Transcript / Result */}
@@ -2497,6 +2507,17 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       {isListening && <span className="absolute inset-0 rounded-[2rem] border-4 border-emerald-400 opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }} />}
                     </button>
 
+                    <button
+                      type="button"
+                      onClick={() => setIsCameraEnabled(enabled => !enabled)}
+                      className={`${isCameraEnabled ? 'bg-purple-500/20 border-purple-400/50 text-purple-300' : 'bg-[#171e2e] border-slate-800 text-slate-400'} hover:bg-purple-500/10 hover:border-purple-400/40 hover:text-purple-300 w-14 h-14 rounded-2xl border transition-all duration-300 flex items-center justify-center shadow-lg group`}
+                      title={isCameraEnabled ? 'Turn camera off' : 'Turn camera on'}
+                      aria-label={isCameraEnabled ? 'Turn camera off' : 'Turn camera on'}
+                      aria-pressed={isCameraEnabled}
+                    >
+                      {isCameraEnabled ? <Camera className="w-5 h-5 group-hover:scale-110 transition-transform" /> : <CameraOff className="w-5 h-5 group-hover:scale-110 transition-transform" />}
+                    </button>
+
                     {/* Leave */}
                     <button
                       onClick={() => setThesisIsLeaveModalOpen(true)}
@@ -2560,13 +2581,15 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         />
                       </Canvas>
                     </div>
-                    <div className="absolute bottom-4 right-4 z-20 w-44 overflow-hidden rounded-xl border border-sky-400/40 bg-slate-950 shadow-xl">
-                      <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
-                      <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-slate-200">
-                        <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unsupported' ? 'Tracking unsupported' : 'Starting camera'}</span>
-                        <span className="text-sky-300">{eyeTracker.samples > 0 ? `${eyeTracker.score}%` : '—'}</span>
+                    {isCameraEnabled && (
+                      <div className="absolute bottom-4 right-4 z-20 w-44 overflow-hidden rounded-xl border border-sky-400/40 bg-slate-950 shadow-xl">
+                        <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
+                        <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-slate-200">
+                          <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unsupported' ? 'Tracking unsupported' : 'Starting camera'}</span>
+                          <span className="text-sky-300">{eyeTracker.samples > 0 ? `${eyeTracker.score}%` : '—'}</span>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </motion.div>
 
                   {/* RIGHT COLUMN: USER RESPONSES & EVALUATION */}
@@ -2777,6 +2800,17 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         <Mic className={`w-8 h-8 relative z-10 ${isMicTransitioning ? 'text-sky-400' : 'text-slate-400'}`} />
                       )}
                       {isListening && <span className="absolute inset-0 rounded-[2rem] border-4 border-emerald-400 opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }} />}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setIsCameraEnabled(enabled => !enabled)}
+                      className={`${isCameraEnabled ? 'bg-sky-500/20 border-sky-400/50 text-sky-300' : 'bg-[#171e2e] border-slate-800 text-slate-400'} hover:bg-sky-500/10 hover:border-sky-400/40 hover:text-sky-300 w-14 h-14 rounded-2xl border transition-all duration-300 flex items-center justify-center shadow-lg group`}
+                      title={isCameraEnabled ? 'Turn camera off' : 'Turn camera on'}
+                      aria-label={isCameraEnabled ? 'Turn camera off' : 'Turn camera on'}
+                      aria-pressed={isCameraEnabled}
+                    >
+                      {isCameraEnabled ? <Camera className="w-5 h-5 group-hover:scale-110 transition-transform" /> : <CameraOff className="w-5 h-5 group-hover:scale-110 transition-transform" />}
                     </button>
 
                     <button
