@@ -1,5 +1,16 @@
 type ScoreRecord = Record<string, unknown>;
 
+export type ActivityComparisonStatus = 'no-data' | 'baseline' | 'improved' | 'declined' | 'steady';
+
+export interface ActivityComparison {
+  label: string;
+  previous: number | null;
+  current: number | null;
+  delta: number | null;
+  status: ActivityComparisonStatus;
+  message: string;
+}
+
 const toFiniteNumber = (value: unknown): number | null => {
   const number = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(number) ? number : null;
@@ -33,6 +44,89 @@ export const getNormalizedActivityScore = (item: ScoreRecord): number | null => 
   }
 
   return clampPercentage(totalScore);
+};
+
+const activityTimestamp = (item: ScoreRecord): number => {
+  const value = item.end_time || item.start_time || item.timestamp;
+  const timestamp = value == null ? Number.NaN : Date.parse(String(value));
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const roundToOneDecimal = (value: number): number => Number(value.toFixed(1));
+
+/** Compare the two latest completed, scored records for one activity type. */
+export const buildActivityComparison = (
+  label: string,
+  records: ScoreRecord[],
+): ActivityComparison => {
+  const scoredRecords = records
+    .map(record => ({
+      record,
+      score: getNormalizedActivityScore(record),
+      timestamp: activityTimestamp(record),
+    }))
+    .filter((entry): entry is typeof entry & { score: number } => entry.score != null)
+    .sort((a, b) => {
+      const timeDifference = b.timestamp - a.timestamp;
+      if (timeDifference !== 0) return timeDifference;
+      return (toFiniteNumber(b.record.id) || 0) - (toFiniteNumber(a.record.id) || 0);
+    });
+
+  if (scoredRecords.length === 0) {
+    return {
+      label,
+      previous: null,
+      current: null,
+      delta: null,
+      status: 'no-data',
+      message: `Complete a scored ${label} activity to start tracking improvement.`,
+    };
+  }
+
+  const current = roundToOneDecimal(scoredRecords[0].score);
+  if (scoredRecords.length === 1) {
+    return {
+      label,
+      previous: null,
+      current,
+      delta: null,
+      status: 'baseline',
+      message: `This is your baseline score. Complete another ${label} activity to compare your progress.`,
+    };
+  }
+
+  const previous = roundToOneDecimal(scoredRecords[1].score);
+  const delta = roundToOneDecimal(current - previous);
+  if (delta > 0) {
+    return {
+      label,
+      previous,
+      current,
+      delta,
+      status: 'improved',
+      message: `Improved by ${delta} percentage ${delta === 1 ? 'point' : 'points'} since your previous session.`,
+    };
+  }
+  if (delta < 0) {
+    const decrease = Math.abs(delta);
+    return {
+      label,
+      previous,
+      current,
+      delta,
+      status: 'declined',
+      message: `Decreased by ${decrease} percentage ${decrease === 1 ? 'point' : 'points'}. Review your feedback before the next attempt.`,
+    };
+  }
+
+  return {
+    label,
+    previous,
+    current,
+    delta,
+    status: 'steady',
+    message: 'Your score is unchanged from the previous session. Keep practicing to move it forward.',
+  };
 };
 
 const weightedTotal = (evaluation: ScoreRecord, fields: Array<[string, number]>): number => {

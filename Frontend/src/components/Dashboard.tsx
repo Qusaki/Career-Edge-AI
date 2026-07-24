@@ -12,6 +12,7 @@ import { db } from '../db';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME, getClearSpeechTimeoutMs } from '../utils/speech';
 import { API_URL } from '../config/api';
 import {
+  buildActivityComparison,
   getEnrollmentEvaluationTotal,
   getNormalizedActivityScore,
   getThesisEvaluationTotal,
@@ -264,22 +265,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       };
     });
 
-    const skillsWithData = skillBreakdown.filter(skill => skill.displayScore !== 'N/A');
-    const strongestSkill = skillsWithData.reduce<(typeof skillsWithData)[number] | null>(
-      (best, skill) => !best || skill.value > best.value ? skill : best,
-      null,
-    );
-    const improvementSkill = skillsWithData.reduce<(typeof skillsWithData)[number] | null>(
-      (lowest, skill) => !lowest || skill.value < lowest.value ? skill : lowest,
-      null,
-    );
-    const insight = scoredCount === 0
-      ? 'Complete a scored activity to generate a performance insight.'
-      : strongestSkill && improvementSkill
-        ? `Your strongest recorded skill is ${strongestSkill.label}. Focus next on ${improvementSkill.label} to improve your overall average.`
-        : `Your current average is ${avgScore}% across ${scoredCount} scored ${scoredCount === 1 ? 'activity' : 'activities'}. Complete communication exercises to unlock skill-level insights.`;
+    const comparisonInsights = [
+      buildActivityComparison('University Enrollment', completedEnrollment),
+      buildActivityComparison('Thesis Defense', completedThesis),
+      buildActivityComparison(
+        'Pre-Test',
+        completedModules.filter(item => ['pre-test-intro', 'pre-test-active-listening'].includes(item._source)),
+      ),
+      buildActivityComparison(
+        'Post-Test',
+        completedModules.filter(item => item._source === 'post-test-interview'),
+      ),
+      buildActivityComparison(
+        'Drills',
+        completedModules.filter(item => item._source === 'drills'),
+      ),
+    ];
 
-    return { totalInterviews, avgScore, performance, perfColor, perfMsg, skillBreakdown, activityGroups, insight };
+    return { totalInterviews, avgScore, performance, perfColor, perfMsg, skillBreakdown, activityGroups, comparisonInsights };
   })();
 
   const renderStatCards = (delay = 0) => (
@@ -2433,7 +2436,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       <div className="absolute bottom-4 right-4 z-20 w-44 overflow-hidden rounded-xl border border-purple-400/40 bg-slate-950 shadow-xl">
                         <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
                         <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-slate-200">
-                          <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unsupported' ? 'Tracking unsupported' : 'Starting camera'}</span>
+                          <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unavailable' ? 'Tracking unavailable' : 'Loading tracker'}</span>
                           <span className="text-purple-300">{eyeTracker.samples > 0 ? `${eyeTracker.score}%` : '—'}</span>
                         </div>
                       </div>
@@ -2677,7 +2680,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       <div className="absolute bottom-4 right-4 z-20 w-44 overflow-hidden rounded-xl border border-sky-400/40 bg-slate-950 shadow-xl">
                         <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
                         <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-slate-200">
-                          <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unsupported' ? 'Tracking unsupported' : 'Starting camera'}</span>
+                          <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unavailable' ? 'Tracking unavailable' : 'Loading tracker'}</span>
                           <span className="text-sky-300">{eyeTracker.samples > 0 ? `${eyeTracker.score}%` : '—'}</span>
                         </div>
                       </div>
@@ -3113,12 +3116,59 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     </div>
                   </div>
 
-                  <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-xl backdrop-blur-sm flex flex-col justify-center items-center text-center space-y-4">
-                    <div className="w-16 h-16 rounded-2xl bg-sky-500/10 flex items-center justify-center text-sky-400">
-                      <BarChart2 className="w-8 h-8" />
+                  <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl backdrop-blur-sm">
+                    <div className="mb-6 flex items-center gap-4">
+                      <div className="w-12 h-12 shrink-0 rounded-2xl bg-sky-500/10 flex items-center justify-center text-sky-400">
+                        <BarChart2 className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-bold text-slate-100 italic tracking-tight">Insight Generator</h3>
+                        <p className="mt-1 text-sm text-slate-400">Latest scored session compared with the previous session.</p>
+                      </div>
                     </div>
-                    <h3 className="text-xl font-bold text-slate-100 italic tracking-tight">Insight Generator</h3>
-                    <p className="text-slate-400 text-sm leading-relaxed px-4 italic">“{stats.insight}”</p>
+
+                    <div className="space-y-3">
+                      {stats.comparisonInsights.map(insight => {
+                        const presentation = {
+                          improved: { label: 'Improved', badge: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400', change: 'text-emerald-400' },
+                          declined: { label: 'Needs attention', badge: 'border-rose-500/30 bg-rose-500/10 text-rose-400', change: 'text-rose-400' },
+                          steady: { label: 'No change', badge: 'border-sky-500/30 bg-sky-500/10 text-sky-400', change: 'text-sky-400' },
+                          baseline: { label: 'Baseline', badge: 'border-amber-500/30 bg-amber-500/10 text-amber-400', change: 'text-amber-400' },
+                          'no-data': { label: 'No data', badge: 'border-slate-700 bg-slate-800/70 text-slate-400', change: 'text-slate-500' },
+                        }[insight.status];
+
+                        return (
+                          <div key={insight.label} className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <h4 className="text-sm font-bold text-slate-100">{insight.label}</h4>
+                              <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${presentation.badge}`}>
+                                {presentation.label}
+                              </span>
+                            </div>
+
+                            <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-end gap-3">
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Previous</p>
+                                <p className="mt-0.5 text-xl font-black text-slate-300">
+                                  {insight.previous == null ? 'N/A' : `${insight.previous}%`}
+                                </p>
+                              </div>
+                              <div className={`pb-1 text-sm font-black ${presentation.change}`}>
+                                {insight.delta == null ? '—' : `${insight.delta > 0 ? '+' : ''}${insight.delta} pp`}
+                              </div>
+                              <div className="text-right">
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Current</p>
+                                <p className="mt-0.5 text-xl font-black text-slate-100">
+                                  {insight.current == null ? 'N/A' : `${insight.current}%`}
+                                </p>
+                              </div>
+                            </div>
+
+                            <p className="mt-3 text-xs leading-relaxed text-slate-400">{insight.message}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               </motion.div>

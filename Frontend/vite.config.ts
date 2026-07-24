@@ -20,7 +20,7 @@ export default defineConfig(({mode}) => {
           enabled: false
         },
         workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,json,wasm}'],
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,json,wasm,task}'],
           maximumFileSizeToCacheInBytes: 5000000000, // Large max size for model weights if cached in service worker (though IndexedDB is better)
         },
         manifest: {
