@@ -21,6 +21,7 @@ class PreTestActiveListeningSessionResponse(BaseModel):
     score_vocabulary: Optional[int] = None
     score_clarity: Optional[int] = None
     score_eye_contact: Optional[int] = None
+    eye_contact_samples: Optional[int] = None
     score_grammar: Optional[int] = None
     score_courtesy: Optional[int] = None
     score_conciseness: Optional[int] = None

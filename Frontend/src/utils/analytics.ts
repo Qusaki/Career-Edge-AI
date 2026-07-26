@@ -35,7 +35,8 @@ export const getNormalizedActivityScore = (item: ScoreRecord): number | null => 
 
   // Historical communication records included a camera criterion in their total.
   // Current records store it as null and already use the camera-free denominator.
-  const legacyEyeContact = toFiniteNumber(item.score_eye_contact) || 0;
+  const hasCurrentCameraSamples = (toFiniteNumber(item.eye_contact_samples) || 0) > 0;
+  const legacyEyeContact = hasCurrentCameraSamples ? 0 : (toFiniteNumber(item.score_eye_contact) || 0);
   const cameraFreeTotal = Math.max(0, totalScore - legacyEyeContact);
 
   if (source === 'pre-test-intro') return clampPercentage((cameraFreeTotal / 15) * 100);

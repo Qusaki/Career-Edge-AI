@@ -57,8 +57,15 @@ def complete_intro_session(session_id: int, request: PreTestIntroCompleteRequest
         session.score_courtesy = bounded_integer_score(evaluation, "score_courtesy", minimum=1, maximum=3, default=1)
         session.score_correctness = bounded_integer_score(evaluation, "score_correctness", minimum=1, maximum=3, default=1)
         session.score_conciseness = bounded_integer_score(evaluation, "score_conciseness", minimum=1, maximum=3, default=1)
-        # Eye contact is camera-based and is only evaluated in Enrollment and Thesis interviews.
-        session.score_eye_contact = None
+        session.eye_contact_samples = bounded_integer_score(
+            evaluation, "eye_contact_samples", minimum=0, maximum=10_000_000, default=0
+        )
+        eye_contact_score = evaluation.get("eye_contact_score")
+        session.score_eye_contact = (
+            bounded_integer_score(evaluation, "eye_contact_score", minimum=0, maximum=100, default=0)
+            if session.eye_contact_samples > 0 and eye_contact_score is not None
+            else None
+        )
         session.feedback_summary = evaluation.get("feedback_summary", "")
         session.transcript = request.transcript
         

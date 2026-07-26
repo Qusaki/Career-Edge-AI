@@ -17,6 +17,7 @@ class PreTestActiveListeningSession(Base):
     score_vocabulary = Column(Integer, nullable=True)
     score_clarity = Column(Integer, nullable=True)
     score_eye_contact = Column(Integer, nullable=True)
+    eye_contact_samples = Column(Integer, nullable=True)
     score_grammar = Column(Integer, nullable=True)
     score_courtesy = Column(Integer, nullable=True)
     score_conciseness = Column(Integer, nullable=True)

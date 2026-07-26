@@ -16,6 +16,7 @@ class PreTestIntroSessionResponse(BaseModel):
     score_correctness: Optional[int] = None
     score_conciseness: Optional[int] = None
     score_eye_contact: Optional[int] = None
+    eye_contact_samples: Optional[int] = None
     
     total_score: Optional[float] = None
     passed: Optional[bool] = None

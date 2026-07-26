@@ -150,7 +150,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     },
     {
       label: 'Eye Contact',
-      description: 'Camera-based face alignment measured only during University Enrollment and Thesis Defense interviews.',
+      description: 'Camera-based eye direction and head movement measured during Enrollment, Thesis, Pre-Test, and Post-Test activities. Drills are excluded.',
       field: 'score_eye_contact',
       color: 'bg-indigo-500',
     },
@@ -206,7 +206,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     );
     const skillBreakdown = communicationSkillCriteria.map(criteria => {
       if (criteria.field === 'score_eye_contact') {
-        const cameraRecords = [...completedEnrollment, ...completedThesis].filter(item =>
+        const cameraRecords = [
+          ...completedEnrollment,
+          ...completedThesis,
+          ...completedModules.filter(item => item._source !== 'drills'),
+        ].filter(item =>
           (item.eye_contact_samples || 0) > 0 && item.score_eye_contact != null
         );
         const totalCameraSamples = cameraRecords.reduce((sum, item) => sum + Number(item.eye_contact_samples || 0), 0);
@@ -1884,6 +1888,19 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
     { value: 'other', label: 'Other' },
   ];
 
+  const enrollmentResponseCount = conversationLog.filter(message => message.sender === 'user').length;
+  const enrollmentInstruction = isFinishingInterview
+    ? 'Validating your responses and preparing your interview result...'
+    : enrollmentResponseCount >= 5
+      ? 'All five responses are recorded. Click “Validate Responses” in the transcript panel to receive your result.'
+      : isMicTransitioning
+        ? 'Submitting your response. Please wait for Professor Maxiel’s next question.'
+        : isListening
+          ? 'Your microphone is recording. When you finish speaking, click the microphone again to submit your response.'
+          : isAiSpeaking
+            ? 'Listen carefully to Professor Maxiel. When the question ends, click the microphone to start your response.'
+            : 'Click the microphone to start answering. After speaking, click it again to stop and submit your response.';
+
   return (
     <>
       {isLlmLoading && (
@@ -2014,14 +2031,14 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                 className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'history' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
               >
                 <Video className="w-5 h-5" />
-                History
+                Interview Practice
               </button>
               <button
                 onClick={() => setActiveTab('analytics')}
                 className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'analytics' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
               >
                 <BarChart2 className="w-5 h-5" />
-                Analytics
+                Progress
               </button>
               <button
                 onClick={() => setActiveTab('settings')}
@@ -2486,29 +2503,29 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       </div>
                     ) : (
                       <div className="flex flex-col h-full">
-                        <h3 className="text-sm font-bold text-slate-300 border-b border-slate-700/50 pb-3 mb-4 shrink-0 uppercase tracking-widest text-center">Your Responses</h3>
+                        <h3 className="text-sm font-bold text-[#f8fafc] border-b border-[#64748b]/60 pb-3 mb-4 shrink-0 uppercase tracking-widest text-center">Your Responses</h3>
                         <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-4 pr-1 scroll-smooth">
                           {(() => {
                             const userLogs = thesisConversationLog.filter(l => l.sender === 'user');
                             if (userLogs.length === 0) {
                               return (
-                                <div className="flex-1 flex flex-col items-center justify-center opacity-50">
-                                  <User className="w-8 h-8 text-slate-500 mb-3" />
-                                  <p className="text-slate-400 text-xs text-center px-4 leading-relaxed">Respond to Prof. Maxiel's questions. Your answers will appear here.</p>
+                                <div className="flex-1 flex flex-col items-center justify-center">
+                                  <User className="w-8 h-8 text-[#94a3b8] mb-3" />
+                                  <p className="text-[#cbd5e1] text-xs text-center px-4 leading-relaxed">Respond to Prof. Maxiel's questions. Your answers will appear here.</p>
                                 </div>
                               );
                             }
                             return userLogs.map((log, idx) => (
                               <div key={idx} className="flex flex-col items-stretch animate-fade-in">
-                                <span className="text-[10px] font-bold uppercase tracking-wider mb-1 text-purple-400/80 px-1">Response {idx + 1}</span>
-                                <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 shadow-sm">
+                                <span className="text-[10px] font-bold uppercase tracking-wider mb-1 text-[#fda4af] px-1">Response {idx + 1}</span>
+                                <div className="p-3 rounded-xl bg-[#0f172a] border border-[#334155] text-[#f8fafc] shadow-sm">
                                   <p className="leading-relaxed text-xs">{log.text}</p>
                                 </div>
                               </div>
                             ));
                           })()}
                         </div>
-                        <div className="mt-4 pt-4 border-t border-slate-700/50 shrink-0">
+                        <div className="mt-4 pt-4 border-t border-[#64748b]/60 shrink-0">
                           {(() => {
                             const userTurns = thesisConversationLog.filter(l => l.sender === 'user').length;
                             if (userTurns >= 5) {
@@ -2524,7 +2541,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                             }
                             return (
                               <div className="text-center">
-                                <span className="text-xs font-medium text-slate-500">{userTurns} / 5 Responses Recorded</span>
+                                <span className="text-xs font-medium text-[#cbd5e1]">{userTurns} / 5 Responses Recorded</span>
                               </div>
                             );
                           })()}
@@ -2635,11 +2652,11 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       <div className="w-16 h-16 bg-rose-500/10 rounded-2xl flex items-center justify-center mb-6 text-rose-500">
                         <LogOut className="w-8 h-8" />
                       </div>
-                      <h3 className="text-xl font-bold text-white text-center mb-3">End Defense?</h3>
-                      <p className="text-slate-400 text-center mb-8 text-sm leading-relaxed px-2">Are you sure you want to end this thesis defense? Your session progress will not be graded.</p>
+                      <h3 className="text-xl font-bold text-[#2e2812] text-center mb-3">End Defense?</h3>
+                      <p className="text-[#6b6452] text-center mb-8 text-sm leading-relaxed px-2">Are you sure you want to end this thesis defense? Your session progress will not be graded.</p>
                       <div className="flex gap-4 w-full">
-                        <button onClick={() => setThesisIsLeaveModalOpen(false)} className="flex-1 py-3 px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-medium transition-colors">Cancel</button>
-                        <button onClick={exitThesisSession} className="flex-1 py-3 px-4 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-medium transition-colors shadow-lg shadow-rose-500/20">Leave</button>
+                        <button onClick={() => setThesisIsLeaveModalOpen(false)} className="flex-1 py-3 px-4 bg-[#e3e0d6] hover:bg-[#d6d1c5] border border-[#cbc6b9] text-[#2e2812] rounded-xl font-semibold transition-colors">Cancel</button>
+                        <button onClick={exitThesisSession} className="flex-1 py-3 px-4 bg-[#b42335] hover:bg-[#941c2d] border border-[#941c2d] text-white rounded-xl font-semibold transition-colors shadow-lg shadow-red-900/20">Leave</button>
                       </div>
                     </motion.div>
                   </div>
@@ -2763,21 +2780,26 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                             </div>
                           )}
 
-                          <button onClick={exitInterview} className="w-full mt-4 py-3 bg-slate-800 hover:bg-slate-700 text-white text-sm rounded-xl font-bold transition-colors shadow-lg shrink-0">
-                            Go to Dashboard
-                          </button>
+                          <div className="mt-4 rounded-xl border border-[#d4af37]/40 bg-[#334155] p-3 text-center">
+                            <p className="mb-3 text-xs leading-relaxed text-[#e2e8f0]">
+                              Your responses have been validated. Review your score and feedback, then return to the dashboard.
+                            </p>
+                            <button onClick={exitInterview} className="w-full py-3 bg-[#d4af37] hover:bg-[#e4bd42] text-[#2e2812] text-sm rounded-xl font-bold transition-colors shadow-lg shrink-0">
+                              Return to Dashboard
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ) : (
                       // --- TRANSCRIPT HISTORY UI ---
                       <div className="flex flex-col h-full">
-                        <h3 className="text-sm font-bold text-slate-300 border-b border-slate-700/50 pb-3 mb-4 shrink-0 uppercase tracking-widest text-center">Interview Transcript</h3>
+                        <h3 className="text-sm font-bold text-[#f8fafc] border-b border-[#64748b]/60 pb-3 mb-4 shrink-0 uppercase tracking-widest text-center">Interview Transcript</h3>
 
                         {(aiResponseText || isAiSpeaking) && (
-                          <div className="mb-4 p-3 rounded-xl bg-sky-500/10 border border-sky-500/20 text-slate-200 shadow-sm shrink-0">
+                          <div className="mb-4 p-3 rounded-xl bg-[#334155] border border-[#d4af37]/50 text-[#f8fafc] shadow-sm shrink-0">
                             <div className="flex items-center justify-between gap-3 mb-2">
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400">Professor Maxiel</span>
-                              {isAiSpeaking && <span className="text-[10px] font-medium text-sky-300">Speaking...</span>}
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-[#f7d774]">Professor Maxiel</span>
+                              {isAiSpeaking && <span className="text-[10px] font-semibold text-[#fde68a]">Speaking...</span>}
                             </div>
                             <p className="leading-relaxed text-xs whitespace-pre-wrap">
                               {aiResponseText || 'Preparing response...'}
@@ -2792,9 +2814,9 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
 
                             if (userLogs.length === 0 && !transcript) {
                               return (
-                                <div className="flex-1 flex flex-col items-center justify-center opacity-50">
-                                  <User className="w-8 h-8 text-slate-500 mb-3" />
-                                  <p className="text-slate-400 text-xs text-center px-4 leading-relaxed">Respond to the AI Professor. Your answers will be tracked here (Limit: 5).</p>
+                                <div className="flex-1 flex flex-col items-center justify-center">
+                                  <User className="w-8 h-8 text-[#94a3b8] mb-3" />
+                                  <p className="text-[#cbd5e1] text-xs text-center px-4 leading-relaxed">Respond to the AI Professor. Your answers will be tracked here (Limit: 5).</p>
                                 </div>
                               );
                             }
@@ -2803,10 +2825,10 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                               <>
                                 {userLogs.map((log, idx) => (
                                   <div key={idx} className="flex flex-col items-stretch animate-fade-in">
-                                    <span className="text-[10px] font-bold uppercase tracking-wider mb-1 text-emerald-500/80 px-1">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider mb-1 text-[#86efac] px-1">
                                       Response {idx + 1}
                                     </span>
-                                    <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 shadow-sm">
+                                    <div className="p-3 rounded-xl bg-[#0f172a] border border-[#334155] text-[#f8fafc] shadow-sm">
                                       <p className="leading-relaxed text-xs">{log.text}</p>
                                     </div>
                                   </div>
@@ -2815,23 +2837,29 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                             );
                           })()}
                         </div>
-                        <div className="mt-4 pt-4 border-t border-slate-700/50 shrink-0">
+                        <div className="mt-4 pt-4 border-t border-[#64748b]/60 shrink-0">
                           {(() => {
                             const userTurns = conversationLog.filter(l => l.sender === 'user').length;
                             if (userTurns >= 5) {
                               return (
-                                <button
-                                  onClick={finishInterviewSession}
-                                  disabled={isFinishingInterview}
-                                  className={`w-full py-3 ${isFinishingInterview ? 'bg-slate-500 cursor-not-allowed' : 'bg-emerald-500 hover:bg-emerald-400'} text-white rounded-xl font-bold transition-all shadow-lg shadow-emerald-500/20 text-sm tracking-wide animate-fade-in`}
-                                >
-                                  {isFinishingInterview ? 'Grading...' : 'Complete Interview'}
-                                </button>
+                                <div className="space-y-2 animate-fade-in">
+                                  <p className="text-center text-xs leading-relaxed text-[#cbd5e1]">
+                                    Five answers are ready. Validate them to calculate your score and feedback.
+                                  </p>
+                                  <button
+                                    onClick={finishInterviewSession}
+                                    disabled={isFinishingInterview}
+                                    className={`w-full py-3 ${isFinishingInterview ? 'bg-[#64748b] cursor-not-allowed' : 'bg-[#16a34a] hover:bg-[#15803d]'} text-white rounded-xl font-bold transition-all shadow-lg shadow-emerald-900/20 text-sm tracking-wide`}
+                                  >
+                                    {isFinishingInterview ? 'Validating Responses...' : 'Validate Responses'}
+                                  </button>
+                                </div>
                               );
                             }
                             return (
-                              <div className="text-center">
-                                <span className="text-xs font-medium text-slate-500">{userTurns} / 5 Questions Evaluated</span>
+                              <div className="text-center space-y-1">
+                                <span className="block text-xs font-semibold text-[#e2e8f0]">{userTurns} / 5 Responses Recorded</span>
+                                <span className="block text-[10px] text-[#94a3b8]">Complete all five responses to unlock validation.</span>
                               </div>
                             );
                           })()}
@@ -2843,15 +2871,36 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
 
                 {/* BOTTOM ROW: CONTROLS (Floating below everything) */}
                 {!interviewResult && (
-                  <div className="flex items-center justify-center gap-6 w-full max-w-lg mx-auto pb-4 shrink-0">
-                    <div className="relative">
+                  <div className="flex w-full max-w-2xl shrink-0 flex-col items-center gap-4 pb-4 mx-auto">
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      className={`w-full rounded-2xl border px-4 py-3 text-center shadow-lg backdrop-blur-sm ${
+                        isListening
+                          ? 'border-[#22c55e]/60 bg-[#052e16]/95'
+                          : enrollmentResponseCount >= 5
+                            ? 'border-[#22c55e]/50 bg-[#0f2f22]/95'
+                            : 'border-[#d4af37]/50 bg-[#0f172a]/95'
+                      }`}
+                    >
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#f7d774]">How to respond</p>
+                      <p className="mt-1 text-xs font-semibold text-[#f8fafc]">Listen → Click microphone → Speak → Click microphone again to submit</p>
+                      <p className={`mt-1.5 text-xs leading-relaxed ${isListening ? 'font-semibold text-[#86efac]' : 'text-[#cbd5e1]'}`}>
+                        {enrollmentInstruction}
+                      </p>
+                    </div>
+
+                    <div className="grid w-full max-w-md grid-cols-4 items-start gap-3 sm:gap-5">
+                    <div className="relative grid grid-rows-[5rem_1rem] justify-items-center gap-1.5">
                       <button
                         onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
-                        className="bg-[#171e2e] hover:bg-[#1e293b] border border-slate-800 text-slate-300 hover:text-white w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
-                        title="Add File"
+                        className="self-center bg-[#171e2e] hover:bg-[#1e293b] border border-[#334155] text-[#cbd5e1] hover:text-white w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
+                        title="Add an attachment"
+                        aria-label="Add an attachment"
                       >
                         <Plus className={`w-5 h-5 transition-transform duration-300 ${isAddMenuOpen ? 'rotate-45' : 'group-hover:scale-110'}`} />
                       </button>
+                      <span className="text-[10px] font-semibold text-[#cbd5e1]">Attach</span>
 
                       {/* Attachment Popover */}
                       {isAddMenuOpen && (
@@ -2878,43 +2927,63 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       )}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={toggleListening}
-                      className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800 shadow-slate-900/40'} text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl`}
-                      title={isListening ? 'Stop recording and submit answer' : 'Start recording'}
-                      aria-label={isListening ? 'Stop recording and submit answer' : 'Start recording'}
-                    >
-                      {isListening ? (
-                        <div className="flex items-center justify-center gap-1.5 h-8 w-full relative z-10 px-4">
-                          {[...userAudioData, ...Array.from(userAudioData).reverse()].map((height, i) => (
-                            <motion.div key={`w-${i}`} className="w-[3px] bg-white rounded-full" animate={{ height: `${height * 0.7}px` }} transition={{ duration: 0.1, ease: 'linear' }} />
-                          ))}
-                        </div>
-                      ) : (
-                        <Mic className={`w-8 h-8 relative z-10 ${isMicTransitioning ? 'text-sky-400' : 'text-slate-400'}`} />
-                      )}
-                      {isListening && <span className="absolute inset-0 rounded-[2rem] border-4 border-emerald-400 opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }} />}
-                    </button>
+                    <div className="grid grid-rows-[5rem_1rem] justify-items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={toggleListening}
+                        disabled={isMicTransitioning || enrollmentResponseCount >= 5}
+                        className={`relative ${
+                          isListening
+                            ? 'bg-[#16a34a] shadow-green-900/30'
+                            : isMicTransitioning || enrollmentResponseCount >= 5
+                              ? 'bg-[#475569] cursor-not-allowed'
+                              : 'bg-[#1e293b] hover:bg-[#334155] shadow-black/40'
+                        } text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl`}
+                        title={isListening ? 'Stop recording and submit answer' : 'Start recording your answer'}
+                        aria-label={isListening ? 'Stop recording and submit answer' : 'Start recording your answer'}
+                      >
+                        {isListening ? (
+                          <div className="flex items-center justify-center gap-1.5 h-8 w-full relative z-10 px-4">
+                            {[...userAudioData, ...Array.from(userAudioData).reverse()].map((height, i) => (
+                              <motion.div key={`w-${i}`} className="w-[3px] bg-white rounded-full" animate={{ height: `${height * 0.7}px` }} transition={{ duration: 0.1, ease: 'linear' }} />
+                            ))}
+                          </div>
+                        ) : (
+                          <Mic className={`w-8 h-8 relative z-10 ${isMicTransitioning ? 'text-[#f7d774]' : 'text-[#e2e8f0]'}`} />
+                        )}
+                        {isListening && <span className="absolute inset-0 rounded-[2rem] border-4 border-[#4ade80] opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }} />}
+                      </button>
+                      <span className={`text-[10px] font-bold ${isListening ? 'text-[#86efac]' : 'text-[#f8fafc]'}`}>
+                        {isListening ? 'Click to Submit' : isMicTransitioning ? 'Submitting...' : enrollmentResponseCount >= 5 ? 'Answers Complete' : 'Start Answer'}
+                      </span>
+                    </div>
 
-                    <button
-                      type="button"
-                      onClick={() => setIsCameraEnabled(enabled => !enabled)}
-                      className={`${isCameraEnabled ? 'bg-sky-500/20 border-sky-400/50 text-sky-300' : 'bg-[#171e2e] border-slate-800 text-slate-400'} hover:bg-sky-500/10 hover:border-sky-400/40 hover:text-sky-300 w-14 h-14 rounded-2xl border transition-all duration-300 flex items-center justify-center shadow-lg group`}
-                      title={isCameraEnabled ? 'Turn camera off' : 'Turn camera on'}
-                      aria-label={isCameraEnabled ? 'Turn camera off' : 'Turn camera on'}
-                      aria-pressed={isCameraEnabled}
-                    >
-                      {isCameraEnabled ? <Camera className="w-5 h-5 group-hover:scale-110 transition-transform" /> : <CameraOff className="w-5 h-5 group-hover:scale-110 transition-transform" />}
-                    </button>
+                    <div className="grid grid-rows-[5rem_1rem] justify-items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setIsCameraEnabled(enabled => !enabled)}
+                        className={`self-center ${isCameraEnabled ? 'bg-[#3b2d0d] border-[#d4af37] text-[#f7d774]' : 'bg-[#171e2e] border-[#334155] text-[#cbd5e1]'} hover:bg-[#263449] hover:border-[#d4af37] hover:text-[#f7d774] w-14 h-14 rounded-2xl border transition-all duration-300 flex items-center justify-center shadow-lg group`}
+                        title={isCameraEnabled ? 'Turn camera off' : 'Turn camera on for eye-contact tracking'}
+                        aria-label={isCameraEnabled ? 'Turn camera off' : 'Turn camera on for eye-contact tracking'}
+                        aria-pressed={isCameraEnabled}
+                      >
+                        {isCameraEnabled ? <Camera className="w-5 h-5 group-hover:scale-110 transition-transform" /> : <CameraOff className="w-5 h-5 group-hover:scale-110 transition-transform" />}
+                      </button>
+                      <span className="text-[10px] font-semibold text-[#cbd5e1]">{isCameraEnabled ? 'Camera On' : 'Camera Off'}</span>
+                    </div>
 
-                    <button
-                      onClick={() => setIsLeaveModalOpen(true)}
-                      className="bg-[#171e2e] hover:bg-rose-500/10 border border-slate-800 hover:border-rose-500/30 text-slate-300 hover:text-rose-500 w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
-                      title="Leave/End Session"
-                    >
-                      <LogOut className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                    </button>
+                    <div className="grid grid-rows-[5rem_1rem] justify-items-center gap-1.5">
+                      <button
+                        onClick={() => setIsLeaveModalOpen(true)}
+                        className="self-center bg-[#171e2e] hover:bg-[#3b1420] border border-[#334155] hover:border-[#b42335] text-[#cbd5e1] hover:text-[#fda4af] w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
+                        title="Leave interview without validating"
+                        aria-label="Leave interview without validating"
+                      >
+                        <LogOut className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                      </button>
+                      <span className="text-[10px] font-semibold text-[#fda4af]">Leave</span>
+                    </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -2931,20 +3000,20 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                   <div className="w-16 h-16 bg-rose-500/10 rounded-2xl flex items-center justify-center mb-6 text-rose-500 shadow-inner">
                     <LogOut className="w-8 h-8" />
                   </div>
-                  <h3 className="text-xl font-bold text-white text-center mb-3">Leave Interview?</h3>
-                  <p className="text-slate-400 text-center mb-8 text-sm leading-relaxed px-2">
+                  <h3 className="text-xl font-bold text-[#2e2812] text-center mb-3">Leave Interview?</h3>
+                  <p className="text-[#6b6452] text-center mb-8 text-sm leading-relaxed px-2">
                     Are you sure you want to end this interview session? Your progress and current context will be cleared.
                   </p>
                   <div className="flex gap-4 w-full">
                     <button
                       onClick={() => setIsLeaveModalOpen(false)}
-                      className="flex-1 py-3 px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-medium transition-colors"
+                      className="flex-1 py-3 px-4 bg-[#e3e0d6] hover:bg-[#d6d1c5] border border-[#cbc6b9] text-[#2e2812] rounded-xl font-semibold transition-colors"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={exitInterview}
-                      className="flex-1 py-3 px-4 bg-sky-500 hover:bg-sky-400 text-black rounded-xl font-semibold transition-colors shadow-lg shadow-sky-500/20"
+                      className="flex-1 py-3 px-4 bg-[#b42335] hover:bg-[#941c2d] border border-[#941c2d] text-white rounded-xl font-semibold transition-colors shadow-lg shadow-red-900/20"
                     >
                       Leave
                     </button>
@@ -2961,7 +3030,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                 className="w-full space-y-8"
               >
                 <div>
-                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Interview History</h1>
+                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Interview Practice</h1>
                   <p className="text-lg text-slate-400 mt-2">Relive your past sessions and track your progress over time.</p>
                 </div>
 
@@ -3057,7 +3126,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                 className="w-full space-y-8"
               >
                 <div>
-                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Analytics</h1>
+                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Progress</h1>
                   <p className="text-lg text-slate-400 mt-2">In-depth overview of all interviews, tests, and drills.</p>
                 </div>
 

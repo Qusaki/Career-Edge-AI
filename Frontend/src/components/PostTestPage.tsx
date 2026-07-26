@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, LoaderCircle, Mic, MicOff, RefreshCw, Volume2 } from 'lucide-react';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
+import { CameraTrackingNotice } from './CameraTrackingNotice';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
+import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 
 type Session = {
   id: number;
@@ -10,6 +12,7 @@ type Session = {
   status: string;
   total_score?: number | null;
   score_eye_contact?: number | null;
+  eye_contact_samples?: number | null;
   passed?: boolean | null;
   feedback_summary?: string | null;
   question_number?: number;
@@ -62,6 +65,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
   const aiSpeechBufferRef = useRef('');
   const firstPromptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { isListening, startListening, stopListening } = useSpeechInput();
+  const eyeTracker = useEyeContactTracker(Boolean(activeSession));
 
   const speakText = useCallback((text: string) => {
     if (!('speechSynthesis' in window)) return;
@@ -295,7 +299,11 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
         },
         body: JSON.stringify({
           conversation: messages,
-          evaluation: getBasicPostTestEvaluation(messages),
+          evaluation: {
+            ...getBasicPostTestEvaluation(messages),
+            eye_contact_score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+            eye_contact_samples: eyeTracker.samples,
+          },
         }),
       });
       if (!response.ok) {
@@ -327,6 +335,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
   if (activeSession) {
     return (
       <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
+        <CameraTrackingNotice {...eyeTracker} />
         <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
           <div className="mb-5 flex items-center justify-between gap-3">
             <button
@@ -517,7 +526,13 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
               </div>
               <div className="text-right">
                 <span className="rounded-full bg-active px-2.5 py-1 text-xs font-bold capitalize text-gold-text">{session.status}</span>
-                {session.total_score != null && <p className="mt-1 text-sm font-bold text-ink">{Math.max(0, session.total_score - (session.score_eye_contact || 0))}/25</p>}
+                {session.total_score != null && (
+                  <p className="mt-1 text-sm font-bold text-ink">
+                    {session.eye_contact_samples
+                      ? session.total_score
+                      : Math.max(0, session.total_score - (session.score_eye_contact || 0))}/25
+                  </p>
+                )}
               </div>
             </div>
           ))}

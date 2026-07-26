@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, Headphones, LoaderCircle, Mic, MicOff, RefreshCw } from 'lucide-react';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
+import { CameraTrackingNotice } from './CameraTrackingNotice';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
+import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 
 type Session = {
   id: number;
@@ -10,6 +12,7 @@ type Session = {
   status: string;
   total_score?: number | null;
   score_eye_contact?: number | null;
+  eye_contact_samples?: number | null;
   passed?: boolean | null;
   feedback_summary?: string | null;
 };
@@ -101,6 +104,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
   const aiSpeechBufferRef = useRef('');
   const activeListeningTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { isListening, startListening, stopListening } = useSpeechInput();
+  const eyeTracker = useEyeContactTracker(Boolean(activeExercise && activeSession));
 
   const loadSessions = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -339,10 +343,18 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
         },
         body: JSON.stringify(isIntro ? {
           transcript: introTranscript,
-          evaluation: getBasicIntroEvaluation(introTranscript),
+          evaluation: {
+            ...getBasicIntroEvaluation(introTranscript),
+            eye_contact_score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+            eye_contact_samples: eyeTracker.samples,
+          },
         } : {
           conversation: messages,
-          evaluation: getBasicActiveListeningEvaluation(messages),
+          evaluation: {
+            ...getBasicActiveListeningEvaluation(messages),
+            eye_contact_score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+            eye_contact_samples: eyeTracker.samples,
+          },
         }),
       });
       if (!response.ok) {
@@ -370,6 +382,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
   if (activeExercise && activeSession) {
     return (
       <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
+        <CameraTrackingNotice {...eyeTracker} />
         <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
           <div className="mb-5 flex items-center justify-between gap-3">
             <button
@@ -433,7 +446,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                   active={isVoiceSpeaking || isAiResponding}
                   label={isVoiceSpeaking ? 'Speaking...' : isAiResponding ? 'Preparing prompt...' : 'Audio interviewer ready'}
                 />
-                <div className="h-[58vh] overflow-y-auto rounded-lg border border-line bg-background p-4">
+                <div className="mt-3 h-36 overflow-y-auto rounded-lg border border-line bg-background p-4 sm:h-40 md:h-44">
                   {visibleActiveListeningMessages.length === 0 && error ? (
                     <div className="flex h-full items-center justify-center text-center text-sm leading-relaxed text-rose-700">
                       {error}
@@ -458,7 +471,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                   ))}
                 </div>
 
-                <div className="mt-4 flex justify-center">
+                <div className="mt-3 flex justify-center">
                   <button
                     onClick={isListening ? stopListening : recordAndSendReply}
                     disabled={isAiResponding}
@@ -536,7 +549,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
             </div>
           ) : (
             <>
-              <div className="h-96 overflow-y-auto rounded-lg border border-line bg-background p-4">
+              <div className="h-48 overflow-y-auto rounded-lg border border-line bg-background p-4 sm:h-56">
                 {visibleActiveListeningMessages.length === 0 && error ? (
                   <div className="flex h-full items-center justify-center text-center text-sm leading-relaxed text-rose-700">
                     {error}
@@ -620,7 +633,9 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                 <span className="rounded-full bg-active px-2.5 py-1 text-xs font-bold capitalize text-gold-text">{session.status}</span>
                 {session.total_score != null && (
                   <p className="mt-1 text-sm font-bold text-ink">
-                    {Math.max(0, session.total_score - (session.score_eye_contact || 0))}/{session.exercise === 'Who Am I?' ? 15 : 25}
+                    {session.eye_contact_samples
+                      ? session.total_score
+                      : Math.max(0, session.total_score - (session.score_eye_contact || 0))}/{session.exercise === 'Who Am I?' ? 15 : 25}
                   </p>
                 )}
               </div>
