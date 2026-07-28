@@ -83,6 +83,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const [isModuleSessionMode, setIsModuleSessionMode] = useState(false);
   const [prevTab, setPrevTab] = useState<string>('dashboard');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  const accountMenuRef = React.useRef<HTMLDivElement>(null);
+  const accountTriggerRef = React.useRef<HTMLButtonElement>(null);
   const [selectedCompanyType, setSelectedCompanyType] = useState('');
   const [position, setPosition] = useState('');
   const [isSaved, setIsSaved] = useState(false);
@@ -108,6 +111,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     department: '',
     profilePicture: 'https://api.dicebear.com/7.x/micah/svg?seed=Alex&backgroundColor=cbd5e1'
   });
+
+  useEffect(() => {
+    if (!isAccountMenuOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!accountMenuRef.current?.contains(event.target as Node)) {
+        setIsAccountMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsAccountMenuOpen(false);
+        accountTriggerRef.current?.focus();
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isAccountMenuOpen]);
 
   // Thesis Interview State
   const [thesisSessionId, setThesisSessionId] = useState<number | null>(null);
@@ -1944,28 +1972,8 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
               <span className="font-bold text-xl tracking-tight text-gold-text">Career Edge</span>
             </div>
 
-            {/* Profile Area */}
-            <div className="p-2 border-b border-line">
-              <button
-                onClick={() => setActiveTab('profile')}
-                className={`w-full text-left border border-line ${activeTab === 'profile' ? 'bg-active' : 'bg-transparent hover:bg-active'} rounded-lg p-2 flex items-center gap-3 transition-colors duration-200`}
-              >
-                <div className="w-10 h-10 rounded-full bg-slate-800 border border-sky-500/30 overflow-hidden shrink-0">
-                  <img
-                    src={profile.profilePicture}
-                    alt="User"
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-                <div className="overflow-hidden">
-                  <h3 className="font-medium text-sm text-ink truncate">{profile.name}</h3>
-                  <p className="text-xs text-gold-text font-medium mt-0.5 truncate">{profile.department}</p>
-                </div>
-              </button>
-            </div>
-
             {/* Main Action */}
-            <div className="p-2">
+            <div className="shrink-0 border-b border-line px-2 pb-3 pt-4">
               {['CCIT', 'CTE', 'CBAPA'].includes(profile.department?.toUpperCase() || '') ? (
                 <button
                   onClick={() => {
@@ -1997,7 +2005,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
             </div>
 
             {/* Navigation */}
-            <nav className="flex-1 px-2 py-1.5 space-y-1 overflow-y-auto">
+            <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
               <button
                 onClick={() => setActiveTab('dashboard')}
                 className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'dashboard' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
@@ -2040,23 +2048,83 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                 <BarChart2 className="w-5 h-5" />
                 Progress
               </button>
-              <button
-                onClick={() => setActiveTab('settings')}
-                className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'settings' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
-              >
-                <Settings className="w-5 h-5" />
-                Settings
-              </button>
             </nav>
 
-            {/* Logout */}
-            <div className="p-2 border-t border-line">
+            {/* Account */}
+            <div ref={accountMenuRef} className="relative p-2 border-t border-line">
+              {isAccountMenuOpen && (
+                <div
+                  id="sidebar-account-menu"
+                  role="menu"
+                  aria-label="Account menu"
+                  className="absolute left-2 right-2 bottom-full z-50 mb-2 rounded-lg border border-line bg-card p-1.5 shadow-xl"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setActiveTab('profile');
+                      setIsAccountMenuOpen(false);
+                    }}
+                    className="flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium text-ink transition-colors hover:bg-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-text"
+                  >
+                    <User className="h-4 w-4 shrink-0" />
+                    View Profile
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setActiveTab('settings');
+                      setIsAccountMenuOpen(false);
+                    }}
+                    className="flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium text-ink transition-colors hover:bg-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-text"
+                  >
+                    <Settings className="h-4 w-4 shrink-0" />
+                    Settings
+                  </button>
+                  <div className="my-1 border-t border-line" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsAccountMenuOpen(false);
+                      onLogout();
+                    }}
+                    className="flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium text-ink transition-colors hover:bg-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-text"
+                  >
+                    <LogOut className="h-4 w-4 shrink-0" />
+                    Sign Out
+                  </button>
+                </div>
+              )}
+
               <button
-                onClick={onLogout}
-                className="flex items-center gap-3 px-2 py-2 w-full rounded-lg text-muted hover:bg-active hover:text-ink font-medium transition-colors"
+                ref={accountTriggerRef}
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={isAccountMenuOpen}
+                aria-controls="sidebar-account-menu"
+                onClick={() => setIsAccountMenuOpen((isOpen) => !isOpen)}
+                className={`flex w-full items-center gap-3 rounded-lg border border-line p-2 text-left transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-text ${
+                  activeTab === 'profile' || isAccountMenuOpen ? 'bg-active' : 'bg-transparent hover:bg-active'
+                }`}
               >
-                <LogOut className="w-5 h-5" />
-                Sign Out
+                <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full border border-sky-500/30 bg-slate-800">
+                  <img
+                    src={profile.profilePicture}
+                    alt={`${profile.name || 'User'} profile`}
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+                <div className="min-w-0 flex-1 overflow-hidden">
+                  <h3 className="truncate text-sm font-semibold text-ink" title={profile.name}>{profile.name}</h3>
+                  <p className="mt-0.5 truncate text-xs font-medium text-ink/70" title={profile.department}>{profile.department}</p>
+                </div>
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 text-ink/70 transition-transform ${isAccountMenuOpen ? 'rotate-180' : ''}`}
+                  aria-hidden="true"
+                />
               </button>
             </div>
           </aside>
