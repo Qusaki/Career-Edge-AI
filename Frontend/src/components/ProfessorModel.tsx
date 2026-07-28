@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useLayoutEffect } from 'react';
 import { useGLTF, Center } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
@@ -9,8 +9,29 @@ interface ProfessorModelProps {
   mouthCues?: any[] | null;
   currentAudioTime?: number;
   audioContext?: AudioContext | null;
+  onFirstFrame?: () => void;
   [key: string]: any;
 }
+
+interface ProfessorModelPreloaderProps {
+  onReady: () => void;
+}
+
+const PROFESSOR_MODEL_URL = '/professor.glb';
+
+export function ProfessorModelPreloader({ onReady }: ProfessorModelPreloaderProps) {
+  useGLTF(PROFESSOR_MODEL_URL);
+
+  useEffect(() => {
+    onReady();
+  }, [onReady]);
+
+  return null;
+}
+
+export const clearProfessorModelCache = () => {
+  useGLTF.clear(PROFESSOR_MODEL_URL);
+};
 
 export function ProfessorModel({
   isSpeaking,
@@ -18,15 +39,18 @@ export function ProfessorModel({
   mouthCues,
   currentAudioTime = 0,
   audioContext,
+  onFirstFrame,
   ...props
 }: ProfessorModelProps) {
   const groupRef = useRef<THREE.Group>(null);
   const modelWrapperRef = useRef<THREE.Group>(null);
   const smoothMouthRef = useRef(0);
   const dataArrayRef = useRef<Uint8Array | null>(null);
+  const hasReportedFirstFrameRef = useRef(false);
+  const firstFrameAnimationRef = useRef<number | null>(null);
 
   // Load the model scene directly
-  const { scene } = useGLTF('/professor.glb') as any;
+  const { scene } = useGLTF(PROFESSOR_MODEL_URL) as any;
 
   // References for synchronized multi-mesh lip sync
   const headMeshesRef = useRef<THREE.Mesh[]>([]);
@@ -35,8 +59,16 @@ export function ProfessorModel({
   const blinkRef = useRef(0);
   const nextBlinkTimeRef = useRef(0);
 
-  // 1. Auto-center and Scale logic
   useEffect(() => {
+    return () => {
+      if (firstFrameAnimationRef.current !== null) {
+        cancelAnimationFrame(firstFrameAnimationRef.current);
+      }
+    };
+  }, []);
+
+  // 1. Auto-center and Scale logic
+  useLayoutEffect(() => {
     if (scene) {
       // Calculate bounding box and scale for framing
       const box = new THREE.Box3().setFromObject(scene);
@@ -83,6 +115,13 @@ export function ProfessorModel({
   }, [scene]);
 
   useFrame((state) => {
+    if (!hasReportedFirstFrameRef.current) {
+      hasReportedFirstFrameRef.current = true;
+      firstFrameAnimationRef.current = requestAnimationFrame(() => {
+        onFirstFrame?.();
+      });
+    }
+
     if (!headMeshesRef.current.length) return;
 
     let targetMorphs: any = {};
@@ -296,4 +335,4 @@ export function ProfessorModel({
   );
 }
 
-useGLTF.preload('/professor.glb');
+useGLTF.preload(PROFESSOR_MODEL_URL);

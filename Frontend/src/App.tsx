@@ -185,18 +185,6 @@ const MorphingGraphic = () => {
         </div>
       </motion.div>
 
-      {/* Label indicating state */}
-      <div className="absolute -bottom-16 left-0 right-0 flex flex-col items-center gap-2 pointer-events-none">
-        <motion.div
-          className="px-4 py-1.5 rounded-full bg-neutral-800/80 border border-neutral-700/50 text-xs font-medium text-violet-400 backdrop-blur-md shadow-lg"
-          layout
-        >
-          {isResume ? "Perfect Resume" : "Voice Analysis"}
-        </motion.div>
-        <span className="text-[10px] text-neutral-500 font-medium tracking-wider uppercase">
-          Drag or Click to Interact
-        </span>
-      </div>
     </div>
   );
 };
@@ -380,6 +368,7 @@ const FeatureCard = ({ icon, title, description }: { icon: React.ReactNode, titl
 export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [currentView, setCurrentView] = useState<'landing' | 'auth' | 'dashboard'>('landing');
+  const [isNewSignupSession, setIsNewSignupSession] = useState(false);
 
   useEffect(() => {
     // Auto-login if token exists
@@ -396,11 +385,29 @@ export default function App() {
   };
 
   if (currentView === 'auth') {
-    return <AuthPage onBack={() => setCurrentView('landing')} onSuccess={() => setCurrentView('dashboard')} initialMode={authMode} />;
+    return (
+      <AuthPage
+        onBack={() => setCurrentView('landing')}
+        onSuccess={({ isNewSignup }) => {
+          setIsNewSignupSession(isNewSignup);
+          setCurrentView('dashboard');
+        }}
+        initialMode={authMode}
+      />
+    );
   }
 
   if (currentView === 'dashboard') {
-    return <Dashboard onLogout={() => { localStorage.removeItem('token'); setCurrentView('landing'); }} />;
+    return (
+      <Dashboard
+        isNewSignupSession={isNewSignupSession}
+        onLogout={() => {
+          localStorage.removeItem('token');
+          setIsNewSignupSession(false);
+          setCurrentView('landing');
+        }}
+      />
+    );
   }
 
   return (
@@ -415,7 +422,7 @@ export default function App() {
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-neutral-800/50 bg-neutral-950/80 backdrop-blur-md">
         <div className="container mx-auto px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-xl tracking-tight">Career Edge</span>
+            <span className="text-xl font-bold tracking-tight text-brand-gold">Career Edge</span>
           </div>
 
           {/* Desktop Nav */}
@@ -428,7 +435,7 @@ export default function App() {
 
           <div className="hidden md:flex items-center gap-4">
             <button onClick={() => openAuth('signin')} className="text-sm font-medium text-neutral-300 hover:text-white transition-colors">Sign In</button>
-            <button onClick={() => openAuth('signup')} className="px-5 py-2.5 rounded-lg bg-violet-500 hover:bg-violet-400 text-white text-sm font-medium transition-colors shadow-lg shadow-violet-500/20">
+            <button onClick={() => openAuth('signup')} className="rounded-lg bg-brand-gold px-5 py-2.5 text-sm font-semibold text-brand-black transition-colors hover:bg-brand-gold-light active:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold-light">
               Get Started
             </button>
           </div>
@@ -448,15 +455,15 @@ export default function App() {
             <a href="#" className="text-neutral-300 font-medium py-2">About</a>
             <hr className="border-neutral-800 my-2" />
             <button onClick={() => openAuth('signin')} className="w-full py-3 rounded-lg bg-neutral-800 text-white font-medium mb-2">Sign In</button>
-            <button onClick={() => openAuth('signup')} className="w-full py-3 rounded-lg bg-violet-500 text-white font-medium">Get Started</button>
+            <button onClick={() => openAuth('signup')} className="w-full rounded-lg bg-brand-gold py-3 font-semibold text-brand-black transition-colors hover:bg-brand-gold-light active:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold-light">Get Started</button>
           </div>
         )}
       </nav>
 
       <main className="relative z-10 pt-24 pb-16">
         {/* Hero Section */}
-        <section className="container mx-auto px-6 pt-12 pb-24 md:pt-24 md:pb-32">
-          <div className="grid lg:grid-cols-2 gap-16 items-center">
+        <section className="container mx-auto flex min-h-[calc(100svh-6rem)] items-center px-6 pt-12 pb-24 md:pt-24 md:pb-32">
+          <div className="grid w-full items-center gap-16 lg:grid-cols-2">
             {/* Left Text */}
             <motion.div
               initial={{ opacity: 0, x: -30 }}
@@ -471,7 +478,7 @@ export default function App() {
                 Practice with our AI-driven interview simulator. Perfect your pitch, refine your answers, and land your dream job with confidence.
               </p>
               <div className="flex flex-col sm:flex-row gap-4 mt-4">
-                <button onClick={() => openAuth('signup')} className="px-8 py-4 rounded-xl bg-violet-500 hover:bg-violet-400 text-white font-semibold transition-all shadow-lg shadow-violet-500/25 flex items-center justify-center gap-2 group">
+                <button onClick={() => openAuth('signup')} className="group flex items-center justify-center gap-2 rounded-xl bg-brand-gold px-8 py-4 font-semibold text-brand-black transition-colors hover:bg-brand-gold-light active:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold-light">
                   Start Practicing
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </button>

@@ -30,6 +30,8 @@ type Exercise = {
   icon: React.ReactNode;
 };
 
+type RealtimeConnectionState = 'idle' | 'connecting' | 'ready' | 'error';
+
 const exercises: Exercise[] = [
   {
     title: 'Who Am I?',
@@ -55,6 +57,8 @@ const getWebSocketUrl = (apiUrl: string, path: string, token: string) => {
 };
 
 const ACTIVE_LISTENING_FIRST_TOKEN_TIMEOUT_MS = 180000;
+const ACTIVE_LISTENING_MAX_RETRIES = 1;
+const ACTIVE_LISTENING_RETRY_BACKOFF_MS = 500;
 
 const getBasicIntroEvaluation = (transcript: string) => {
   const words = transcript.trim().toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) || [];
@@ -111,13 +115,17 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
   const [reply, setReply] = useState('');
   const [isAiResponding, setIsAiResponding] = useState(false);
   const [isVoiceSpeaking, setIsVoiceSpeaking] = useState(false);
+  const [connectionState, setConnectionState] = useState<RealtimeConnectionState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const aiMessageOpenRef = useRef(false);
   const aiSpeechBufferRef = useRef('');
   const activeListeningTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { isListening, startListening, stopListening } = useSpeechInput();
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectionAttemptRef = useRef(0);
+  const lifecycleGenerationRef = useRef(0);
+  const { isListening, startListening, stopListening, cancelListening } = useSpeechInput();
   const eyeTracker = useEyeContactTracker(Boolean(activeExercise && activeSession));
 
   const loadSessions = useCallback(async () => {
@@ -147,9 +155,16 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
   useEffect(() => { loadSessions(); }, [loadSessions]);
 
   useEffect(() => () => {
+    lifecycleGenerationRef.current += 1;
+    connectionAttemptRef.current += 1;
     if (activeListeningTimeoutRef.current) clearTimeout(activeListeningTimeoutRef.current);
-    wsRef.current?.close();
-  }, []);
+    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+    const socket = wsRef.current;
+    wsRef.current = null;
+    if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, 'Exercise closed.');
+    cancelListening();
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  }, [cancelListening]);
 
   const clearActiveListeningTimeout = () => {
     if (!activeListeningTimeoutRef.current) return;
@@ -171,31 +186,56 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
     window.speechSynthesis.speak(utterance);
   }, []);
 
-  const connectActiveListeningChat = (session: Session) => {
+  function connectActiveListeningChat(session: Session, retryCount = 0) {
     const token = localStorage.getItem('token');
-    if (!token) return;
+    if (!token) {
+      setConnectionState('error');
+      setError('Your session is no longer authenticated. Please sign in again.');
+      return;
+    }
 
-    wsRef.current?.close();
+    connectionAttemptRef.current += 1;
+    const attemptId = connectionAttemptRef.current;
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+    const previousSocket = wsRef.current;
+    wsRef.current = null;
+    if (previousSocket && previousSocket.readyState < WebSocket.CLOSING) {
+      previousSocket.close(1000, 'Replaced by a new connection.');
+    }
     aiMessageOpenRef.current = false;
     aiSpeechBufferRef.current = '';
+    setConnectionState('connecting');
+    setError(null);
+    setNotice(retryCount > 0 ? 'Reconnecting the audio interviewer…' : 'Connecting the audio interviewer…');
     const socket = new WebSocket(getWebSocketUrl(apiUrl, `/pre-test-active-listening/${session.id}/chat`, token));
     wsRef.current = socket;
+    const isCurrentAttempt = () => connectionAttemptRef.current === attemptId && wsRef.current === socket;
 
     socket.onopen = () => {
+      if (!isCurrentAttempt()) return;
+      setConnectionState('ready');
       setNotice(`Active Listening session #${session.id} started. Listen to the story, then summarize it.`);
       setIsAiResponding(true);
       socket.send(JSON.stringify({ text: '/start_exercise' }));
       clearActiveListeningTimeout();
       activeListeningTimeoutRef.current = setTimeout(() => {
+        if (!isCurrentAttempt()) return;
         aiMessageOpenRef.current = false;
         aiSpeechBufferRef.current = '';
         setIsAiResponding(false);
+        setConnectionState('error');
         setError('The active listening prompt is taking too long to start. Ollama is reachable, but the local model may still be loading or generating slowly. Please try again.');
+        connectionAttemptRef.current += 1;
+        wsRef.current = null;
         if (socket.readyState === WebSocket.OPEN) socket.close(1000);
       }, ACTIVE_LISTENING_FIRST_TOKEN_TIMEOUT_MS);
     };
 
     socket.onmessage = event => {
+      if (!isCurrentAttempt()) return;
       const data = JSON.parse(event.data);
       if (data.type === 'turn_complete') {
         clearActiveListeningTimeout();
@@ -208,6 +248,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
 
       if (data.type === 'error') {
         clearActiveListeningTimeout();
+        setConnectionState('error');
         setError(data.message || 'The audio interviewer could not respond. Check that the backend service is running.');
         aiMessageOpenRef.current = false;
         setIsAiResponding(false);
@@ -232,59 +273,66 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
     };
 
     socket.onerror = () => {
-      clearActiveListeningTimeout();
-      setError('The active listening connection failed. Check that the backend and Ollama service are running.');
-      setIsAiResponding(false);
-      aiSpeechBufferRef.current = '';
+      // The close event owns retry/error handling and includes the close reason.
     };
 
     socket.onclose = event => {
+      if (!isCurrentAttempt()) return;
+      wsRef.current = null;
       clearActiveListeningTimeout();
       aiMessageOpenRef.current = false;
       setIsAiResponding(false);
       aiSpeechBufferRef.current = '';
-      if (event.code !== 1000) {
-        setError(event.reason || 'The active listening connection closed unexpectedly.');
+      if (event.code === 1000) {
+        setConnectionState('idle');
+        return;
       }
+
+      if (retryCount < ACTIVE_LISTENING_MAX_RETRIES) {
+        setConnectionState('connecting');
+        setNotice('Reconnecting the audio interviewer…');
+        reconnectTimeoutRef.current = setTimeout(() => {
+          reconnectTimeoutRef.current = null;
+          if (connectionAttemptRef.current === attemptId) {
+            connectActiveListeningChat(session, retryCount + 1);
+          }
+        }, ACTIVE_LISTENING_RETRY_BACKOFF_MS);
+        return;
+      }
+
+      setConnectionState('error');
+      setNotice(null);
+      setError(event.reason || 'Unable to connect to the audio interviewer.');
     };
-  };
+  }
 
   const startExercise = async (exercise: Exercise) => {
     const token = localStorage.getItem('token');
     if (!token) return;
+    const lifecycleGeneration = lifecycleGenerationRef.current + 1;
+    lifecycleGenerationRef.current = lifecycleGeneration;
     setStarting(exercise.endpoint);
     setError(null);
     setNotice(null);
     setIntroTranscript('');
     setMessages([]);
     setReply('');
+    setConnectionState('idle');
+    cancelListening();
     try {
-      const existingResponse = await fetch(`${apiUrl}${exercise.endpoint}/`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const response = await fetch(`${apiUrl}${exercise.endpoint}/start`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
       });
-      let session: Session | null = null;
-
-      if (existingResponse.ok) {
-        const existingSessions: Session[] = await existingResponse.json();
-        session = existingSessions
-          .filter(item => item.status === 'active')
-          .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())[0] || null;
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.detail || `Unable to start ${exercise.title}.`);
       }
-
-      if (!session) {
-        const response = await fetch(`${apiUrl}${exercise.endpoint}/start`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
-        if (!response.ok) {
-          const body = await response.json().catch(() => null);
-          throw new Error(body?.detail || `Unable to start ${exercise.title}.`);
-        }
-        session = await response.json();
-      }
+      const session: Session = await response.json();
+      if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
       setActiveExercise(exercise);
       setActiveSession(session);
       onSessionModeChange(true);
@@ -295,16 +343,22 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
       }
       await loadSessions();
     } catch (err) {
+      if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
       setError(err instanceof Error ? err.message : `Unable to start ${exercise.title}.`);
     } finally {
-      setStarting(null);
+      if (lifecycleGenerationRef.current === lifecycleGeneration) setStarting(null);
     }
   };
 
   const quitSession = () => {
+    lifecycleGenerationRef.current += 1;
     if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
+    cancelListening();
+    connectionAttemptRef.current += 1;
     clearActiveListeningTimeout();
-    wsRef.current?.close(1000);
+    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+    reconnectTimeoutRef.current = null;
+    wsRef.current?.close(1000, 'Exercise closed.');
     wsRef.current = null;
     aiMessageOpenRef.current = false;
     aiSpeechBufferRef.current = '';
@@ -315,6 +369,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
     setReply('');
     setIsAiResponding(false);
     setIsVoiceSpeaking(false);
+    setConnectionState('idle');
     setNotice('Exercise exited. Complete the exercise later to finish it properly.');
     onSessionModeChange(false);
   };
@@ -344,6 +399,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
   const completeActiveExercise = async () => {
     const token = localStorage.getItem('token');
     if (!token || !activeSession || !activeExercise) return;
+    const lifecycleGeneration = lifecycleGenerationRef.current;
     setCompleting(true);
     setError(null);
     setNotice(null);
@@ -375,8 +431,15 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
         const body = await response.json().catch(() => null);
         throw new Error(body?.detail || `Unable to complete ${activeExercise.title}.`);
       }
-      wsRef.current?.close(1000);
+      cancelListening();
+      connectionAttemptRef.current += 1;
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+      wsRef.current?.close(1000, 'Exercise completed.');
+      wsRef.current = null;
+      setConnectionState('idle');
       const completedSession: Session = await response.json();
+      if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
       setActiveExercise(null);
       setActiveSession(null);
       setMessages([]);
@@ -385,9 +448,10 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
       onSessionModeChange(false);
       await loadSessions();
     } catch (err) {
+      if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
       setError(err instanceof Error ? err.message : `Unable to complete ${activeExercise.title}.`);
     } finally {
-      setCompleting(false);
+      if (lifecycleGenerationRef.current === lifecycleGeneration) setCompleting(false);
     }
   };
 
@@ -428,8 +492,17 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
             </div>
 
             {(error || notice) && (
-              <div className={`mb-4 rounded-lg border p-3 text-sm ${error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-success'}`}>
-                {error || notice}
+              <div className={`mb-4 flex items-center justify-between gap-3 rounded-lg border p-3 text-sm ${error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-success'}`}>
+                <span>{error || notice}</span>
+                {error && activeExercise.kind === 'active-listening' && connectionState === 'error' && (
+                  <button
+                    onClick={() => void startExercise(activeExercise)}
+                    disabled={starting !== null}
+                    className="shrink-0 rounded-md border border-current px-3 py-1.5 font-semibold transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Retry
+                  </button>
+                )}
               </div>
             )}
 
@@ -458,7 +531,19 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
               <>
                 <SoundWaveInterviewer
                   active={isVoiceSpeaking || isAiResponding}
-                  label={isVoiceSpeaking ? 'Speaking...' : isAiResponding ? 'Preparing prompt...' : 'Audio interviewer ready'}
+                  label={
+                    connectionState === 'connecting'
+                      ? 'Connecting audio interviewer...'
+                      : connectionState === 'error'
+                        ? 'Audio interviewer unavailable'
+                        : isVoiceSpeaking
+                          ? 'Speaking...'
+                          : isAiResponding
+                            ? 'Preparing prompt...'
+                            : connectionState === 'ready'
+                              ? 'Audio interviewer ready'
+                              : 'Preparing exercise...'
+                  }
                 />
                 <div className="mt-3 h-36 overflow-y-auto rounded-lg border border-line bg-background p-4 sm:h-40 md:h-44">
                   {visibleActiveListeningMessages.length === 0 && error ? (
@@ -488,7 +573,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                 <div className="mt-3 flex justify-center">
                   <button
                     onClick={isListening ? stopListening : recordAndSendReply}
-                    disabled={isAiResponding}
+                    disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking}
                     className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}

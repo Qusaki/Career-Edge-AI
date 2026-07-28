@@ -155,8 +155,77 @@ body {
 }
 
 .dashboard-shell [class*="bg-gradient"] {
-  background-color: #fbfaf7;
+  background-color: var(--color-card);
   background-image: none !important;
+}
+
+.dashboard-theme-dark {
+  --color-page: #0b0f16;
+  --color-card: #121923;
+  --color-line: #293241;
+  --color-ink: #f1f5f9;
+  --color-muted: #9aa6b7;
+  --color-active: #1b2431;
+  --color-gold-text: #f7d774;
+  --color-slate-950: #0b0f16;
+  --color-slate-900: #111822;
+  --color-slate-800: #1b2431;
+  --color-slate-700: #293241;
+  --color-slate-600: #465366;
+  --color-slate-500: #7f8a9b;
+  --color-slate-400: #a7b1c2;
+  --color-slate-300: #cbd5e1;
+  --color-slate-200: #e2e8f0;
+  --color-slate-100: #f1f5f9;
+  --color-slate-50: #f8fafc;
+}
+
+.dashboard-theme-dark .program-accent-button {
+  background-color: var(--program-accent-dark-interactive);
+  color: var(--program-accent-dark-interactive-foreground);
+}
+
+.dashboard-theme-dark .program-accent-button:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--program-accent-dark-interactive) 88%, white);
+}
+
+.dashboard-theme-dark .program-accent-button:not(:disabled):active {
+  background-color: color-mix(in srgb, var(--program-accent-dark-interactive) 82%, black);
+}
+
+.dashboard-theme-dark .program-accent-button:focus-visible {
+  outline-color: var(--program-accent-on-dark);
+}
+
+.dashboard-theme-dark .program-accent-fill {
+  background-color: var(--program-accent-dark-interactive);
+  color: var(--program-accent-dark-interactive-foreground);
+}
+
+.dashboard-theme-dark .text-program-accent,
+.dashboard-theme-dark .program-accent-link {
+  color: var(--program-accent-on-dark);
+}
+
+.dashboard-theme-dark .program-accent-link:hover {
+  color: color-mix(in srgb, var(--program-accent-on-dark) 85%, white);
+}
+
+.dashboard-theme-dark .program-accent-surface {
+  background-color: var(--program-accent-dark-surface);
+  color: var(--program-accent-on-dark);
+}
+
+.dashboard-theme-dark .program-accent-border {
+  border-color: color-mix(in srgb, var(--program-accent-on-dark) 45%, transparent);
+}
+
+.dashboard-theme-dark .program-accent-focus:focus {
+  border-color: var(--program-accent-on-dark);
+}
+
+.dashboard-theme-dark .program-accent-focus-ring:focus-visible {
+  box-shadow: 0 0 0 2px var(--program-accent-on-dark);
 }
 
 .program-accent-button {
@@ -192,6 +261,47 @@ body {
 .program-accent-fill {
   background-color: var(--program-accent);
   color: var(--program-accent-foreground);
+}
+
+.program-accent-interview-active {
+  background-color: var(--program-accent-dark-interactive);
+  color: var(--program-accent-dark-interactive-foreground);
+}
+
+.program-accent-interview-active:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--program-accent-dark-interactive) 88%, white);
+}
+
+.program-accent-interview-active:focus-visible {
+  outline: 2px solid var(--program-accent-on-dark);
+  outline-offset: 2px;
+}
+
+.interview-session-theme {
+  --color-slate-950: #070b12;
+  --color-slate-900: #111827;
+  --color-slate-800: #182235;
+  --color-slate-700: #2a3546;
+  --color-slate-600: #465366;
+  --color-slate-500: #7f8a9b;
+  --color-slate-400: #a7b1c2;
+  --color-slate-300: #cbd5e1;
+  --color-slate-200: #e2e8f0;
+  --color-slate-100: #f4f7fb;
+  --color-slate-50: #f8fafc;
+  --interview-outer: #070b12;
+  --interview-stage: #111827;
+  --interview-transcript: #182235;
+  --interview-controls: #090f1a;
+  --interview-card: #111a29;
+  --interview-elevated: #202c40;
+  --interview-control-hover: #172131;
+  --interview-disabled: #303b4b;
+  --interview-border: #2a3546;
+  --interview-border-strong: #3a4658;
+  --interview-text-primary: #f4f7fb;
+  --interview-text-secondary: #a7b1c2;
+  --interview-text-muted: #7f8a9b;
 }
 
 .program-accent-surface {

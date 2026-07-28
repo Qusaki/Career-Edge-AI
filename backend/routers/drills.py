@@ -204,7 +204,13 @@ def start_drill_session(request: DrillStartRequest, db: Session = Depends(get_db
         DrillSession.status == "active",
     ).order_by(DrillSession.start_time.desc()).first()
     if active_session:
-        return active_session
+        now = datetime.datetime.utcnow()
+        if (now - active_session.start_time).total_seconds() <= 3600:
+            return active_session
+
+        active_session.status = "expired"
+        active_session.end_time = now
+        db.commit()
 
     session = DrillSession(
         user_id=current_user.id,

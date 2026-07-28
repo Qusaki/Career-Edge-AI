@@ -68,18 +68,20 @@ def start_session(db: Session = Depends(get_db), current_user: User = Depends(ge
         PostTestInterviewSession.status == "active",
     ).order_by(PostTestInterviewSession.start_time.desc()).first()
     if active_session:
-        first_ai_turn = db.query(PostTestInterviewMessage).filter(
-            PostTestInterviewMessage.session_id == active_session.id,
-            PostTestInterviewMessage.role == "ai",
-        ).order_by(PostTestInterviewMessage.timestamp.asc(), PostTestInterviewMessage.id.asc()).first()
-        expected_first_question = get_post_test_questions(current_user.department)[0]
-        if first_ai_turn and first_ai_turn.content == expected_first_question:
-            return active_session
+        now = datetime.datetime.utcnow()
+        if (now - active_session.start_time).total_seconds() <= 3600:
+            first_ai_turn = db.query(PostTestInterviewMessage).filter(
+                PostTestInterviewMessage.session_id == active_session.id,
+                PostTestInterviewMessage.role == "ai",
+            ).order_by(PostTestInterviewMessage.timestamp.asc(), PostTestInterviewMessage.id.asc()).first()
+            expected_first_question = get_post_test_questions(current_user.department)[0]
+            if first_ai_turn and first_ai_turn.content == expected_first_question:
+                return active_session
 
-        # Enrollment-contaminated and pre-persistence sessions cannot resume
-        # with the dedicated Post-Test sequence, so replace them cleanly.
+        # Expired, enrollment-contaminated, and pre-persistence sessions cannot
+        # resume with the dedicated Post-Test sequence, so replace them cleanly.
         active_session.status = "expired"
-        active_session.end_time = datetime.datetime.utcnow()
+        active_session.end_time = now
         db.commit()
 
     session = PostTestInterviewSession(user_id=current_user.id)
@@ -116,6 +118,8 @@ async def post_test_chat_ws(
     current_user: User = Depends(get_current_user_ws)
 ):
     """Handles real-time bi-directional streaming for Post-Test Interview exercise."""
+    await websocket.accept()
+
     if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Forbidden: Department not authorized.")
         return
@@ -132,11 +136,10 @@ async def post_test_chat_ws(
     time_elapsed = datetime.datetime.utcnow() - session.start_time
     if time_elapsed.total_seconds() > 3600:
         session.status = "expired"
+        session.end_time = datetime.datetime.utcnow()
         db.commit()
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Time limit exceeded.")
         return
-
-    await websocket.accept()
 
     post_test_questions = get_post_test_questions(current_user.department)
     stored_history = db.query(PostTestInterviewMessage).filter(

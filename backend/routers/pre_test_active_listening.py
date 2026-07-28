@@ -49,7 +49,13 @@ def start_session(db: Session = Depends(get_db), current_user: User = Depends(ge
         PreTestActiveListeningSession.status == "active",
     ).order_by(PreTestActiveListeningSession.start_time.desc()).first()
     if active_session:
-        return active_session
+        now = datetime.datetime.utcnow()
+        if (now - active_session.start_time).total_seconds() <= 3600:
+            return active_session
+
+        active_session.status = "expired"
+        active_session.end_time = now
+        db.commit()
 
     session = PreTestActiveListeningSession(user_id=current_user.id)
     db.add(session)
@@ -71,6 +77,8 @@ async def active_listening_chat_ws(
     current_user: User = Depends(get_current_user_ws)
 ):
     """Handles real-time bi-directional streaming for Active Listening exercise."""
+    await websocket.accept()
+
     session = db.query(PreTestActiveListeningSession).filter(PreTestActiveListeningSession.id == session_id, PreTestActiveListeningSession.user_id == current_user.id).first()
     if not session:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Session not found.")
@@ -83,12 +91,11 @@ async def active_listening_chat_ws(
     time_elapsed = datetime.datetime.utcnow() - session.start_time
     if time_elapsed.total_seconds() > 3600:
         session.status = "expired"
+        session.end_time = datetime.datetime.utcnow()
         db.commit()
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Time limit exceeded.")
         return
 
-    await websocket.accept()
-    
     client = get_ollama_client()
     model_name = get_ollama_model()
     

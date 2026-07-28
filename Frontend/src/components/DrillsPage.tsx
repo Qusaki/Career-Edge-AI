@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Dumbbell, LoaderCircle, Mic, MicOff, RefreshCw, Sparkles, CheckCircle2 } from 'lucide-react';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
@@ -144,7 +144,8 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
   const [isVoiceSpeaking, setIsVoiceSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const { isListening, startListening, stopListening } = useSpeechInput();
+  const exerciseGenerationRef = useRef(0);
+  const { isListening, startListening, stopListening, cancelListening } = useSpeechInput();
 
   const speakText = useCallback((text: string) => {
     if (!('speechSynthesis' in window)) return;
@@ -180,9 +181,17 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
 
+  useEffect(() => () => {
+    exerciseGenerationRef.current += 1;
+    cancelListening();
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  }, [cancelListening]);
+
   const startDrill = async (drill: Drill) => {
     const token = localStorage.getItem('token');
     if (!token) return;
+    const attemptId = exerciseGenerationRef.current + 1;
+    exerciseGenerationRef.current = attemptId;
     setStarting(drill.drillType);
     setError(null);
     setNotice(null);
@@ -192,59 +201,41 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
     setNegotiationTurn(0);
     setCurrentOffer(35000);
     setNegotiationGameOver(false);
+    cancelListening();
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     try {
-      const existingResponse = await fetch(`${apiUrl}/drills/`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (existingResponse.ok) {
-        const existingSessions: DrillSession[] = await existingResponse.json();
-        const existingSession = existingSessions
-          .filter(item =>
-            item.status === 'active' &&
-            item.drill_level === drill.drillLevel &&
-            item.drill_type === drill.drillType
-          )
-          .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())[0];
-
-        if (existingSession) {
-          setActiveSession(existingSession);
-          setActivePrompt('Continue this unfinished drill, then mark it complete when you are done.');
-          setNotice(`${drill.title} session #${existingSession.id} is ready.`);
-          onSessionModeChange(true);
-          await loadSessions();
-          return;
-        }
-      }
-
-      const [sessionResponse, promptResponse] = await Promise.all([
-        fetch(`${apiUrl}/drills/start`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            drill_level: drill.drillLevel,
-            drill_type: drill.drillType,
-          }),
-        }),
-        drill.generatorEndpoint ? fetch(`${apiUrl}${drill.generatorEndpoint}`, {
+      const promptResponse = drill.generatorEndpoint
+        ? await fetch(`${apiUrl}${drill.generatorEndpoint}`, {
           headers: { Authorization: `Bearer ${token}` },
-        }) : Promise.resolve(null),
-      ]);
-
-      if (!sessionResponse.ok) {
-        const body = await sessionResponse.json().catch(() => null);
-        throw new Error(body?.detail || `Unable to start ${drill.title}.`);
-      }
+        })
+        : null;
+      if (exerciseGenerationRef.current !== attemptId) return;
       if (promptResponse && !promptResponse.ok) throw new Error(`Unable to generate a prompt for ${drill.title}.`);
 
-      const session: DrillSession = await sessionResponse.json();
       const prompt = promptResponse ? await promptResponse.json() : {
         scenario: 'You are negotiating a starting salary. The employer opens with ₱35,000 and is strict about the budget.',
         instruction: 'Reply professionally. You can accept, negotiate salary, or ask about benefits.',
       };
+      if (exerciseGenerationRef.current !== attemptId) return;
+      const sessionResponse = await fetch(`${apiUrl}/drills/start`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          drill_level: drill.drillLevel,
+          drill_type: drill.drillType,
+        }),
+      });
+      if (exerciseGenerationRef.current !== attemptId) return;
+      if (!sessionResponse.ok) {
+        const body = await sessionResponse.json().catch(() => null);
+        throw new Error(body?.detail || `Unable to start ${drill.title}.`);
+      }
+
+      const session: DrillSession = await sessionResponse.json();
+      if (exerciseGenerationRef.current !== attemptId) return;
       const formattedPrompt = formatPrompt(prompt);
       setActiveSession(session);
       setActivePrompt(formattedPrompt);
@@ -264,14 +255,19 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
       onSessionModeChange(true);
       await loadSessions();
     } catch (err) {
+      if (exerciseGenerationRef.current !== attemptId) return;
       setError(err instanceof Error ? err.message : `Unable to start ${drill.title}.`);
     } finally {
-      setStarting(null);
+      if (exerciseGenerationRef.current === attemptId) setStarting(null);
     }
   };
 
   const quitDrill = () => {
+    exerciseGenerationRef.current += 1;
+    cancelListening();
     if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
+    setStarting(null);
+    setCompleting(null);
     setActiveSession(null);
     setActivePrompt('');
     setSpokenResponse('');
@@ -338,6 +334,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
   const completeDrill = async () => {
     const token = localStorage.getItem('token');
     if (!token || !activeSession) return;
+    const attemptId = exerciseGenerationRef.current;
     setCompleting(activeSession.id);
     setError(null);
     setNotice(null);
@@ -362,6 +359,9 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
         throw new Error(body?.detail || 'Unable to complete the drill session.');
       }
       const completedSession: DrillSession = await response.json();
+      if (exerciseGenerationRef.current !== attemptId) return;
+      cancelListening();
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
       setNotice(`Drill session #${completedSession.id} was marked complete.`);
       setActiveSession(null);
       setActivePrompt('');
@@ -374,9 +374,10 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
       onSessionModeChange(false);
       await loadSessions();
     } catch (err) {
+      if (exerciseGenerationRef.current !== attemptId) return;
       setError(err instanceof Error ? err.message : 'Unable to complete the drill session.');
     } finally {
-      setCompleting(null);
+      if (exerciseGenerationRef.current === attemptId) setCompleting(null);
     }
   };
 

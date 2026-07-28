@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Canvas } from '@react-three/fiber';
-import { Environment, OrbitControls } from '@react-three/drei';
-import { ProfessorModel } from './ProfessorModel';
+import { Environment, OrbitControls, useEnvironment } from '@react-three/drei';
+import { clearProfessorModelCache, ProfessorModel, ProfessorModelPreloader } from './ProfessorModel';
 import { PreTestPage } from './PreTestPage';
 import { DrillsPage } from './DrillsPage';
 import { PostTestPage } from './PostTestPage';
@@ -55,19 +55,112 @@ import {
   Camera,
   CameraOff,
   BookOpen,
-  Dumbbell,
-  ClipboardCheck
+  ClipboardCheck,
+  Sun,
+  Moon,
+  CircleHelp
 } from 'lucide-react';
 
 interface DashboardProps {
   onLogout: () => void;
+  isNewSignupSession: boolean;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'pre-test' | 'drills' | 'post-test' | 'history' | 'analytics' | 'profile' | 'settings' | 'interview-type' | 'university-setup' | 'new-interview' | 'interview-session' | 'interview-result' | 'thesis-setup' | 'thesis-session'>(() => {
+interface ProfileAvatarProps {
+  name: string;
+  imageUrl?: string | null;
+  className: string;
+  initialClassName: string;
+}
+
+type AppTheme = 'light' | 'dark';
+type ProfessorAssetStatus = 'loading' | 'ready' | 'error';
+
+interface ProfessorAssetWaiter {
+  resolve: () => void;
+  reject: (error: Error) => void;
+}
+
+const APP_THEME_STORAGE_KEY = 'career-edge-theme';
+const DEFAULT_AVATAR_HOST = 'api.dicebear.com';
+
+const getCustomProfileImageUrl = (imageUrl?: string | null) => {
+  const normalizedImageUrl = imageUrl?.trim() || '';
+  return normalizedImageUrl.includes(DEFAULT_AVATAR_HOST) ? '' : normalizedImageUrl;
+};
+
+const getProfileAvatarInitial = (name?: string | null) => {
+  const firstName = name?.trim().split(/\s+/).find(Boolean) || '';
+  return Array.from(firstName)[0]?.toLocaleUpperCase() || 'U';
+};
+
+const ProfileAvatar: React.FC<ProfileAvatarProps> = ({ name, imageUrl, className, initialClassName }) => {
+  const customImageUrl = getCustomProfileImageUrl(imageUrl);
+  const [hasImageError, setHasImageError] = useState(false);
+
+  useEffect(() => {
+    setHasImageError(false);
+  }, [customImageUrl]);
+
+  return (
+    <div className={`program-accent-surface ${className}`}>
+      {customImageUrl && !hasImageError ? (
+        <img
+          src={customImageUrl}
+          alt={`${name.trim() || 'User'} profile`}
+          className="h-full w-full object-cover"
+          onError={() => setHasImageError(true)}
+        />
+      ) : (
+        <span
+          role="img"
+          aria-label={`${name.trim() || 'User'} avatar`}
+          className={`flex h-full w-full items-center justify-center font-bold uppercase leading-none ${initialClassName}`}
+        >
+          {getProfileAvatarInitial(name)}
+        </span>
+      )}
+    </div>
+  );
+};
+
+interface ProfessorAssetErrorBoundaryProps {
+  children: React.ReactNode;
+  onError: (error: Error) => void;
+}
+
+interface ProfessorAssetErrorBoundaryState {
+  hasError: boolean;
+}
+
+class ProfessorAssetErrorBoundary extends React.Component<
+  ProfessorAssetErrorBoundaryProps,
+  ProfessorAssetErrorBoundaryState
+> {
+  state: ProfessorAssetErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): ProfessorAssetErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error) {
+    this.props.onError(error);
+  }
+
+  render() {
+    return this.state.hasError ? null : this.props.children;
+  }
+}
+
+export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSession }) => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'pre-test' | 'drills' | 'post-test' | 'history' | 'analytics' | 'profile' | 'settings' | 'support' | 'privacy' | 'interview-type' | 'university-setup' | 'new-interview' | 'interview-session' | 'interview-result' | 'thesis-setup' | 'thesis-session'>(() => {
     if (window.location.pathname === '/pre-test') return 'pre-test';
     if (window.location.pathname === '/drills') return 'drills';
     if (window.location.pathname === '/post-test') return 'post-test';
+    if (window.location.pathname === '/settings') return 'settings';
+    if (window.location.pathname === '/support') return 'support';
+    if (window.location.pathname === '/privacy') return 'privacy';
+    if (window.location.pathname === '/profile') return 'profile';
     return 'dashboard';
   });
   const shouldLoadInterviewAI = ['interview-type', 'university-setup', 'new-interview', 'interview-session', 'thesis-setup', 'thesis-session'].includes(activeTab);
@@ -85,6 +178,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const [prevTab, setPrevTab] = useState<string>('dashboard');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  const [appTheme, setAppTheme] = useState<AppTheme>(() => {
+    const savedTheme = localStorage.getItem(APP_THEME_STORAGE_KEY);
+    return savedTheme === 'dark' ? 'dark' : 'light';
+  });
   const accountMenuRef = React.useRef<HTMLDivElement>(null);
   const accountTriggerRef = React.useRef<HTMLButtonElement>(null);
   const [selectedCompanyType, setSelectedCompanyType] = useState('');
@@ -96,6 +193,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
   const sessionIdRef = React.useRef<number | null>(null);
   const wsRef = React.useRef<WebSocket | null>(null);
   const [isStartingInterview, setIsStartingInterview] = useState(false);
+  const [professorAssetStatus, setProfessorAssetStatus] = useState<ProfessorAssetStatus>('loading');
+  const professorAssetStatusRef = React.useRef<ProfessorAssetStatus>('loading');
+  const professorAssetWaitersRef = React.useRef<ProfessorAssetWaiter[]>([]);
+  const [professorAssetLoadAttempt, setProfessorAssetLoadAttempt] = useState(0);
+  const [isProfessorFirstFrameReady, setIsProfessorFirstFrameReady] = useState(false);
   const [isFinishingInterview, setIsFinishingInterview] = useState(false);
   const [showProfilePass, setShowProfilePass] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -110,7 +212,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     email: '',
     password: '',
     department: '',
-    profilePicture: 'https://api.dicebear.com/7.x/micah/svg?seed=Alex&backgroundColor=cbd5e1'
+    profilePicture: ''
   });
   const programAccentTheme = getProgramAccentTheme(profile.department);
   const programAccentStyle = {
@@ -122,7 +224,57 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     '--program-accent-text': programAccentTheme.text,
     '--program-accent-on-dark': programAccentTheme.onDark,
     '--program-accent-dark-surface': programAccentTheme.darkSurface,
+    '--program-accent-dark-interactive': programAccentTheme.darkInteractive,
+    '--program-accent-dark-interactive-foreground': programAccentTheme.darkInteractiveForeground,
   } as React.CSSProperties;
+
+  useEffect(() => {
+    localStorage.setItem(APP_THEME_STORAGE_KEY, appTheme);
+  }, [appTheme]);
+
+  const handleProfessorAssetReady = React.useCallback(() => {
+    professorAssetStatusRef.current = 'ready';
+    setProfessorAssetStatus('ready');
+    professorAssetWaitersRef.current.splice(0).forEach(({ resolve }) => resolve());
+  }, []);
+
+  const handleProfessorAssetError = React.useCallback((error: Error) => {
+    console.error('Unable to preload Professor Maxiel.', error);
+    professorAssetStatusRef.current = 'error';
+    setProfessorAssetStatus('error');
+    professorAssetWaitersRef.current.splice(0).forEach(({ reject }) => reject(error));
+  }, []);
+
+  const waitForProfessorAsset = React.useCallback(() => {
+    if (professorAssetStatusRef.current === 'ready') {
+      return Promise.resolve();
+    }
+    if (professorAssetStatusRef.current === 'error') {
+      return Promise.reject(new Error('Professor Maxiel is unavailable.'));
+    }
+    return new Promise<void>((resolve, reject) => {
+      professorAssetWaitersRef.current.push({ resolve, reject });
+    });
+  }, []);
+
+  const retryProfessorAssetLoad = React.useCallback(() => {
+    clearProfessorModelCache();
+    professorAssetStatusRef.current = 'loading';
+    setProfessorAssetStatus('loading');
+    setProfessorAssetLoadAttempt((attempt) => attempt + 1);
+  }, []);
+
+  const handleProfessorFirstFrame = React.useCallback(() => {
+    setIsProfessorFirstFrameReady(true);
+  }, []);
+
+  useEffect(() => {
+    useEnvironment.preload({ preset: 'city' });
+    return () => {
+      const interruption = new Error('Professor asset preparation was interrupted.');
+      professorAssetWaitersRef.current.splice(0).forEach(({ reject }) => reject(interruption));
+    };
+  }, []);
 
   useEffect(() => {
     if (!isAccountMenuOpen) return;
@@ -356,6 +508,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       history: '/history',
       analytics: '/analytics',
       settings: '/settings',
+      support: '/support',
+      privacy: '/privacy',
       profile: '/profile',
     };
     const path = routes[activeTab];
@@ -371,6 +525,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       else if (route === '/history') setActiveTab('history');
       else if (route === '/analytics') setActiveTab('analytics');
       else if (route === '/settings') setActiveTab('settings');
+      else if (route === '/support') setActiveTab('support');
+      else if (route === '/privacy') setActiveTab('privacy');
       else if (route === '/profile') setActiveTab('profile');
       else setActiveTab('dashboard');
     };
@@ -561,7 +717,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
             email: data.email || '',
             password: '',
             department: data.department || '',
-            profilePicture: data.profile_picture_url || `https://api.dicebear.com/7.x/micah/svg?seed=Alex&backgroundColor=cbd5e1`
+            profilePicture: getCustomProfileImageUrl(data.profile_picture_url)
           };
           setProfile(p);
 
@@ -586,7 +742,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
               email: cached.email || '',
               password: '',
               department: cached.department || '',
-              profilePicture: cached.profile_picture_url || `https://api.dicebear.com/7.x/micah/svg?seed=Alex&backgroundColor=cbd5e1`
+              profilePicture: getCustomProfileImageUrl(cached.profile_picture_url)
             });
           } else {
             // If completely failed and no cache
@@ -661,7 +817,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
           email: updatedUser.email || '',
           password: '',
           department: updatedUser.department || '',
-          profilePicture: updatedUser.profile_picture_url || profile.profilePicture
+          profilePicture: getCustomProfileImageUrl(updatedUser.profile_picture_url) || profile.profilePicture
         });
         setSelectedFile(null);
         setIsSaved(true);
@@ -1163,9 +1319,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       alert(unavailableMessage);
       return;
     }
+    if (professorAssetStatusRef.current === 'error') {
+      retryProfessorAssetLoad();
+      return;
+    }
     // Unlock speech synthesis immediately on user click
     unlockBrowserSpeech();
     setIsStartingInterview(true);
+
+    try {
+      await waitForProfessorAsset();
+    } catch {
+      setIsStartingInterview(false);
+      return;
+    }
+
     let sid: string | number = '';
     let isOffline = false;
     try {
@@ -1199,6 +1367,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       sessionIdRef.current = sid as number;
       setSessionId(sid as number);
       activeInterviewModeRef.current = 'enrollment';
+      setIsProfessorFirstFrameReady(false);
       setActiveTab('interview-session');
 
       const systemPrompt = "You are Professor Maxiel, an expert interviewer. Your sole purpose is to interview an incoming college freshman. Speak DIRECTLY to the student. Keep the interview to exactly 5 questions total. Ask exactly ONE question at a time. Conclude when finished.";
@@ -1935,6 +2104,14 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
 
   return (
     <>
+      <ProfessorAssetErrorBoundary
+        key={professorAssetLoadAttempt}
+        onError={handleProfessorAssetError}
+      >
+        <React.Suspense fallback={null}>
+          <ProfessorModelPreloader onReady={handleProfessorAssetReady} />
+        </React.Suspense>
+      </ProfessorAssetErrorBoundary>
       {isLlmLoading && (
         <div
           className="fixed inset-0 z-[9999] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center text-white"
@@ -1974,7 +2151,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
         </div>
       )}
       <div
-        className="dashboard-shell min-h-screen bg-page text-ink flex overflow-hidden"
+        className={`dashboard-shell dashboard-theme-${appTheme} min-h-screen bg-page text-ink flex overflow-hidden`}
         style={programAccentStyle}
       >
         {/* Sidebar */}
@@ -2037,7 +2214,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                 onClick={() => setActiveTab('drills')}
                 className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'drills' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
               >
-                <Dumbbell className="w-5 h-5" />
+                <Clock className="w-5 h-5" />
                 Drills
               </button>
               <button
@@ -2120,16 +2297,15 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                 aria-controls="sidebar-account-menu"
                 onClick={() => setIsAccountMenuOpen((isOpen) => !isOpen)}
                 className={`program-accent-focus-ring flex w-full items-center gap-3 rounded-lg border border-line p-2 text-left transition-colors duration-200 ${
-                  activeTab === 'profile' || isAccountMenuOpen ? 'bg-active' : 'bg-transparent hover:bg-active'
+                  ['profile', 'settings', 'support', 'privacy'].includes(activeTab) || isAccountMenuOpen ? 'bg-active' : 'bg-transparent hover:bg-active'
                 }`}
               >
-                <div className="program-accent-border h-10 w-10 shrink-0 overflow-hidden rounded-full border bg-slate-800">
-                  <img
-                    src={profile.profilePicture}
-                    alt={`${profile.name || 'User'} profile`}
-                    className="h-full w-full object-cover"
-                  />
-                </div>
+                <ProfileAvatar
+                  name={profile.name}
+                  imageUrl={profile.profilePicture}
+                  className="program-accent-border h-10 w-10 shrink-0 overflow-hidden rounded-full border"
+                  initialClassName="text-sm"
+                />
                 <div className="min-w-0 flex-1 overflow-hidden">
                   <h3 className="truncate text-sm font-semibold text-ink" title={profile.name}>{profile.name}</h3>
                   <p className="text-program-accent mt-0.5 truncate text-xs font-semibold" title={profile.department}>{profile.department}</p>
@@ -2161,7 +2337,10 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
               <div className="w-full">
                 {/* Page Title */}
                 <div className="mb-6">
-                  <h1 className="text-4xl md:text-5xl font-bold text-ink tracking-tight">Welcome back, <span className="text-program-accent">{profile.name.split(' ')[0]}</span></h1>
+                  <h1 className="text-4xl md:text-5xl font-bold text-ink tracking-tight">
+                    {isNewSignupSession ? 'Welcome to Career Edge, ' : 'Welcome back, '}
+                    <span className="text-program-accent">{profile.name.split(' ')[0]}</span>
+                  </h1>
                   <p className="text-lg md:text-xl font-medium text-muted mt-1.5">Here's an overview of your interview progress.</p>
                 </div>
 
@@ -2260,6 +2439,12 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       </div>
                       <h3 className="text-xl font-bold text-slate-200 mb-2">University Enrollment</h3>
                       <p className="text-slate-400 text-sm">PRMSU CASTI entrance interview practice.</p>
+                      {isStartingInterview && (
+                        <p className="program-accent-on-dark mt-3 text-xs font-semibold">Preparing Professor Maxiel...</p>
+                      )}
+                      {professorAssetStatus === 'error' && !isStartingInterview && (
+                        <p className="mt-3 text-xs font-semibold text-rose-400">Unable to load Professor Maxiel. Select to retry.</p>
+                      )}
                     </button>
 
                     <button
@@ -2362,8 +2547,12 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       disabled={isStartingInterview}
                       className={`program-accent-button px-8 py-4 rounded-xl font-semibold flex items-center gap-2 transition-colors shadow-lg text-lg ${isStartingInterview ? 'opacity-75 cursor-not-allowed' : ''}`}
                     >
-                      {isStartingInterview ? 'Starting...' : 'Continue'}
-                      {!isStartingInterview && <ArrowRight className="w-5 h-5" />}
+                      {isStartingInterview
+                        ? 'Preparing interview...'
+                        : professorAssetStatus === 'error'
+                          ? 'Retry Professor'
+                          : 'Continue'}
+                      {!isStartingInterview && professorAssetStatus !== 'error' && <ArrowRight className="w-5 h-5" />}
                     </button>
                   </div>
                 </motion.div>
@@ -2752,24 +2941,26 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
             )}
 
             {activeTab === 'interview-session' && (
-              <div className="relative flex h-full min-h-0 w-full flex-col overflow-y-auto bg-[#02040a] lg:overflow-hidden">
+              <div className="interview-session-theme relative flex h-full min-h-0 w-full flex-col overflow-y-auto bg-[var(--interview-outer)] text-[var(--interview-text-primary)] lg:overflow-hidden">
 
                 {/* Unified interview room: primary stage and docked transcript */}
-                <div className="grid w-full flex-none grid-cols-1 bg-[#02040a] lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_clamp(20rem,24vw,26rem)] lg:grid-rows-[minmax(0,1fr)_auto]">
+                <div className="grid w-full flex-none grid-cols-1 bg-[var(--interview-outer)] lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_clamp(20rem,24vw,26rem)] lg:grid-rows-[minmax(0,1fr)_auto]">
 
                   {/* Primary 3D interview stage */}
                   <motion.div
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
-                    className="relative m-3 flex min-h-[52svh] items-center justify-center overflow-hidden rounded-xl border border-[#263449] bg-[#111827] p-0 lg:col-start-1 lg:row-start-1 lg:m-5 lg:min-h-0"
-                    style={{ backgroundColor: '#111827' }}
+                    className="relative m-3 flex min-h-[52svh] items-center justify-center overflow-hidden rounded-xl border border-[var(--interview-border)] bg-[var(--interview-stage)] p-0 lg:col-start-1 lg:row-start-1 lg:m-5 lg:min-h-0"
+                    style={{ backgroundColor: 'var(--interview-stage)' }}
                   >
-                    <div className="absolute inset-0 w-full h-full">
+                    <div className={`absolute inset-0 h-full w-full transition-opacity duration-200 ${isProfessorFirstFrameReady ? 'opacity-100' : 'opacity-0'}`}>
                       <Canvas shadows camera={{ position: [0, 0.5, 3], fov: 35 }}>
                         <ambientLight intensity={0.8} />
                         <pointLight position={[10, 10, 10]} intensity={1} />
                         <directionalLight position={[5, 10, 5]} intensity={2.0} castShadow />
-                        <Environment preset="city" />
+                        <React.Suspense fallback={null}>
+                          <Environment preset="city" />
+                        </React.Suspense>
                         <OrbitControls enableZoom={false} enablePan={false} maxPolarAngle={Math.PI / 2} minPolarAngle={Math.PI / 2} target={[0, 0, 0]} />
                         <ProfessorModel
                           isSpeaking={isAiSpeaking}
@@ -2777,13 +2968,20 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                           mouthCues={mouthCues}
                           currentAudioTime={currentAudioStartTime}
                           audioContext={audioContextRef.current}
+                          onFirstFrame={handleProfessorFirstFrame}
                         />
                       </Canvas>
                     </div>
+                    {!isProfessorFirstFrameReady && (
+                      <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3">
+                        <div className="program-accent-spinner h-7 w-7 rounded-full border-2" />
+                        <p className="text-xs font-semibold text-[var(--interview-text-secondary)]">Preparing Professor Maxiel...</p>
+                      </div>
+                    )}
                     {isCameraEnabled && (
-                      <div className="program-accent-dark-border absolute bottom-3 right-3 z-20 w-36 overflow-hidden rounded-xl border bg-[#0f172a] shadow-xl sm:bottom-4 sm:right-4 sm:w-44">
+                      <div className="program-accent-dark-border absolute bottom-3 right-3 z-20 w-36 overflow-hidden rounded-xl border bg-[var(--interview-card)] shadow-xl sm:bottom-4 sm:right-4 sm:w-44">
                         <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
-                        <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-slate-200">
+                        <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-[var(--interview-text-secondary)]">
                           <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unavailable' ? 'Tracking unavailable' : 'Loading tracker'}</span>
                           <span className="program-accent-on-dark">{eyeTracker.samples > 0 ? `${eyeTracker.score}%` : '—'}</span>
                         </div>
@@ -2795,8 +2993,8 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                   <motion.div
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
-                    className="relative flex min-h-[24rem] flex-col overflow-hidden border-t border-[#334155] bg-[#1e293b] p-4 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:min-h-0 lg:border-l lg:border-t-0 lg:p-5"
-                    style={{ backgroundColor: 'rgba(30, 41, 59, 0.96)' }}
+                    className="relative flex min-h-[24rem] flex-col overflow-hidden border-t border-[var(--interview-border)] bg-[var(--interview-transcript)] p-4 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:min-h-0 lg:border-l lg:border-t-0 lg:p-5"
+                    style={{ backgroundColor: 'var(--interview-transcript)' }}
                   >
                     {interviewResult ? (
                       // --- EVALUATION RESULT UI ---
@@ -2805,12 +3003,12 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                           <div className={`mx-auto inline-flex items-center justify-center w-20 h-20 rounded-full mb-1 border-4 ${interviewResult.passed ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
                             <span className="text-2xl font-black">{interviewResult.total_score}%</span>
                           </div>
-                          <h2 className="text-xl font-bold text-slate-100 tracking-tight">Interview Complete</h2>
-                          <p className="text-xs text-slate-400 leading-relaxed px-2">{interviewResult.passed ? 'Congratulations! You passed the interview.' : 'Keep practicing! You did not meet the passing criteria this time.'}</p>
+                          <h2 className="text-xl font-bold text-[var(--interview-text-primary)] tracking-tight">Interview Complete</h2>
+                          <p className="text-xs text-[var(--interview-text-secondary)] leading-relaxed px-2">{interviewResult.passed ? 'Congratulations! You passed the interview.' : 'Keep practicing! You did not meet the passing criteria this time.'}</p>
                         </div>
 
                         <div className="space-y-4 shrink-0">
-                          <h3 className="text-sm font-bold text-slate-200 border-b border-slate-700/50 pb-2">Performance Breakdown</h3>
+                          <h3 className="border-b border-[var(--interview-border)] pb-2 text-sm font-bold text-[var(--interview-text-primary)]">Performance Breakdown</h3>
 
                           <div className="grid grid-cols-2 gap-2">
                             {(() => {
@@ -2847,28 +3045,28 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                               }
 
                               return breakdown.map((item, idx) => (
-                                <div key={idx} className={`bg-slate-900 p-3 rounded-xl border border-slate-800/50 ${breakdown.length % 2 !== 0 && idx === breakdown.length - 1 ? 'col-span-2 text-center' : ''}`}>
-                                  <p className="text-[10px] text-slate-400 mb-1 uppercase tracking-wider overflow-hidden text-ellipsis whitespace-nowrap" title={item.label}>{item.label}</p>
-                                  <p className="text-program-accent text-xl font-black">{item.score || 0}</p>
+                                <div key={idx} className={`rounded-xl border border-[var(--interview-border)] bg-[var(--interview-card)] p-3 ${breakdown.length % 2 !== 0 && idx === breakdown.length - 1 ? 'col-span-2 text-center' : ''}`}>
+                                  <p className="mb-1 overflow-hidden text-ellipsis whitespace-nowrap text-[10px] uppercase tracking-wider text-[var(--interview-text-secondary)]" title={item.label}>{item.label}</p>
+                                  <p className="program-accent-on-dark text-xl font-black">{item.score || 0}</p>
                                 </div>
                               ));
                             })()}
                           </div>
 
-                          <div className="program-accent-surface program-accent-border mt-3 flex items-center justify-between rounded-xl border p-3">
+                          <div className="program-accent-dark-surface program-accent-border mt-3 flex items-center justify-between rounded-xl border p-3">
                             <span className="text-xs font-bold uppercase tracking-wider">Camera Eye Contact</span>
                             <span className="text-xl font-black">{(interviewResult.eye_contact_samples || 0) > 0 ? `${Math.round(interviewResult.score_eye_contact)}%` : 'Unavailable'}</span>
                           </div>
 
                           {interviewResult.feedback_summary && (
-                            <div className="program-accent-surface program-accent-border border p-4 rounded-xl mt-4">
+                            <div className="program-accent-dark-surface program-accent-border border p-4 rounded-xl mt-4">
                               <h4 className="text-[11px] uppercase tracking-wider font-bold mb-2">AI Feedback</h4>
-                              <p className="text-xs text-slate-300 leading-relaxed">{interviewResult.feedback_summary}</p>
+                              <p className="text-xs leading-relaxed text-[var(--interview-text-secondary)]">{interviewResult.feedback_summary}</p>
                             </div>
                           )}
 
-                          <div className="program-accent-dark-border mt-4 rounded-xl border bg-[#334155] p-3 text-center">
-                            <p className="mb-3 text-xs leading-relaxed text-[#e2e8f0]">
+                          <div className="program-accent-dark-border mt-4 rounded-xl border bg-[var(--interview-elevated)] p-3 text-center">
+                            <p className="mb-3 text-xs leading-relaxed text-[var(--interview-text-secondary)]">
                               Your responses have been validated. Review your score and feedback, then return to the dashboard.
                             </p>
                             <button onClick={exitInterview} className="program-accent-button w-full py-3 text-sm rounded-xl font-bold transition-colors shadow-lg shrink-0">
@@ -2880,11 +3078,11 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     ) : (
                       // --- TRANSCRIPT HISTORY UI ---
                       <div className="flex flex-col h-full">
-                        <h3 className="mb-3 shrink-0 border-b border-[#475569] pb-3 text-left text-xs font-bold uppercase tracking-[0.16em] text-[#f8fafc]">Interview Transcript</h3>
+                        <h3 className="mb-3 shrink-0 border-b border-[var(--interview-border)] pb-3 text-left text-xs font-bold uppercase tracking-[0.16em] text-[var(--interview-text-primary)]">Interview Transcript</h3>
 
                         <div className="custom-scrollbar flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1 scroll-smooth">
                           {(aiResponseText || isAiSpeaking) && (
-                            <div className="program-accent-dark-border rounded-lg border bg-[#334155] p-3 text-[#f8fafc]">
+                            <div className="program-accent-dark-border rounded-lg border bg-[var(--interview-elevated)] p-3 text-[var(--interview-text-primary)]">
                               <div className="mb-2 flex items-center justify-between gap-3">
                                 <span className="program-accent-on-dark text-[10px] font-bold uppercase tracking-wider">Professor Maxiel</span>
                                 {isAiSpeaking && <span className="program-accent-on-dark text-[10px] font-semibold">Speaking...</span>}
@@ -2903,8 +3101,8 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                               if (userLogs.length === 0 && !transcript) {
                                 return (
                                   <div className="flex flex-1 flex-col items-center justify-center py-8">
-                                    <User className="mb-3 h-7 w-7 text-[#94a3b8]" />
-                                    <p className="px-4 text-center text-xs leading-relaxed text-[#cbd5e1]">Respond to the AI Professor. Your answers will be tracked here (Limit: 5).</p>
+                                    <User className="mb-3 h-7 w-7 text-[var(--interview-text-muted)]" />
+                                    <p className="px-4 text-center text-xs leading-relaxed text-[var(--interview-text-secondary)]">Respond to the AI Professor. Your answers will be tracked here (Limit: 5).</p>
                                   </div>
                                 );
                               }
@@ -2913,10 +3111,10 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                                 <>
                                   {userLogs.map((log, idx) => (
                                     <div key={idx} className="flex flex-col items-stretch animate-fade-in">
-                                      <span className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wider text-[#cbd5e1]">
+                                      <span className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wider text-[var(--interview-text-secondary)]">
                                         You · Response {idx + 1}
                                       </span>
-                                      <div className="rounded-lg border border-[#334155] bg-[#0f172a] p-3 text-[#f8fafc]">
+                                      <div className="rounded-lg border border-[var(--interview-border)] bg-[var(--interview-card)] p-3 text-[var(--interview-text-primary)]">
                                         <p className="text-xs leading-relaxed">{log.text}</p>
                                       </div>
                                     </div>
@@ -2926,19 +3124,19 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                             })()}
                           </div>
                         </div>
-                        <div className="mt-3 shrink-0 border-t border-[#475569] pt-3">
+                        <div className="mt-3 shrink-0 border-t border-[var(--interview-border)] pt-3">
                           {(() => {
                             const userTurns = conversationLog.filter(l => l.sender === 'user').length;
                             if (userTurns >= 5) {
                               return (
                                 <div className="space-y-2 animate-fade-in">
-                                  <p className="text-center text-xs leading-relaxed text-[#cbd5e1]">
+                                  <p className="text-center text-xs leading-relaxed text-[var(--interview-text-secondary)]">
                                     Five answers are ready. Validate them to calculate your score and feedback.
                                   </p>
                                   <button
                                     onClick={finishInterviewSession}
                                     disabled={isFinishingInterview}
-                                    className={`w-full py-3 ${isFinishingInterview ? 'bg-[#64748b] cursor-not-allowed' : 'bg-[#16a34a] hover:bg-[#15803d]'} text-white rounded-xl font-bold transition-all shadow-lg shadow-emerald-900/20 text-sm tracking-wide`}
+                                    className={`w-full rounded-xl py-3 text-sm font-bold tracking-wide transition-all ${isFinishingInterview ? 'cursor-not-allowed bg-[var(--interview-disabled)] text-[var(--interview-text-secondary)]' : 'program-accent-interview-active'}`}
                                   >
                                     {isFinishingInterview ? 'Validating Responses...' : 'Validate Responses'}
                                   </button>
@@ -2947,8 +3145,8 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                             }
                             return (
                               <div className="text-center space-y-1">
-                                <span className="block text-xs font-semibold text-[#e2e8f0]">{userTurns} / 5 Responses Recorded</span>
-                                <span className="block text-[10px] text-[#94a3b8]">Complete all five responses to unlock validation.</span>
+                                <span className="block text-xs font-semibold text-[var(--interview-text-primary)]">{userTurns} / 5 Responses Recorded</span>
+                                <span className="block text-[10px] text-[var(--interview-text-muted)]">Complete all five responses to unlock validation.</span>
                               </div>
                             );
                           })()}
@@ -2959,15 +3157,15 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
 
                 {/* Integrated meeting controls */}
                 {!interviewResult && (
-                  <div className="grid w-full shrink-0 items-center gap-3 border-t border-[#263449] bg-[#0b1120] px-4 py-3 lg:col-start-1 lg:row-start-2 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:gap-6 lg:px-6">
+                  <div className="grid w-full shrink-0 items-center gap-3 border-t border-[var(--interview-border)] bg-[var(--interview-controls)] px-4 py-3 lg:col-start-1 lg:row-start-2 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:gap-6 lg:px-6">
                     <div
                       role="status"
                       aria-live="polite"
                       className="min-w-0 text-center lg:max-w-2xl lg:text-left"
                     >
-                      <p className={`text-[10px] font-bold uppercase tracking-[0.18em] ${isListening || enrollmentResponseCount >= 5 ? 'text-[#86efac]' : 'program-accent-on-dark'}`}>How to respond</p>
-                      <p className="mt-1 text-xs font-semibold text-[#f8fafc]">Listen → Click microphone → Speak → Click microphone again to submit</p>
-                      <p className={`mt-1.5 text-xs leading-relaxed ${isListening ? 'font-semibold text-[#86efac]' : 'text-[#cbd5e1]'}`}>
+                      <p className="program-accent-on-dark text-[10px] font-bold uppercase tracking-[0.18em]">How to respond</p>
+                      <p className="mt-1 text-xs font-semibold text-[var(--interview-text-primary)]">Listen → Click microphone → Speak → Click microphone again to submit</p>
+                      <p className={`mt-1.5 text-xs leading-relaxed ${isListening ? 'program-accent-on-dark font-semibold' : 'text-[var(--interview-text-secondary)]'}`}>
                         {enrollmentInstruction}
                       </p>
                     </div>
@@ -2976,29 +3174,29 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     <div className="relative flex flex-col items-center gap-1">
                       <button
                         onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
-                        className="group relative flex h-12 w-12 items-center justify-center rounded-lg bg-transparent text-[#cbd5e1] transition-all duration-300 hover:bg-[#171e2e] hover:text-white"
+                        className="group relative flex h-12 w-12 items-center justify-center rounded-lg bg-transparent text-[var(--interview-text-secondary)] transition-all duration-300 hover:bg-[var(--interview-control-hover)] hover:text-[var(--interview-text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--program-accent-on-dark)]"
                         title="Add an attachment"
                         aria-label="Add an attachment"
                       >
                         <Plus className={`h-[22px] w-[22px] transition-transform duration-300 ${isAddMenuOpen ? 'rotate-45' : 'group-hover:scale-110'}`} />
                       </button>
-                      <span className="text-[11px] font-semibold text-[#cbd5e1]">Attach</span>
+                      <span className="text-[11px] font-semibold text-[var(--interview-text-secondary)]">Attach</span>
 
                       {/* Attachment Popover */}
                       {isAddMenuOpen && (
                         <motion.div
                           initial={{ opacity: 0, scale: 0.95, y: 10 }}
                           animate={{ opacity: 1, scale: 1, y: 0 }}
-                          className="absolute bottom-[calc(100%+16px)] left-1/2 -translate-x-1/2 w-48 bg-slate-800 border border-slate-700/80 rounded-2xl shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] overflow-hidden z-[100]"
+                          className="absolute bottom-[calc(100%+16px)] left-1/2 z-[100] w-48 -translate-x-1/2 overflow-hidden rounded-2xl border border-[var(--interview-border)] bg-[var(--interview-elevated)] shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)]"
                         >
                           <div className="flex flex-col p-1.5 space-y-1">
-                            <button onClick={() => setIsAddMenuOpen(false)} className="flex items-center gap-3 w-full p-2.5 text-left hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all">
+                            <button onClick={() => setIsAddMenuOpen(false)} className="flex w-full items-center gap-3 rounded-xl p-2.5 text-left text-[var(--interview-text-secondary)] transition-all hover:bg-[var(--interview-control-hover)] hover:text-[var(--interview-text-primary)]">
                               <div className="program-accent-dark-surface w-7 h-7 rounded-lg flex items-center justify-center shrink-0">
                                 <Folder className="w-3.5 h-3.5" />
                               </div>
                               <span className="text-xs font-semibold tracking-wide">Local Disk</span>
                             </button>
-                            <button onClick={() => setIsAddMenuOpen(false)} className="flex items-center gap-3 w-full p-2.5 text-left hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all">
+                            <button onClick={() => setIsAddMenuOpen(false)} className="flex w-full items-center gap-3 rounded-xl p-2.5 text-left text-[var(--interview-text-secondary)] transition-all hover:bg-[var(--interview-control-hover)] hover:text-[var(--interview-text-primary)]">
                               <div className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
                                 <Cloud className="w-3.5 h-3.5 text-emerald-400" />
                               </div>
@@ -3016,10 +3214,10 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         disabled={isMicTransitioning || enrollmentResponseCount >= 5}
                         className={`relative ${
                           isListening
-                            ? 'program-accent-fill program-accent-border'
+                            ? 'program-accent-interview-active program-accent-border'
                             : isMicTransitioning || enrollmentResponseCount >= 5
-                              ? 'border-[#64748b] bg-[#475569] text-[#cbd5e1] cursor-not-allowed'
-                              : 'border-[#475569] bg-[#1e293b] text-[#e2e8f0] hover:border-[#64748b] hover:bg-[#334155] shadow-black/40'
+                              ? 'cursor-not-allowed border-[var(--interview-border-strong)] bg-[var(--interview-disabled)] text-[var(--interview-text-secondary)]'
+                              : 'border-[var(--interview-border-strong)] bg-[var(--interview-elevated)] text-[var(--interview-text-primary)] hover:border-[var(--program-accent-on-dark)] hover:bg-[var(--interview-control-hover)]'
                         } flex h-14 w-14 items-center justify-center rounded-2xl border shadow-lg transition-all duration-300`}
                         title={isListening ? 'Stop recording and submit answer' : 'Start recording your answer'}
                         aria-label={
@@ -3039,7 +3237,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                               <motion.div
                                 key={`w-left-${i}`}
                                 className="w-0.5 rounded-full"
-                                style={{ backgroundColor: 'var(--program-accent-foreground)' }}
+                                style={{ backgroundColor: 'var(--program-accent-dark-interactive-foreground)' }}
                                 animate={{ height: `${height * 0.65}px` }}
                                 transition={{ duration: 0.1, ease: 'linear' }}
                               />
@@ -3049,7 +3247,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                               <motion.div
                                 key={`w-right-${i}`}
                                 className="w-0.5 rounded-full"
-                                style={{ backgroundColor: 'var(--program-accent-foreground)' }}
+                                style={{ backgroundColor: 'var(--program-accent-dark-interactive-foreground)' }}
                                 animate={{ height: `${height * 0.65}px` }}
                                 transition={{ duration: 0.1, ease: 'linear' }}
                               />
@@ -3063,16 +3261,16 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                             className="absolute inset-0 rounded-2xl border-2 opacity-0"
                             style={{
                               animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite',
-                              borderColor: 'var(--program-accent)',
+                              borderColor: 'var(--program-accent-on-dark)',
                             }}
                           />
                         )}
                       </button>
                       <div className="min-h-7 text-center leading-tight">
-                        <span className={`block text-[11px] font-bold ${isListening ? 'program-accent-on-dark' : 'text-[#f8fafc]'}`}>
+                        <span className={`block text-[11px] font-bold ${isListening ? 'program-accent-on-dark' : 'text-[var(--interview-text-primary)]'}`}>
                           {isListening ? 'Recording...' : isMicTransitioning ? 'Submitting...' : enrollmentResponseCount >= 5 ? 'Answers Complete' : 'Start Answer'}
                         </span>
-                        {isListening && <span className="mt-0.5 block text-[10px] font-medium text-[#cbd5e1]">Click to submit</span>}
+                        {isListening && <span className="mt-0.5 block text-[10px] font-medium text-[var(--interview-text-secondary)]">Click to submit</span>}
                       </div>
                     </div>
 
@@ -3080,21 +3278,21 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       <button
                         type="button"
                         onClick={() => setIsCameraEnabled(enabled => !enabled)}
-                        className={`group flex h-12 w-12 items-center justify-center rounded-lg bg-transparent transition-all duration-300 hover:bg-[#171e2e] ${isCameraEnabled ? 'program-accent-on-dark' : 'text-[#cbd5e1] hover:text-white'}`}
+                        className={`group flex h-12 w-12 items-center justify-center rounded-lg bg-transparent transition-all duration-300 hover:bg-[var(--interview-control-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--program-accent-on-dark)] ${isCameraEnabled ? 'program-accent-on-dark' : 'text-[var(--interview-text-secondary)] hover:text-[var(--interview-text-primary)]'}`}
                         title={isCameraEnabled ? 'Turn camera off' : 'Turn camera on for eye-contact tracking'}
                         aria-label={isCameraEnabled ? 'Turn camera off' : 'Turn camera on for eye-contact tracking'}
                         aria-pressed={isCameraEnabled}
                       >
                         {isCameraEnabled ? <Camera className="h-[22px] w-[22px] transition-transform group-hover:scale-110" /> : <CameraOff className="h-[22px] w-[22px] transition-transform group-hover:scale-110" />}
                       </button>
-                      <span className={`text-[11px] font-semibold ${isCameraEnabled ? 'program-accent-on-dark' : 'text-[#cbd5e1]'}`}>{isCameraEnabled ? 'Camera On' : 'Camera Off'}</span>
+                      <span className={`text-[11px] font-semibold ${isCameraEnabled ? 'program-accent-on-dark' : 'text-[var(--interview-text-secondary)]'}`}>{isCameraEnabled ? 'Camera On' : 'Camera Off'}</span>
                     </div>
                     </div>
                     <div className="flex justify-center lg:justify-end">
                       <div className="flex flex-col items-center gap-1">
                         <button
                           onClick={() => setIsLeaveModalOpen(true)}
-                          className="group relative flex h-12 w-12 items-center justify-center rounded-lg bg-transparent text-[#fda4af] transition-all duration-300 hover:bg-[#3b1420] hover:text-[#fecdd3]"
+                          className="group relative flex h-12 w-12 items-center justify-center rounded-lg bg-transparent text-[#fda4af] transition-all duration-300 hover:bg-[#3b1420] hover:text-[#fecdd3] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#fb7185]"
                           title="Leave interview without validating"
                           aria-label="Leave interview without validating"
                         >
@@ -3363,11 +3561,179 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
               </motion.div>
             )}
 
-            {/* Placeholders for settings tab */}
             {activeTab === 'settings' && (
-              <div className="flex items-center justify-center h-full">
-                <p className="text-slate-500 text-lg">This section is coming soon.</p>
-              </div>
+              <motion.div
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="w-full"
+              >
+                <div className="mb-5">
+                  <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">Settings</h1>
+                  <p className="mt-2 text-base text-muted">Manage your preferences and account experience.</p>
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)] lg:items-start">
+                  <section className="rounded-xl border border-line bg-card p-5" aria-labelledby="appearance-settings-heading">
+                    <div className="flex items-start gap-3">
+                      <div className="program-accent-surface flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
+                        {appTheme === 'dark' ? <Moon className="h-5 w-5" aria-hidden="true" /> : <Sun className="h-5 w-5" aria-hidden="true" />}
+                      </div>
+                      <div>
+                        <h2 id="appearance-settings-heading" className="text-lg font-bold text-ink">Appearance</h2>
+                        <p className="mt-1 text-sm text-muted">Choose how Career Edge looks after you sign in.</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 border-t border-line pt-4">
+                      <p className="mb-2 text-sm font-semibold text-ink">Theme</p>
+                      <div className="grid grid-cols-2 gap-2 sm:max-w-lg" role="group" aria-label="Application theme">
+                        {([
+                          { value: 'light' as AppTheme, label: 'Light', icon: Sun },
+                          { value: 'dark' as AppTheme, label: 'Dark', icon: Moon },
+                        ]).map(({ value, label, icon: ThemeIcon }) => {
+                          const isSelected = appTheme === value;
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => setAppTheme(value)}
+                              aria-pressed={isSelected}
+                              className={`program-accent-focus-ring flex min-h-12 items-center justify-center gap-2 rounded-lg border px-4 py-3 text-sm font-semibold transition-colors ${
+                                isSelected
+                                  ? 'program-accent-surface program-accent-border'
+                                  : 'border-line bg-card text-ink hover:bg-active'
+                              }`}
+                            >
+                              <ThemeIcon className="h-4 w-4" aria-hidden="true" />
+                              {label}
+                              <span className={`h-2 w-2 rounded-full ${isSelected ? 'program-accent-fill' : 'bg-line'}`} aria-hidden="true" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </section>
+
+                  <div className="grid gap-3">
+                    <section className="flex flex-col gap-3 rounded-xl border border-line bg-card p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5" aria-labelledby="support-settings-heading">
+                      <div className="flex items-start gap-3">
+                        <div className="program-accent-surface flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
+                          <CircleHelp className="h-5 w-5" aria-hidden="true" />
+                        </div>
+                        <div>
+                          <h2 id="support-settings-heading" className="text-lg font-bold text-ink">Support</h2>
+                          <p className="mt-1 text-sm text-muted">Get help using Career Edge.</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('support')}
+                        className="program-accent-focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line bg-card px-4 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-active"
+                      >
+                        Open
+                        <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    </section>
+
+                    <section className="flex flex-col gap-3 rounded-xl border border-line bg-card p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5" aria-labelledby="privacy-settings-heading">
+                      <div className="flex items-start gap-3">
+                        <div className="program-accent-surface flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
+                          <Shield className="h-5 w-5" aria-hidden="true" />
+                        </div>
+                        <div>
+                          <h2 id="privacy-settings-heading" className="text-lg font-bold text-ink">Privacy Policy</h2>
+                          <p className="mt-1 text-sm text-muted">View the space reserved for the approved policy.</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('privacy')}
+                        className="program-accent-focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line bg-card px-4 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-active"
+                      >
+                        View
+                        <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    </section>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'support' && (
+              <motion.div
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mx-auto w-full max-w-3xl"
+              >
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('settings')}
+                  className="program-accent-focus-ring mb-6 inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-semibold text-muted transition-colors hover:bg-active hover:text-ink"
+                >
+                  <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                  Back to Settings
+                </button>
+                <div className="mb-7">
+                  <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">Support</h1>
+                  <p className="mt-2 text-base text-muted">How can we help?</p>
+                </div>
+                <section className="rounded-xl border border-line bg-card p-5 sm:p-6" aria-labelledby="support-topics-heading">
+                  <div className="flex items-start gap-3 border-b border-line pb-5">
+                    <div className="program-accent-surface flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
+                      <CircleHelp className="h-5 w-5" aria-hidden="true" />
+                    </div>
+                    <div>
+                      <h2 id="support-topics-heading" className="text-lg font-bold text-ink">Help topics</h2>
+                      <p className="mt-1 text-sm text-muted">Choose the area that best matches what you need help with.</p>
+                    </div>
+                  </div>
+                  <ul className="mt-5 grid gap-3 sm:grid-cols-2">
+                    {['Using Career Edge', 'Interview Practice Help', 'Account / Login Help', 'Technical Issues'].map((topic) => (
+                      <li key={topic} className="flex items-center gap-3 rounded-lg border border-line bg-page p-4 text-sm font-semibold text-ink">
+                        <span className="program-accent-fill h-2 w-2 shrink-0 rounded-full" aria-hidden="true" />
+                        {topic}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-5 text-sm leading-relaxed text-muted">
+                    No support contact channel is currently configured in Career Edge. Approved contact information can be added here when available.
+                  </p>
+                </section>
+              </motion.div>
+            )}
+
+            {activeTab === 'privacy' && (
+              <motion.div
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mx-auto w-full max-w-3xl"
+              >
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('settings')}
+                  className="program-accent-focus-ring mb-6 inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-semibold text-muted transition-colors hover:bg-active hover:text-ink"
+                >
+                  <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                  Back to Settings
+                </button>
+                <div className="mb-7">
+                  <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">Privacy Policy</h1>
+                  <p className="mt-2 text-base text-muted">Career Edge policy information.</p>
+                </div>
+                <section className="rounded-xl border border-line bg-card p-5 sm:p-6" aria-labelledby="privacy-content-heading">
+                  <div className="flex items-start gap-3">
+                    <div className="program-accent-surface flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
+                      <FileText className="h-5 w-5" aria-hidden="true" />
+                    </div>
+                    <div>
+                      <h2 id="privacy-content-heading" className="text-lg font-bold text-ink">Policy content pending</h2>
+                      <p className="mt-2 text-sm leading-relaxed text-muted">
+                        The official approved Privacy Policy has not been added to the application yet. This page is ready to display that content when it becomes available.
+                      </p>
+                    </div>
+                  </div>
+                </section>
+              </motion.div>
             )}
 
             {activeTab === 'interview-result' && interviewResult && (
@@ -3471,24 +3837,23 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="max-w-4xl mx-auto space-y-8"
+                className="w-full space-y-5"
               >
                 <div>
                   <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Profile</h1>
                   <p className="text-lg text-slate-400 mt-2">Manage your account details and profile picture.</p>
                 </div>
 
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-8">
-                  <div className="flex items-center gap-8">
+                <div className="space-y-6 rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6">
+                  <div className="flex items-center gap-5 sm:gap-6">
                     {/* Profile Picture with Camera Overlay */}
                     <div className="relative group">
-                      <div className="group-hover-program-accent-border w-24 h-24 rounded-full bg-slate-800 border-2 border-slate-700 overflow-hidden shrink-0 transition-colors">
-                        <img
-                          src={profile.profilePicture}
-                          alt="Profile"
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
+                      <ProfileAvatar
+                        name={profile.name}
+                        imageUrl={profile.profilePicture}
+                        className="group-hover-program-accent-border h-24 w-24 shrink-0 overflow-hidden rounded-full border-2 border-slate-700 transition-colors"
+                        initialClassName="text-3xl"
+                      />
                       {/* Camera Overlay Trigger */}
                       <label className="program-accent-button absolute bottom-0 right-0 w-8 h-8 rounded-full flex items-center justify-center cursor-pointer shadow-lg transform translate-x-1 translate-y-1 transition-all hover:scale-110 active:scale-95 z-10 border-2 border-slate-900">
                         <Camera className="w-4 h-4" />
@@ -3507,9 +3872,9 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 gap-x-6 gap-y-4 md:grid-cols-2">
                     {/* Name */}
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                       <label className="text-sm font-medium text-slate-300">Full Name</label>
                       <input
                         type="text"
@@ -3520,7 +3885,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     </div>
 
                     {/* Email */}
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                       <label className="text-sm font-medium text-slate-300">Email Address <span className="text-slate-500 ml-1 font-normal">(Read only)</span></label>
                       <input
                         type="email"
@@ -3531,7 +3896,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       />
                     </div>
 
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                       <label className="text-sm font-medium text-slate-300">Password</label>
                       <input
                         type="password"
@@ -3543,7 +3908,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     </div>
 
                     {/* Department */}
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                       <label className="text-sm font-medium text-slate-300">Department</label>
                       <input
                         type="text"
@@ -3554,7 +3919,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     </div>
                   </div>
 
-                  <div className="pt-4 flex justify-end items-center gap-4">
+                  <div className="flex items-center justify-end gap-3 pt-2">
                     {isSaved && (
                       <span className="text-emerald-400 text-sm font-medium animate-pulse">
                         Settings saved successfully!

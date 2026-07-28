@@ -5,7 +5,7 @@ import { Mail, Lock, User, ArrowRight, ArrowLeft, Eye, EyeOff } from 'lucide-rea
 
 interface AuthPageProps {
   onBack: () => void;
-  onSuccess: () => void;
+  onSuccess: (context: { isNewSignup: boolean }) => void;
   initialMode?: 'signin' | 'signup';
 }
 
@@ -80,7 +80,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
 
         const loginData = await loginRes.json();
         localStorage.setItem('token', loginData.access_token);
-        onSuccess();
+        onSuccess({ isNewSignup: true });
       } else {
         const params = new URLSearchParams();
         params.append('username', email);
@@ -99,7 +99,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
 
         const data = await res.json();
         localStorage.setItem('token', data.access_token);
-        onSuccess();
+        onSuccess({ isNewSignup: false });
       }
     } catch (err: any) {
       setError(err.message || 'An error occurred');

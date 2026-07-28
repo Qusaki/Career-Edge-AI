@@ -60,6 +60,7 @@ export function useSpeechInput() {
   const restartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stopTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startRecognitionRef = useRef<(() => void) | null>(null);
+  const requestGenerationRef = useRef(0);
   const [isListening, setIsListening] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
 
@@ -124,6 +125,27 @@ export function useSpeechInput() {
     }
   }, [clearRestart, deliverTranscript]);
 
+  const cancelListening = useCallback(() => {
+    requestGenerationRef.current += 1;
+    listeningRef.current = false;
+    startingRef.current = false;
+    clearRestart();
+    if (stopTimeoutRef.current) {
+      clearTimeout(stopTimeoutRef.current);
+      stopTimeoutRef.current = null;
+    }
+    sessionRef.current = null;
+    const recognition = recognitionRef.current;
+    recognitionRef.current = null;
+    try {
+      recognition?.abort();
+    } catch {
+      // Chrome can throw when recognition already ended.
+    }
+    releaseMicrophone();
+    setIsListening(false);
+  }, [clearRestart, releaseMicrophone]);
+
   useEffect(() => {
     setIsSupported(!getSpeechSupportMessage());
 
@@ -140,6 +162,7 @@ export function useSpeechInput() {
     document.addEventListener('visibilitychange', resumeAfterVisibilityChange);
 
     return () => {
+      requestGenerationRef.current += 1;
       document.removeEventListener('visibilitychange', resumeAfterVisibilityChange);
       listeningRef.current = false;
       startingRef.current = false;
@@ -171,9 +194,12 @@ export function useSpeechInput() {
 
     clearRestart();
     const SpeechRecognition = getSpeechRecognition();
+    const requestGeneration = requestGenerationRef.current + 1;
+    requestGenerationRef.current = requestGeneration;
     startingRef.current = true;
+    let microphoneStream: MediaStream;
     try {
-      microphoneStreamRef.current = await navigator.mediaDevices.getUserMedia({
+      microphoneStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -181,10 +207,16 @@ export function useSpeechInput() {
         },
       });
     } catch {
+      if (requestGenerationRef.current !== requestGeneration) return false;
       startingRef.current = false;
       onError?.('Microphone access was blocked or unavailable. Allow microphone permission, then try again.');
       return false;
     }
+    if (requestGenerationRef.current !== requestGeneration) {
+      microphoneStream.getTracks().forEach(track => track.stop());
+      return false;
+    }
+    microphoneStreamRef.current = microphoneStream;
     startingRef.current = false;
 
     sessionRef.current = {
@@ -289,5 +321,5 @@ export function useSpeechInput() {
     return true;
   }, [clearRestart, deliverTranscript, releaseMicrophone]);
 
-  return { isListening, isSupported, startListening, stopListening };
+  return { isListening, isSupported, startListening, stopListening, cancelListening };
 }
