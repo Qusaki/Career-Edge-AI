@@ -41,3 +41,7 @@ terraform.rc
 # Databases
 *.db
 *.sqlite3
+
+# Local backend runtime logs (may contain authentication tokens)
+backend/uvicorn.stderr.log
+backend/uvicorn.stdout.log
