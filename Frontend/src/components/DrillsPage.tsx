@@ -395,7 +395,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
             <button
               onClick={completeDrill}
               disabled={completing !== null || (activeSession.drill_type === 'negotiation' ? !negotiationMessages.some(message => message.sender === 'user') : !spokenResponse.trim())}
-              className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+              className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing === activeSession.id ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
               {completing === activeSession.id ? 'Completing…' : 'Mark Complete'}
@@ -404,12 +404,12 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
 
           <section className="flex-1 rounded-lg border border-line bg-card p-5">
             <div className="mb-4">
-              <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-active text-gold-text">
+              <div className="program-accent-surface mb-3 flex h-11 w-11 items-center justify-center rounded-lg">
                 <Sparkles className="h-6 w-6" />
               </div>
-              <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-gold-text">Drill Session</p>
+              <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Drill Session</p>
               <h1 className="text-3xl font-bold tracking-tight text-ink">Current Drill #{activeSession.id}</h1>
-              <p className="mt-1 text-sm font-bold uppercase tracking-wider text-gold-text">
+              <p className="text-program-accent mt-1 text-sm font-bold uppercase tracking-wider">
                 {activeSession.drill_level} · {activeSession.drill_type.replace(/_/g, ' ')}
               </p>
             </div>
@@ -428,14 +428,14 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
             {activeSession.drill_type === 'negotiation' ? (
               <>
                 <div className="mb-4 mt-4 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
-                  <p className="mb-2 font-bold text-gold-text">Scenario</p>
+                  <p className="text-program-accent mb-2 font-bold">Scenario</p>
                   <p className="whitespace-pre-wrap">{activePrompt || 'Prompt loaded.'}</p>
                 </div>
 
                 <div className="h-[44vh] overflow-y-auto rounded-lg border border-line bg-background p-4">
                   {negotiationMessages.map((message, index) => (
                     <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'bg-accent text-accent-ink' : 'border border-line bg-card text-ink'}`}>
+                      <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'program-accent-fill' : 'border border-line bg-card text-ink'}`}>
                         <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">{message.sender === 'user' ? 'You' : 'Employer'}</p>
                         {message.text}
                       </div>
@@ -452,7 +452,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
                   <button
                     onClick={isListening ? stopListening : recordNegotiationReply}
                     disabled={negotiationLoading || negotiationGameOver}
-                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
+                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : negotiationGameOver ? 'Negotiation Ended' : 'Speak Reply'}
@@ -465,13 +465,13 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
                   {activePrompt || 'Prompt loaded.'}
                 </pre>
                 <div className="mt-4 min-h-[28vh] rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
-                  <p className="mb-2 font-bold text-gold-text">Your spoken response</p>
+                  <p className="text-program-accent mb-2 font-bold">Your spoken response</p>
                   {spokenResponse || <span className="text-muted">Press the mic and answer the drill out loud.</span>}
                 </div>
                 <div className="mt-4 flex justify-center">
                   <button
                     onClick={isListening ? stopListening : recordDrillResponse}
-                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
+                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : 'Speak Answer'}
@@ -488,7 +488,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
   return (
     <div className="w-full">
       <header className="mb-6">
-        <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-gold-text">Practice</p>
+        <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Practice</p>
         <h1 className="text-4xl font-bold tracking-tight text-ink md:text-5xl">Drills</h1>
         <p className="mt-1.5 text-lg font-medium text-muted">
           Sharpen quick speaking, framing, and response skills between assessments.
@@ -505,11 +505,11 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
         <section className="mb-6 rounded-lg border border-line bg-card p-5">
           <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
             <div>
-              <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-active text-gold-text">
+              <div className="program-accent-surface mb-3 flex h-11 w-11 items-center justify-center rounded-lg">
                 <Sparkles className="h-6 w-6" />
               </div>
               <h2 className="text-xl font-bold text-ink">Current Drill #{activeSession.id}</h2>
-              <p className="mt-1 text-sm font-bold uppercase tracking-wider text-gold-text">
+              <p className="text-program-accent mt-1 text-sm font-bold uppercase tracking-wider">
                 {activeSession.drill_level} · {activeSession.drill_type.replace(/_/g, ' ')}
               </p>
               <pre className="mt-4 whitespace-pre-wrap rounded-lg border border-line bg-background p-4 font-sans text-sm leading-relaxed text-ink">
@@ -519,7 +519,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
             <button
               onClick={completeDrill}
               disabled={completing !== null}
-              className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+              className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing === activeSession.id ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
               {completing === activeSession.id ? 'Completing…' : 'Mark Complete'}
@@ -532,17 +532,17 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
         {drills.map(drill => (
           <article key={drill.drillType} className="flex flex-col justify-between rounded-lg border border-line bg-card p-5">
             <div>
-              <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-active text-gold-text">
+              <div className="program-accent-surface mb-4 flex h-11 w-11 items-center justify-center rounded-lg">
                 <Dumbbell className="h-6 w-6" />
               </div>
               <h2 className="text-xl font-bold text-ink">{drill.title}</h2>
               <p className="mt-2 leading-relaxed text-muted">{drill.description}</p>
-              <p className="mt-3 text-xs font-bold uppercase tracking-wider text-gold-text">{drill.drillLevel}</p>
+              <p className="text-program-accent mt-3 text-xs font-bold uppercase tracking-wider">{drill.drillLevel}</p>
             </div>
             <button
               onClick={() => startDrill(drill)}
               disabled={starting !== null || completing !== null}
-              className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+              className="program-accent-button mt-6 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {starting === drill.drillType ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <ArrowRight className="h-5 w-5" />}
               {starting === drill.drillType ? 'Starting…' : 'Start Drill'}
@@ -554,7 +554,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
       <section className="mt-6">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-lg font-bold italic tracking-tight text-ink">Recent Drills</h2>
-          <button onClick={loadSessions} className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-gold-text hover:text-accent-ink">
+          <button onClick={loadSessions} className="program-accent-link flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider transition-colors">
             <RefreshCw className="h-4 w-4" /> Refresh
           </button>
         </div>
@@ -570,7 +570,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
                 <p className="mt-0.5 text-xs text-muted">{new Date(session.start_time).toLocaleString()}</p>
               </div>
               <div className="text-right">
-                <span className="rounded-full bg-active px-2.5 py-1 text-xs font-bold capitalize text-gold-text">{session.status}</span>
+                <span className="program-accent-surface rounded-full px-2.5 py-1 text-xs font-bold capitalize">{session.status}</span>
                 {session.score != null && <p className="mt-1 text-sm font-bold text-ink">{Math.round(session.score)}%</p>}
               </div>
             </div>

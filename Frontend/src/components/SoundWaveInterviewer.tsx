@@ -10,7 +10,7 @@ export function SoundWaveInterviewer({ active, label }: { active: boolean; label
         {bars.map((height, index) => (
           <span
             key={index}
-            className={`w-2 rounded-full bg-accent transition-opacity ${active ? 'animate-pulse opacity-90' : 'opacity-45'}`}
+            className={`program-accent-fill w-2 rounded-full transition-opacity ${active ? 'animate-pulse opacity-90' : 'opacity-45'}`}
             style={{
               height: `${height}px`,
               animationDelay: `${index * 90}ms`,
@@ -20,7 +20,7 @@ export function SoundWaveInterviewer({ active, label }: { active: boolean; label
         ))}
       </div>
       <div className="flex items-center gap-2 text-sm font-semibold text-muted">
-        <Volume2 className="h-4 w-4 text-gold-text" />
+        <Volume2 className="h-4 w-4 text-program-accent" />
         {label}
       </div>
     </div>

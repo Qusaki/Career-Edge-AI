@@ -158,6 +158,108 @@ body {
   background-color: #fbfaf7;
   background-image: none !important;
 }
+
+.program-accent-button {
+  background-color: var(--program-accent);
+  color: var(--program-accent-foreground);
+}
+
+.program-accent-button:not(:disabled):hover {
+  background-color: var(--program-accent-hover);
+}
+
+.program-accent-button:not(:disabled):active {
+  background-color: var(--program-accent-active);
+}
+
+.program-accent-button:focus-visible {
+  outline: 2px solid var(--program-accent);
+  outline-offset: 2px;
+}
+
+.text-program-accent {
+  color: var(--program-accent-text);
+}
+
+.program-accent-link {
+  color: var(--program-accent-text);
+}
+
+.program-accent-link:hover {
+  color: var(--program-accent-active);
+}
+
+.program-accent-fill {
+  background-color: var(--program-accent);
+  color: var(--program-accent-foreground);
+}
+
+.program-accent-surface {
+  background-color: var(--program-accent-subtle);
+  color: var(--program-accent-text);
+}
+
+.program-accent-border {
+  border-color: color-mix(in srgb, var(--program-accent) 45%, transparent);
+}
+
+.program-accent-focus:focus {
+  border-color: var(--program-accent);
+  box-shadow: 0 0 0 1px var(--program-accent);
+  outline: none;
+}
+
+.program-accent-focus-ring:focus-visible {
+  box-shadow: 0 0 0 2px var(--program-accent);
+  outline: none;
+}
+
+.program-accent-on-dark {
+  color: var(--program-accent-on-dark);
+}
+
+.program-accent-dark-border {
+  border-color: color-mix(in srgb, var(--program-accent-on-dark) 50%, transparent);
+}
+
+.program-accent-dark-surface {
+  background-color: var(--program-accent-dark-surface);
+  border-color: var(--program-accent);
+  color: var(--program-accent-on-dark);
+}
+
+.program-accent-dark-control:hover {
+  border-color: var(--program-accent);
+  color: var(--program-accent-on-dark);
+}
+
+.program-accent-spinner {
+  border-color: var(--program-accent);
+  border-top-color: transparent;
+}
+
+.program-accent-hover-border:hover {
+  border-color: color-mix(in srgb, var(--program-accent) 40%, transparent);
+}
+
+.group:hover .group-hover-program-accent-text {
+  color: var(--program-accent-text);
+}
+
+.group:hover .group-hover-program-accent-surface {
+  background-color: var(--program-accent-subtle);
+  color: var(--program-accent-text);
+}
+
+.group:hover .group-hover-program-accent-fill {
+  background-color: var(--program-accent);
+  color: var(--program-accent-foreground);
+}
+
+.group:hover .group-hover-program-accent-border {
+  border-color: color-mix(in srgb, var(--program-accent) 50%, transparent);
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 0.3; transform: scale(0.8); }
   50% { opacity: 1; transform: scale(1.1); }

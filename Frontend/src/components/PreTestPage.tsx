@@ -409,7 +409,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
             <button
               onClick={completeActiveExercise}
               disabled={completing || (activeExercise.kind === 'intro' ? !introTranscript.trim() : !messages.some(message => message.sender === 'user'))}
-              className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+              className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
               {completing ? 'Completing…' : 'Complete Exercise'}
@@ -418,7 +418,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
 
           <section className="flex-1 rounded-lg border border-line bg-card p-5">
             <div className="mb-4">
-              <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-gold-text">Pre-Test Session</p>
+              <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Pre-Test Session</p>
               <h1 className="text-3xl font-bold tracking-tight text-ink">{activeExercise.title} #{activeSession.id}</h1>
               <p className="mt-1 text-sm text-muted">
                 {activeExercise.kind === 'intro'
@@ -436,7 +436,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
             {activeExercise.kind === 'intro' ? (
               <div>
                 <div className="rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
-                  <p className="font-bold text-gold-text">Prompt</p>
+                  <p className="text-program-accent font-bold">Prompt</p>
                   <p className="mt-1">
                     Please introduce yourself. Include your name, course or department, interests, strengths, and why you are preparing for interviews.
                   </p>
@@ -447,7 +447,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                 <div className="mt-4 flex justify-center">
                   <button
                     onClick={isListening ? stopListening : recordIntro}
-                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
+                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : 'Speak Answer'}
@@ -477,7 +477,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                     </div>
                   ) : visibleActiveListeningMessages.map((message, index) => (
                     <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'bg-accent text-accent-ink' : 'border border-line bg-card text-ink'}`}>
+                      <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'program-accent-fill' : 'border border-line bg-card text-ink'}`}>
                         <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">You</p>
                         {message.text}
                       </div>
@@ -489,7 +489,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                   <button
                     onClick={isListening ? stopListening : recordAndSendReply}
                     disabled={isAiResponding}
-                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
+                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : 'Speak Answer'}
@@ -506,7 +506,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
   return (
     <div className="w-full">
       <header className="mb-6">
-        <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-gold-text">Assessment</p>
+        <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Assessment</p>
         <h1 className="text-4xl font-bold tracking-tight text-ink md:text-5xl">Pre-Test</h1>
         <p className="mt-1.5 text-lg font-medium text-muted">
           Establish your baseline before beginning interview practice.
@@ -533,7 +533,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
             <button
               onClick={completeActiveExercise}
               disabled={completing || (activeExercise.kind === 'intro' ? !introTranscript.trim() : !messages.some(message => message.sender === 'user'))}
-              className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+              className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
               {completing ? 'Completing…' : 'Complete Exercise'}
@@ -543,7 +543,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
           {activeExercise.kind === 'intro' ? (
             <div>
               <div className="rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
-                <p className="font-bold text-gold-text">Prompt</p>
+                <p className="text-program-accent font-bold">Prompt</p>
                 <p className="mt-1">
                   Please introduce yourself. Include your name, course or department, interests, strengths, and why you are preparing for interviews.
                 </p>
@@ -554,7 +554,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
               <div className="mt-4 flex justify-center">
                 <button
                   onClick={isListening ? stopListening : recordIntro}
-                  className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
+                  className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                 >
                   {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
                   {isListening ? 'Stop Recording' : 'Speak Answer'}
@@ -580,7 +580,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                   </div>
                 ) : visibleActiveListeningMessages.map((message, index) => (
                   <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'bg-accent text-accent-ink' : 'border border-line bg-card text-ink'}`}>
+                    <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'program-accent-fill' : 'border border-line bg-card text-ink'}`}>
                       <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">You</p>
                       {message.text}
                     </div>
@@ -592,7 +592,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                 <button
                   onClick={isListening ? stopListening : recordAndSendReply}
                   disabled={isAiResponding}
-                  className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
+                  className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                 >
                   {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
                   {isListening ? 'Stop Recording' : 'Speak Answer'}
@@ -606,7 +606,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
           {exercises.map(exercise => (
             <article key={exercise.endpoint} className="flex flex-col justify-between rounded-lg border border-line bg-card p-5">
               <div>
-                <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-active text-gold-text">
+                <div className="program-accent-surface mb-4 flex h-11 w-11 items-center justify-center rounded-lg">
                   {exercise.icon}
                 </div>
                 <h2 className="text-xl font-bold text-ink">{exercise.title}</h2>
@@ -615,7 +615,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
               <button
                 onClick={() => startExercise(exercise)}
                 disabled={starting !== null}
-                className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+                className="program-accent-button mt-6 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {starting === exercise.endpoint ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <ArrowRight className="h-5 w-5" />}
                 {starting === exercise.endpoint ? 'Starting…' : 'Start Exercise'}
@@ -628,7 +628,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
       <section className="mt-6">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-lg font-bold italic tracking-tight text-ink">Recent Pre-Tests</h2>
-          <button onClick={loadSessions} className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-gold-text hover:text-accent-ink">
+          <button onClick={loadSessions} className="program-accent-link flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider transition-colors">
             <RefreshCw className="h-4 w-4" /> Refresh
           </button>
         </div>
@@ -644,7 +644,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                 <p className="mt-0.5 text-xs text-muted">{new Date(session.start_time).toLocaleString()}</p>
               </div>
               <div className="text-right">
-                <span className="rounded-full bg-active px-2.5 py-1 text-xs font-bold capitalize text-gold-text">{session.status}</span>
+                <span className="program-accent-surface rounded-full px-2.5 py-1 text-xs font-bold capitalize">{session.status}</span>
                 {session.total_score != null && (
                   <p className="mt-1 text-sm font-bold text-ink">
                     {session.eye_contact_samples

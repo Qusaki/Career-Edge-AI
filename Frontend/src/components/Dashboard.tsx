@@ -11,6 +11,7 @@ import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 import { db } from '../db';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME, getClearSpeechTimeoutMs } from '../utils/speech';
 import { API_URL } from '../config/api';
+import { getProgramAccentTheme } from '../config/programTheme';
 import {
   buildActivityComparison,
   getCommunicationSkillScore,
@@ -111,6 +112,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     department: '',
     profilePicture: 'https://api.dicebear.com/7.x/micah/svg?seed=Alex&backgroundColor=cbd5e1'
   });
+  const programAccentTheme = getProgramAccentTheme(profile.department);
+  const programAccentStyle = {
+    '--program-accent': programAccentTheme.primary,
+    '--program-accent-hover': programAccentTheme.hover,
+    '--program-accent-active': programAccentTheme.active,
+    '--program-accent-subtle': programAccentTheme.subtle,
+    '--program-accent-foreground': programAccentTheme.foreground,
+    '--program-accent-text': programAccentTheme.text,
+    '--program-accent-on-dark': programAccentTheme.onDark,
+    '--program-accent-dark-surface': programAccentTheme.darkSurface,
+  } as React.CSSProperties;
 
   useEffect(() => {
     if (!isAccountMenuOpen) return;
@@ -169,37 +181,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       label: 'Vocabulary Usage',
       description: 'Measures breadth and appropriateness of word choice in context',
       field: 'score_vocabulary',
-      color: 'bg-sky-500',
     },
     {
       label: 'Clarity of Speech',
       description: 'Assesses pronunciation accuracy and how clearly words are articulated',
       field: 'score_clarity',
-      color: 'bg-emerald-500',
     },
     {
       label: 'Eye Contact',
       description: 'Camera-based eye direction and head movement measured during Enrollment, Thesis, Pre-Test, and Post-Test activities. Drills are excluded.',
       field: 'score_eye_contact',
-      color: 'bg-indigo-500',
     },
     {
       label: 'Grammar & Sentence Structure',
       description: 'Assesses correct use of tenses, subject-verb agreement, and sentence construction',
       field: 'score_grammar',
-      color: 'bg-amber-500',
     },
     {
       label: 'Courtesy',
       description: 'Assesses the showcase of empathy and proper manners when communicating',
       field: 'score_courtesy',
-      color: 'bg-rose-500',
     },
     {
       label: 'Conciseness',
       description: 'Assesses directness and relevance',
       field: 'score_conciseness',
-      color: 'bg-purple-500',
     },
   ];
 
@@ -224,7 +230,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
     let perfColor = "text-slate-400";
     let perfMsg = "Complete interviews to see performance";
     if (scoredCount > 0) {
-      if (avgScore >= 90) { performance = "Excellent"; perfColor = "text-sky-400"; perfMsg = "Keep up the great work!"; }
+      if (avgScore >= 90) { performance = "Excellent"; perfColor = "text-success"; perfMsg = "Keep up the great work!"; }
       else if (avgScore >= 75) { performance = "Good"; perfColor = "text-emerald-400"; perfMsg = "Solid understanding."; }
       else if (avgScore >= 60) { performance = "Passing"; perfColor = "text-amber-400"; perfMsg = "You're getting warmer."; }
       else { performance = "Needs Practice"; perfColor = "text-rose-400"; perfMsg = "Keep practicing!"; }
@@ -254,7 +260,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
           displayScore: cameraPercentage == null ? 'N/A' : `${cameraPercentage}%`,
           value: cameraPercentage == null ? 0 : Math.round(cameraPercentage),
           scale: cameraPercentage == null ? 'No camera data' : 'Camera-based',
-          color: criteria.color,
         };
       }
 
@@ -272,7 +277,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         displayScore: score == null ? 'N/A' : `${score}/5`,
         value: score == null ? 0 : Math.round((score / 5) * 100),
         scale: score == null ? 'No scored data' : '1-5 scale',
-        color: criteria.color,
       };
     });
 
@@ -323,13 +327,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         <h3 className="text-muted font-medium">Total Activities</h3>
         <div className="mt-2">
           <span className="text-3xl font-bold text-ink">{stats.totalInterviews}</span>
-          <p className="text-sm mt-1 font-medium text-gold-text">Interviews, tests, and drills</p>
+          <p className="text-program-accent text-sm mt-1 font-medium">Interviews, tests, and drills</p>
         </div>
       </motion.div>
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: delay + 0.2 }} className="bg-card border border-line rounded-lg p-5 flex flex-col justify-between">
         <h3 className="text-muted font-medium">Average Score</h3>
         <div className="mt-2">
-          <span className="text-3xl font-bold text-ink">{stats.avgScore}%</span>
+          <span className="text-program-accent text-3xl font-bold">{stats.avgScore}%</span>
           <p className="text-sm mt-1 font-medium text-success">Overall average</p>
         </div>
       </motion.div>
@@ -1932,20 +1936,26 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
   return (
     <>
       {isLlmLoading && (
-        <div className="fixed inset-0 z-[9999] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center text-white">
-          <div className="w-16 h-16 border-4 border-sky-500 border-t-transparent rounded-full animate-spin mb-6"></div>
-          <h2 className="text-3xl font-black mb-2 text-sky-400">Downloading AI Brain...</h2>
+        <div
+          className="fixed inset-0 z-[9999] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center text-white"
+          style={programAccentStyle}
+        >
+          <div className="program-accent-spinner w-16 h-16 border-4 rounded-full animate-spin mb-6"></div>
+          <h2 className="program-accent-on-dark text-3xl font-black mb-2">Downloading AI Brain...</h2>
           <p className="text-slate-300 max-w-md text-lg leading-relaxed mb-4">Please wait while the WebLLM model is loaded into your browser memory. This happens ONLY the first time you run the app!</p>
           <div className="bg-slate-900 border border-slate-700 px-6 py-4 rounded-2xl w-full max-w-md">
-            <p className="font-mono text-sm text-sky-300 mb-2">{llmStatus}</p>
+            <p className="program-accent-on-dark font-mono text-sm mb-2">{llmStatus}</p>
             <div className="w-full bg-slate-800 rounded-full h-3 overflow-hidden">
-              <div className="bg-sky-500 h-full transition-all duration-300" style={{ width: `${llmProgress}%` }}></div>
+              <div className="program-accent-fill h-full transition-all duration-300" style={{ width: `${llmProgress}%` }}></div>
             </div>
           </div>
         </div>
       )}
       {hasLlmError && ['interview-type', 'university-setup', 'new-interview', 'interview-session', 'thesis-setup', 'thesis-session'].includes(activeTab) && (
-        <div className="fixed inset-0 z-[9999] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center text-white">
+        <div
+          className="fixed inset-0 z-[9999] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center text-white"
+          style={programAccentStyle}
+        >
           <div className="w-full max-w-lg rounded-2xl border border-rose-500/30 bg-slate-900 p-6 shadow-2xl">
             <h2 className="text-3xl font-black mb-3 text-rose-300">WebLLM Could Not Start</h2>
             <p className="text-slate-300 leading-relaxed mb-4">
@@ -1956,14 +1966,17 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
             </div>
             <button
               onClick={retryWebLLM}
-              className="mt-5 rounded-xl bg-sky-500 px-5 py-3 font-bold text-white transition-colors hover:bg-sky-400"
+              className="program-accent-button mt-5 rounded-xl px-5 py-3 font-bold transition-colors"
             >
               Retry WebLLM
             </button>
           </div>
         </div>
       )}
-      <div className="dashboard-shell min-h-screen bg-page text-ink flex overflow-hidden">
+      <div
+        className="dashboard-shell min-h-screen bg-page text-ink flex overflow-hidden"
+        style={programAccentStyle}
+      >
         {/* Sidebar */}
         {!isModuleSessionMode && activeTab !== 'interview-type' && activeTab !== 'university-setup' && activeTab !== 'new-interview' && activeTab !== 'interview-session' && activeTab !== 'thesis-setup' && activeTab !== 'thesis-session' && (
           <aside className="w-72 bg-card border-r border-line flex flex-col h-screen shrink-0">
@@ -1981,7 +1994,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     setPosition('');
                     setActiveTab('interview-type');
                   }}
-                  className="w-full py-2 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 transition-colors bg-accent hover:bg-gold-text text-accent-ink"
+                  className="program-accent-button w-full py-2 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 transition-colors"
                 >
                   <Plus className="w-5 h-5" />
                   Start Interview
@@ -2066,7 +2079,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       setActiveTab('profile');
                       setIsAccountMenuOpen(false);
                     }}
-                    className="flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium text-ink transition-colors hover:bg-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-text"
+                    className="program-accent-focus-ring flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium text-ink transition-colors hover:bg-active"
                   >
                     <User className="h-4 w-4 shrink-0" />
                     View Profile
@@ -2078,7 +2091,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       setActiveTab('settings');
                       setIsAccountMenuOpen(false);
                     }}
-                    className="flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium text-ink transition-colors hover:bg-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-text"
+                    className="program-accent-focus-ring flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium text-ink transition-colors hover:bg-active"
                   >
                     <Settings className="h-4 w-4 shrink-0" />
                     Settings
@@ -2091,7 +2104,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       setIsAccountMenuOpen(false);
                       onLogout();
                     }}
-                    className="flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium text-ink transition-colors hover:bg-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-text"
+                    className="program-accent-focus-ring flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium text-ink transition-colors hover:bg-active"
                   >
                     <LogOut className="h-4 w-4 shrink-0" />
                     Sign Out
@@ -2106,11 +2119,11 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                 aria-expanded={isAccountMenuOpen}
                 aria-controls="sidebar-account-menu"
                 onClick={() => setIsAccountMenuOpen((isOpen) => !isOpen)}
-                className={`flex w-full items-center gap-3 rounded-lg border border-line p-2 text-left transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-text ${
+                className={`program-accent-focus-ring flex w-full items-center gap-3 rounded-lg border border-line p-2 text-left transition-colors duration-200 ${
                   activeTab === 'profile' || isAccountMenuOpen ? 'bg-active' : 'bg-transparent hover:bg-active'
                 }`}
               >
-                <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full border border-sky-500/30 bg-slate-800">
+                <div className="program-accent-border h-10 w-10 shrink-0 overflow-hidden rounded-full border bg-slate-800">
                   <img
                     src={profile.profilePicture}
                     alt={`${profile.name || 'User'} profile`}
@@ -2119,7 +2132,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                 </div>
                 <div className="min-w-0 flex-1 overflow-hidden">
                   <h3 className="truncate text-sm font-semibold text-ink" title={profile.name}>{profile.name}</h3>
-                  <p className="mt-0.5 truncate text-xs font-medium text-ink/70" title={profile.department}>{profile.department}</p>
+                  <p className="text-program-accent mt-0.5 truncate text-xs font-semibold" title={profile.department}>{profile.department}</p>
                 </div>
                 <ChevronDown
                   className={`h-4 w-4 shrink-0 text-ink/70 transition-transform ${isAccountMenuOpen ? 'rotate-180' : ''}`}
@@ -2134,7 +2147,13 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
         <main className="min-w-0 flex-1 flex flex-col h-screen overflow-hidden">
           {/* Scrollable Content */}
           <div
-            className={isModuleSessionMode ? "flex-1 overflow-y-auto bg-page" : "flex-1 overflow-y-auto px-4 pb-3 pt-6 sm:px-8 md:pb-4 md:pt-8 lg:px-10"}
+            className={
+              activeTab === 'interview-session'
+                ? "flex-1 overflow-hidden"
+                : isModuleSessionMode
+                  ? "flex-1 overflow-y-auto bg-page"
+                  : "flex-1 overflow-y-auto px-4 pb-3 pt-6 sm:px-8 md:pb-4 md:pt-8 lg:px-10"
+            }
             style={activeTab === 'interview-session' ? { backgroundColor: '#02040a' } : undefined}
           >
 
@@ -2142,7 +2161,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
               <div className="w-full">
                 {/* Page Title */}
                 <div className="mb-6">
-                  <h1 className="text-4xl md:text-5xl font-bold text-ink tracking-tight">Welcome back, <span className="text-gold-text">{profile.name.split(' ')[0]}</span></h1>
+                  <h1 className="text-4xl md:text-5xl font-bold text-ink tracking-tight">Welcome back, <span className="text-program-accent">{profile.name.split(' ')[0]}</span></h1>
                   <p className="text-lg md:text-xl font-medium text-muted mt-1.5">Here's an overview of your interview progress.</p>
                 </div>
 
@@ -2155,7 +2174,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     {interviewHistory.length > 5 && (
                       <button
                         onClick={() => setActiveTab('history')}
-                        className="text-xs font-bold text-gold-text hover:text-accent-ink transition-colors uppercase tracking-widest"
+                        className="program-accent-link text-xs font-bold transition-colors uppercase tracking-widest"
                       >
                         View All
                       </button>
@@ -2165,7 +2184,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                   {interviewHistory.filter(item => (item.total_score || 0) > 0).length === 0 ? (
                     <div className="bg-card border border-line rounded-lg px-3 py-8 md:py-10 text-center">
                       <p className="text-muted text-sm">No interviews completed yet.</p>
-                      <button onClick={() => setActiveTab('interview-type')} className="mt-2 text-gold-text text-sm font-bold hover:underline">Start your first interview</button>
+                      <button onClick={() => setActiveTab('interview-type')} className="program-accent-link mt-2 text-sm font-bold hover:underline">Start your first interview</button>
                     </div>
                   ) : (
                     <div className="space-y-2.5">
@@ -2180,22 +2199,22 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                           initial={{ opacity: 0, x: -20 }}
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ delay: 0.1 + (i * 0.05) }}
-                          className="bg-card border border-line hover:border-accent rounded-lg p-3 flex items-center justify-between hover:bg-active transition-colors cursor-pointer group"
+                          className="program-accent-hover-border bg-card border border-line rounded-lg p-3 flex items-center justify-between hover:bg-active transition-colors cursor-pointer group"
                         >
                           <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-slate-400 group-hover:text-sky-400 group-hover:bg-sky-500/10 transition-all">
+                            <div className="group-hover-program-accent-surface w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-slate-400 transition-all">
                               <Video className="w-5 h-5" />
                             </div>
                             <div>
-                              <h4 className="font-bold text-sm text-ink group-hover:text-gold-text transition-colors">Interview #{filteredList.length - i}</h4>
+                              <h4 className="group-hover-program-accent-text font-bold text-sm text-ink transition-colors">Interview #{filteredList.length - i}</h4>
                               <p className="text-[10px] text-muted uppercase font-bold tracking-wider">{new Date(item.start_time).toLocaleDateString()}</p>
                             </div>
                           </div>
                           <div className="flex items-center gap-4">
                             <div className="text-right">
-                              <span className={`text-lg font-black ${item.total_score >= 70 ? 'text-success' : 'text-gold-text'}`}>{item.total_score || 0}%</span>
+                              <span className={`text-lg font-black ${item.total_score >= 70 ? 'text-success' : 'text-rose-700'}`}>{item.total_score || 0}%</span>
                             </div>
-                            <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-sky-400 group-hover:translate-x-1 transition-all" />
+                            <ChevronRight className="group-hover-program-accent-text w-4 h-4 text-slate-600 group-hover:translate-x-1 transition-all" />
                           </div>
                         </motion.div>
                       ))}
@@ -2234,9 +2253,9 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     <button
                       onClick={startInterviewSession}
                       disabled={isStartingInterview}
-                      className="bg-slate-900 border border-slate-800 hover:border-sky-500 hover:ring-1 hover:ring-sky-500 rounded-2xl p-8 flex flex-col items-center text-center transition-all duration-300 group h-full"
+                      className="program-accent-hover-border bg-slate-900 border border-slate-800 rounded-2xl p-8 flex flex-col items-center text-center transition-all duration-300 group h-full"
                     >
-                      <div className="w-16 h-16 bg-sky-500/10 text-sky-400 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
+                      <div className="program-accent-surface w-16 h-16 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
                         <GraduationCap className="w-8 h-8" />
                       </div>
                       <h3 className="text-xl font-bold text-slate-200 mb-2">University Enrollment</h3>
@@ -2283,12 +2302,12 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       <div className="relative group">
                         <div
                           onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                          className={`w-full bg-slate-950 border ${isDropdownOpen ? 'border-sky-500 ring-1 ring-sky-500' : 'border-slate-800 hover:border-slate-700 hover:shadow-md hover:shadow-black/20'} rounded-xl px-4 py-3 pr-10 transition-all duration-300 cursor-pointer flex items-center justify-between`}
+                          className={`w-full bg-slate-950 border ${isDropdownOpen ? 'program-accent-border' : 'border-slate-800 hover:border-slate-700 hover:shadow-md hover:shadow-black/20'} rounded-xl px-4 py-3 pr-10 transition-all duration-300 cursor-pointer flex items-center justify-between`}
                         >
                           <span className={`truncate ${!selectedCompanyType ? 'text-slate-500' : 'text-slate-200'}`}>
                             {selectedCompanyType ? companyTypes.find(t => t.value === selectedCompanyType)?.label : 'Select company type...'}
                           </span>
-                          <ChevronDown className={`absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-hover:text-sky-400 transition-all duration-300 pointer-events-none ${isDropdownOpen ? 'rotate-180 text-sky-400' : ''}`} />
+                          <ChevronDown className={`group-hover-program-accent-text absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 transition-all duration-300 pointer-events-none ${isDropdownOpen ? 'rotate-180 text-program-accent' : ''}`} />
                         </div>
 
                         {/* Dropdown Menu */}
@@ -2311,7 +2330,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                                   setIsDropdownOpen(false);
                                 }}
                                 className={`px-4 py-3 cursor-pointer transition-colors duration-200 flex items-center ${selectedCompanyType === type.value
-                                  ? 'bg-sky-500/10 text-sky-400 font-medium'
+                                  ? 'program-accent-surface font-medium'
                                   : 'text-slate-300 hover:bg-slate-800 hover:text-slate-100'
                                   }`}
                               >
@@ -2331,7 +2350,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         value={position}
                         onChange={(e) => setPosition(e.target.value)}
                         placeholder="e.g. Senior Frontend Engineer, Product Manager..."
-                        className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 hover:shadow-md hover:shadow-black/20 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
+                        className="program-accent-focus w-full bg-slate-950 border border-slate-800 hover:border-slate-700 hover:shadow-md hover:shadow-black/20 rounded-xl px-4 py-3 text-slate-200 transition-all duration-300"
                       />
                       <p className="text-xs text-slate-500">The AI will ask technical and behavioral questions specific to this role.</p>
                     </div>
@@ -2341,7 +2360,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     <button
                       onClick={startInterviewSession}
                       disabled={isStartingInterview}
-                      className={`px-8 py-4 bg-sky-500 hover:bg-sky-400 text-black rounded-xl font-semibold flex items-center gap-2 transition-colors shadow-lg shadow-sky-500/20 text-lg ${isStartingInterview ? 'opacity-75 cursor-not-allowed' : ''}`}
+                      className={`program-accent-button px-8 py-4 rounded-xl font-semibold flex items-center gap-2 transition-colors shadow-lg text-lg ${isStartingInterview ? 'opacity-75 cursor-not-allowed' : ''}`}
                     >
                       {isStartingInterview ? 'Starting...' : 'Continue'}
                       {!isStartingInterview && <ArrowRight className="w-5 h-5" />}
@@ -2395,7 +2414,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         <p className="text-xs text-slate-400 leading-relaxed">
                           Your department is currently set to <span className="text-amber-400 font-bold">&quot;{profile.department || 'not set'}&quot;</span>.
                           Thesis Defense is only available for <span className="text-white font-bold">CCIT, CTE, or CBAPA</span> students.
-                          Please update your department in <button onClick={() => setActiveTab('profile')} className="text-sky-400 underline hover:text-sky-300 transition-colors">Profile Settings</button>.
+                          Please update your department in <button onClick={() => setActiveTab('profile')} className="program-accent-link underline transition-colors">Profile Settings</button>.
                         </p>
                       </div>
                     </div>
@@ -2733,16 +2752,16 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
             )}
 
             {activeTab === 'interview-session' && (
-              <div className="relative h-full flex flex-col items-center px-4 pt-6 w-full">
+              <div className="relative flex h-full min-h-0 w-full flex-col overflow-y-auto bg-[#02040a] lg:overflow-hidden">
 
-                {/* TOP ROW: 3D MODEL & RESPONSE LOG */}
-                <div className="w-full max-w-7xl mx-auto flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch mb-8 h-[600px]">
+                {/* Unified interview room: primary stage and docked transcript */}
+                <div className="grid w-full flex-none grid-cols-1 bg-[#02040a] lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_clamp(20rem,24vw,26rem)] lg:grid-rows-[minmax(0,1fr)_auto]">
 
-                  {/* LEFT COLUMN: HORIZONTAL 3D MODEL */}
+                  {/* Primary 3D interview stage */}
                   <motion.div
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
-                    className="lg:col-span-8 bg-[#111827] rounded-[2rem] overflow-hidden relative shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] border border-slate-800 flex items-center justify-center p-0"
+                    className="relative m-3 flex min-h-[52svh] items-center justify-center overflow-hidden rounded-xl border border-[#263449] bg-[#111827] p-0 lg:col-start-1 lg:row-start-1 lg:m-5 lg:min-h-0"
                     style={{ backgroundColor: '#111827' }}
                   >
                     <div className="absolute inset-0 w-full h-full">
@@ -2762,21 +2781,21 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       </Canvas>
                     </div>
                     {isCameraEnabled && (
-                      <div className="absolute bottom-4 right-4 z-20 w-44 overflow-hidden rounded-xl border border-sky-400/40 bg-slate-950 shadow-xl">
+                      <div className="program-accent-dark-border absolute bottom-3 right-3 z-20 w-36 overflow-hidden rounded-xl border bg-[#0f172a] shadow-xl sm:bottom-4 sm:right-4 sm:w-44">
                         <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
                         <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-slate-200">
                           <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unavailable' ? 'Tracking unavailable' : 'Loading tracker'}</span>
-                          <span className="text-sky-300">{eyeTracker.samples > 0 ? `${eyeTracker.score}%` : '—'}</span>
+                          <span className="program-accent-on-dark">{eyeTracker.samples > 0 ? `${eyeTracker.score}%` : '—'}</span>
                         </div>
                       </div>
                     )}
                   </motion.div>
 
-                  {/* RIGHT COLUMN: USER RESPONSES & EVALUATION */}
+                  {/* Docked transcript and evaluation panel */}
                   <motion.div
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
-                    className="lg:col-span-4 bg-[#1e293b]/80 backdrop-blur-md rounded-[2rem] p-6 flex flex-col relative shadow-xl overflow-hidden border border-slate-800/80"
+                    className="relative flex min-h-[24rem] flex-col overflow-hidden border-t border-[#334155] bg-[#1e293b] p-4 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:min-h-0 lg:border-l lg:border-t-0 lg:p-5"
                     style={{ backgroundColor: 'rgba(30, 41, 59, 0.96)' }}
                   >
                     {interviewResult ? (
@@ -2830,29 +2849,29 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                               return breakdown.map((item, idx) => (
                                 <div key={idx} className={`bg-slate-900 p-3 rounded-xl border border-slate-800/50 ${breakdown.length % 2 !== 0 && idx === breakdown.length - 1 ? 'col-span-2 text-center' : ''}`}>
                                   <p className="text-[10px] text-slate-400 mb-1 uppercase tracking-wider overflow-hidden text-ellipsis whitespace-nowrap" title={item.label}>{item.label}</p>
-                                  <p className="text-xl font-black text-sky-400">{item.score || 0}</p>
+                                  <p className="text-program-accent text-xl font-black">{item.score || 0}</p>
                                 </div>
                               ));
                             })()}
                           </div>
 
-                          <div className="mt-3 flex items-center justify-between rounded-xl border border-sky-500/20 bg-sky-500/10 p-3">
-                            <span className="text-xs font-bold uppercase tracking-wider text-sky-300">Camera Eye Contact</span>
-                            <span className="text-xl font-black text-sky-400">{(interviewResult.eye_contact_samples || 0) > 0 ? `${Math.round(interviewResult.score_eye_contact)}%` : 'Unavailable'}</span>
+                          <div className="program-accent-surface program-accent-border mt-3 flex items-center justify-between rounded-xl border p-3">
+                            <span className="text-xs font-bold uppercase tracking-wider">Camera Eye Contact</span>
+                            <span className="text-xl font-black">{(interviewResult.eye_contact_samples || 0) > 0 ? `${Math.round(interviewResult.score_eye_contact)}%` : 'Unavailable'}</span>
                           </div>
 
                           {interviewResult.feedback_summary && (
-                            <div className="bg-indigo-500/10 border border-indigo-500/20 p-4 rounded-xl mt-4">
-                              <h4 className="text-[11px] uppercase tracking-wider font-bold text-indigo-400 mb-2">AI Feedback</h4>
+                            <div className="program-accent-surface program-accent-border border p-4 rounded-xl mt-4">
+                              <h4 className="text-[11px] uppercase tracking-wider font-bold mb-2">AI Feedback</h4>
                               <p className="text-xs text-slate-300 leading-relaxed">{interviewResult.feedback_summary}</p>
                             </div>
                           )}
 
-                          <div className="mt-4 rounded-xl border border-[#d4af37]/40 bg-[#334155] p-3 text-center">
+                          <div className="program-accent-dark-border mt-4 rounded-xl border bg-[#334155] p-3 text-center">
                             <p className="mb-3 text-xs leading-relaxed text-[#e2e8f0]">
                               Your responses have been validated. Review your score and feedback, then return to the dashboard.
                             </p>
-                            <button onClick={exitInterview} className="w-full py-3 bg-[#d4af37] hover:bg-[#e4bd42] text-[#2e2812] text-sm rounded-xl font-bold transition-colors shadow-lg shrink-0">
+                            <button onClick={exitInterview} className="program-accent-button w-full py-3 text-sm rounded-xl font-bold transition-colors shadow-lg shrink-0">
                               Return to Dashboard
                             </button>
                           </div>
@@ -2861,51 +2880,53 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     ) : (
                       // --- TRANSCRIPT HISTORY UI ---
                       <div className="flex flex-col h-full">
-                        <h3 className="text-sm font-bold text-[#f8fafc] border-b border-[#64748b]/60 pb-3 mb-4 shrink-0 uppercase tracking-widest text-center">Interview Transcript</h3>
+                        <h3 className="mb-3 shrink-0 border-b border-[#475569] pb-3 text-left text-xs font-bold uppercase tracking-[0.16em] text-[#f8fafc]">Interview Transcript</h3>
 
-                        {(aiResponseText || isAiSpeaking) && (
-                          <div className="mb-4 p-3 rounded-xl bg-[#334155] border border-[#d4af37]/50 text-[#f8fafc] shadow-sm shrink-0">
-                            <div className="flex items-center justify-between gap-3 mb-2">
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-[#f7d774]">Professor Maxiel</span>
-                              {isAiSpeaking && <span className="text-[10px] font-semibold text-[#fde68a]">Speaking...</span>}
+                        <div className="custom-scrollbar flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1 scroll-smooth">
+                          {(aiResponseText || isAiSpeaking) && (
+                            <div className="program-accent-dark-border rounded-lg border bg-[#334155] p-3 text-[#f8fafc]">
+                              <div className="mb-2 flex items-center justify-between gap-3">
+                                <span className="program-accent-on-dark text-[10px] font-bold uppercase tracking-wider">Professor Maxiel</span>
+                                {isAiSpeaking && <span className="program-accent-on-dark text-[10px] font-semibold">Speaking...</span>}
+                              </div>
+                              <p className="whitespace-pre-wrap text-xs leading-relaxed">
+                                {aiResponseText || 'Preparing response...'}
+                              </p>
                             </div>
-                            <p className="leading-relaxed text-xs whitespace-pre-wrap">
-                              {aiResponseText || 'Preparing response...'}
-                            </p>
-                          </div>
-                        )}
+                          )}
 
-                        <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-4 pr-1 scroll-smooth">
-                          {(() => {
-                            // Filter explicitly only for user responses
-                            const userLogs = conversationLog.filter((log) => log.sender === 'user');
+                          <div className="flex min-h-0 flex-1 flex-col gap-3">
+                            {(() => {
+                              // Filter explicitly only for user responses
+                              const userLogs = conversationLog.filter((log) => log.sender === 'user');
 
-                            if (userLogs.length === 0 && !transcript) {
-                              return (
-                                <div className="flex-1 flex flex-col items-center justify-center">
-                                  <User className="w-8 h-8 text-[#94a3b8] mb-3" />
-                                  <p className="text-[#cbd5e1] text-xs text-center px-4 leading-relaxed">Respond to the AI Professor. Your answers will be tracked here (Limit: 5).</p>
-                                </div>
-                              );
-                            }
-
-                            return (
-                              <>
-                                {userLogs.map((log, idx) => (
-                                  <div key={idx} className="flex flex-col items-stretch animate-fade-in">
-                                    <span className="text-[10px] font-bold uppercase tracking-wider mb-1 text-[#86efac] px-1">
-                                      Response {idx + 1}
-                                    </span>
-                                    <div className="p-3 rounded-xl bg-[#0f172a] border border-[#334155] text-[#f8fafc] shadow-sm">
-                                      <p className="leading-relaxed text-xs">{log.text}</p>
-                                    </div>
+                              if (userLogs.length === 0 && !transcript) {
+                                return (
+                                  <div className="flex flex-1 flex-col items-center justify-center py-8">
+                                    <User className="mb-3 h-7 w-7 text-[#94a3b8]" />
+                                    <p className="px-4 text-center text-xs leading-relaxed text-[#cbd5e1]">Respond to the AI Professor. Your answers will be tracked here (Limit: 5).</p>
                                   </div>
-                                ))}
-                              </>
-                            );
-                          })()}
+                                );
+                              }
+
+                              return (
+                                <>
+                                  {userLogs.map((log, idx) => (
+                                    <div key={idx} className="flex flex-col items-stretch animate-fade-in">
+                                      <span className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wider text-[#cbd5e1]">
+                                        You · Response {idx + 1}
+                                      </span>
+                                      <div className="rounded-lg border border-[#334155] bg-[#0f172a] p-3 text-[#f8fafc]">
+                                        <p className="text-xs leading-relaxed">{log.text}</p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </>
+                              );
+                            })()}
+                          </div>
                         </div>
-                        <div className="mt-4 pt-4 border-t border-[#64748b]/60 shrink-0">
+                        <div className="mt-3 shrink-0 border-t border-[#475569] pt-3">
                           {(() => {
                             const userTurns = conversationLog.filter(l => l.sender === 'user').length;
                             if (userTurns >= 5) {
@@ -2935,40 +2956,33 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       </div>
                     )}
                   </motion.div>
-                </div>
 
-                {/* BOTTOM ROW: CONTROLS (Floating below everything) */}
+                {/* Integrated meeting controls */}
                 {!interviewResult && (
-                  <div className="flex w-full max-w-2xl shrink-0 flex-col items-center gap-4 pb-4 mx-auto">
+                  <div className="grid w-full shrink-0 items-center gap-3 border-t border-[#263449] bg-[#0b1120] px-4 py-3 lg:col-start-1 lg:row-start-2 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:gap-6 lg:px-6">
                     <div
                       role="status"
                       aria-live="polite"
-                      className={`w-full rounded-2xl border px-4 py-3 text-center shadow-lg backdrop-blur-sm ${
-                        isListening
-                          ? 'border-[#22c55e]/60 bg-[#052e16]/95'
-                          : enrollmentResponseCount >= 5
-                            ? 'border-[#22c55e]/50 bg-[#0f2f22]/95'
-                            : 'border-[#d4af37]/50 bg-[#0f172a]/95'
-                      }`}
+                      className="min-w-0 text-center lg:max-w-2xl lg:text-left"
                     >
-                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#f7d774]">How to respond</p>
+                      <p className={`text-[10px] font-bold uppercase tracking-[0.18em] ${isListening || enrollmentResponseCount >= 5 ? 'text-[#86efac]' : 'program-accent-on-dark'}`}>How to respond</p>
                       <p className="mt-1 text-xs font-semibold text-[#f8fafc]">Listen → Click microphone → Speak → Click microphone again to submit</p>
                       <p className={`mt-1.5 text-xs leading-relaxed ${isListening ? 'font-semibold text-[#86efac]' : 'text-[#cbd5e1]'}`}>
                         {enrollmentInstruction}
                       </p>
                     </div>
 
-                    <div className="grid w-full max-w-md grid-cols-4 items-start gap-3 sm:gap-5">
-                    <div className="relative grid grid-rows-[5rem_1rem] justify-items-center gap-1.5">
+                    <div className="flex items-start justify-center gap-3 sm:gap-4">
+                    <div className="relative flex flex-col items-center gap-1">
                       <button
                         onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
-                        className="self-center bg-[#171e2e] hover:bg-[#1e293b] border border-[#334155] text-[#cbd5e1] hover:text-white w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
+                        className="group relative flex h-12 w-12 items-center justify-center rounded-lg bg-transparent text-[#cbd5e1] transition-all duration-300 hover:bg-[#171e2e] hover:text-white"
                         title="Add an attachment"
                         aria-label="Add an attachment"
                       >
-                        <Plus className={`w-5 h-5 transition-transform duration-300 ${isAddMenuOpen ? 'rotate-45' : 'group-hover:scale-110'}`} />
+                        <Plus className={`h-[22px] w-[22px] transition-transform duration-300 ${isAddMenuOpen ? 'rotate-45' : 'group-hover:scale-110'}`} />
                       </button>
-                      <span className="text-[10px] font-semibold text-[#cbd5e1]">Attach</span>
+                      <span className="text-[11px] font-semibold text-[#cbd5e1]">Attach</span>
 
                       {/* Attachment Popover */}
                       {isAddMenuOpen && (
@@ -2979,8 +2993,8 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         >
                           <div className="flex flex-col p-1.5 space-y-1">
                             <button onClick={() => setIsAddMenuOpen(false)} className="flex items-center gap-3 w-full p-2.5 text-left hover:bg-slate-700/80 text-slate-300 hover:text-white rounded-xl transition-all">
-                              <div className="w-7 h-7 rounded-lg bg-sky-500/10 flex items-center justify-center shrink-0">
-                                <Folder className="w-3.5 h-3.5 text-sky-400" />
+                              <div className="program-accent-dark-surface w-7 h-7 rounded-lg flex items-center justify-center shrink-0">
+                                <Folder className="w-3.5 h-3.5" />
                               </div>
                               <span className="text-xs font-semibold tracking-wide">Local Disk</span>
                             </button>
@@ -2995,65 +3009,103 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       )}
                     </div>
 
-                    <div className="grid grid-rows-[5rem_1rem] justify-items-center gap-1.5">
+                    <div className="flex flex-col items-center gap-1">
                       <button
                         type="button"
                         onClick={toggleListening}
                         disabled={isMicTransitioning || enrollmentResponseCount >= 5}
                         className={`relative ${
                           isListening
-                            ? 'bg-[#16a34a] shadow-green-900/30'
+                            ? 'program-accent-fill program-accent-border'
                             : isMicTransitioning || enrollmentResponseCount >= 5
-                              ? 'bg-[#475569] cursor-not-allowed'
-                              : 'bg-[#1e293b] hover:bg-[#334155] shadow-black/40'
-                        } text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl`}
+                              ? 'border-[#64748b] bg-[#475569] text-[#cbd5e1] cursor-not-allowed'
+                              : 'border-[#475569] bg-[#1e293b] text-[#e2e8f0] hover:border-[#64748b] hover:bg-[#334155] shadow-black/40'
+                        } flex h-14 w-14 items-center justify-center rounded-2xl border shadow-lg transition-all duration-300`}
                         title={isListening ? 'Stop recording and submit answer' : 'Start recording your answer'}
-                        aria-label={isListening ? 'Stop recording and submit answer' : 'Start recording your answer'}
+                        aria-label={
+                          isListening
+                            ? 'Stop recording and submit answer'
+                            : isMicTransitioning
+                              ? 'Submitting answer'
+                              : enrollmentResponseCount >= 5
+                                ? 'All responses recorded'
+                                : 'Start microphone recording'
+                        }
+                        aria-pressed={isListening}
                       >
                         {isListening ? (
-                          <div className="flex items-center justify-center gap-1.5 h-8 w-full relative z-10 px-4">
-                            {[...userAudioData, ...Array.from(userAudioData).reverse()].map((height, i) => (
-                              <motion.div key={`w-${i}`} className="w-[3px] bg-white rounded-full" animate={{ height: `${height * 0.7}px` }} transition={{ duration: 0.1, ease: 'linear' }} />
+                          <div className="relative z-10 flex h-8 w-full items-center justify-center gap-1">
+                            {userAudioData.map((height, i) => (
+                              <motion.div
+                                key={`w-left-${i}`}
+                                className="w-0.5 rounded-full"
+                                style={{ backgroundColor: 'var(--program-accent-foreground)' }}
+                                animate={{ height: `${height * 0.65}px` }}
+                                transition={{ duration: 0.1, ease: 'linear' }}
+                              />
+                            ))}
+                            <Mic className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+                            {Array.from(userAudioData).reverse().map((height, i) => (
+                              <motion.div
+                                key={`w-right-${i}`}
+                                className="w-0.5 rounded-full"
+                                style={{ backgroundColor: 'var(--program-accent-foreground)' }}
+                                animate={{ height: `${height * 0.65}px` }}
+                                transition={{ duration: 0.1, ease: 'linear' }}
+                              />
                             ))}
                           </div>
                         ) : (
-                          <Mic className={`w-8 h-8 relative z-10 ${isMicTransitioning ? 'text-[#f7d774]' : 'text-[#e2e8f0]'}`} />
+                          <MicOff className="relative z-10 h-[22px] w-[22px]" aria-hidden="true" />
                         )}
-                        {isListening && <span className="absolute inset-0 rounded-[2rem] border-4 border-[#4ade80] opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }} />}
+                        {isListening && (
+                          <span
+                            className="absolute inset-0 rounded-2xl border-2 opacity-0"
+                            style={{
+                              animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite',
+                              borderColor: 'var(--program-accent)',
+                            }}
+                          />
+                        )}
                       </button>
-                      <span className={`text-[10px] font-bold ${isListening ? 'text-[#86efac]' : 'text-[#f8fafc]'}`}>
-                        {isListening ? 'Click to Submit' : isMicTransitioning ? 'Submitting...' : enrollmentResponseCount >= 5 ? 'Answers Complete' : 'Start Answer'}
-                      </span>
+                      <div className="min-h-7 text-center leading-tight">
+                        <span className={`block text-[11px] font-bold ${isListening ? 'program-accent-on-dark' : 'text-[#f8fafc]'}`}>
+                          {isListening ? 'Recording...' : isMicTransitioning ? 'Submitting...' : enrollmentResponseCount >= 5 ? 'Answers Complete' : 'Start Answer'}
+                        </span>
+                        {isListening && <span className="mt-0.5 block text-[10px] font-medium text-[#cbd5e1]">Click to submit</span>}
+                      </div>
                     </div>
 
-                    <div className="grid grid-rows-[5rem_1rem] justify-items-center gap-1.5">
+                    <div className="flex flex-col items-center gap-1">
                       <button
                         type="button"
                         onClick={() => setIsCameraEnabled(enabled => !enabled)}
-                        className={`self-center ${isCameraEnabled ? 'bg-[#3b2d0d] border-[#d4af37] text-[#f7d774]' : 'bg-[#171e2e] border-[#334155] text-[#cbd5e1]'} hover:bg-[#263449] hover:border-[#d4af37] hover:text-[#f7d774] w-14 h-14 rounded-2xl border transition-all duration-300 flex items-center justify-center shadow-lg group`}
+                        className={`group flex h-12 w-12 items-center justify-center rounded-lg bg-transparent transition-all duration-300 hover:bg-[#171e2e] ${isCameraEnabled ? 'program-accent-on-dark' : 'text-[#cbd5e1] hover:text-white'}`}
                         title={isCameraEnabled ? 'Turn camera off' : 'Turn camera on for eye-contact tracking'}
                         aria-label={isCameraEnabled ? 'Turn camera off' : 'Turn camera on for eye-contact tracking'}
                         aria-pressed={isCameraEnabled}
                       >
-                        {isCameraEnabled ? <Camera className="w-5 h-5 group-hover:scale-110 transition-transform" /> : <CameraOff className="w-5 h-5 group-hover:scale-110 transition-transform" />}
+                        {isCameraEnabled ? <Camera className="h-[22px] w-[22px] transition-transform group-hover:scale-110" /> : <CameraOff className="h-[22px] w-[22px] transition-transform group-hover:scale-110" />}
                       </button>
-                      <span className="text-[10px] font-semibold text-[#cbd5e1]">{isCameraEnabled ? 'Camera On' : 'Camera Off'}</span>
+                      <span className={`text-[11px] font-semibold ${isCameraEnabled ? 'program-accent-on-dark' : 'text-[#cbd5e1]'}`}>{isCameraEnabled ? 'Camera On' : 'Camera Off'}</span>
                     </div>
-
-                    <div className="grid grid-rows-[5rem_1rem] justify-items-center gap-1.5">
-                      <button
-                        onClick={() => setIsLeaveModalOpen(true)}
-                        className="self-center bg-[#171e2e] hover:bg-[#3b1420] border border-[#334155] hover:border-[#b42335] text-[#cbd5e1] hover:text-[#fda4af] w-14 h-14 rounded-2xl transition-all duration-300 flex items-center justify-center shadow-lg group relative"
-                        title="Leave interview without validating"
-                        aria-label="Leave interview without validating"
-                      >
-                        <LogOut className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                      </button>
-                      <span className="text-[10px] font-semibold text-[#fda4af]">Leave</span>
                     </div>
+                    <div className="flex justify-center lg:justify-end">
+                      <div className="flex flex-col items-center gap-1">
+                        <button
+                          onClick={() => setIsLeaveModalOpen(true)}
+                          className="group relative flex h-12 w-12 items-center justify-center rounded-lg bg-transparent text-[#fda4af] transition-all duration-300 hover:bg-[#3b1420] hover:text-[#fecdd3]"
+                          title="Leave interview without validating"
+                          aria-label="Leave interview without validating"
+                        >
+                          <LogOut className="h-[22px] w-[22px] transition-transform group-hover:scale-110" />
+                        </button>
+                        <span className="text-[11px] font-semibold text-[#fda4af]">Leave</span>
+                      </div>
                     </div>
                   </div>
                 )}
+                </div>
               </div>
             )}
 
@@ -3118,7 +3170,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         <p className="text-muted mt-2 max-w-sm mx-auto">Start your first interview session to see your performance history here.</p>
                         <button
                           onClick={() => setActiveTab('interview-type')}
-                          className="mt-8 px-6 py-3 bg-accent hover:bg-gold-text text-accent-ink rounded-lg font-semibold transition-colors"
+                          className="program-accent-button mt-8 px-6 py-3 rounded-lg font-semibold transition-colors"
                         >
                           Start Practicing
                         </button>
@@ -3139,18 +3191,18 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                           initial={{ opacity: 0, x: -20 }}
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ delay: i * 0.04 }}
-                          className="bg-slate-900 border border-slate-800/50 rounded-2xl p-6 flex items-center justify-between hover:bg-slate-800/80 hover:border-sky-500/30 transition-all cursor-pointer group shadow-xl backdrop-blur-sm"
+                          className="program-accent-hover-border bg-slate-900 border border-slate-800/50 rounded-2xl p-6 flex items-center justify-between hover:bg-slate-800/80 transition-all cursor-pointer group shadow-xl backdrop-blur-sm"
                         >
                           <div className="flex items-center gap-6">
                             <div className={`w-14 h-14 rounded-2xl bg-slate-800 flex items-center justify-center transition-all duration-300 ${item._type === 'thesis'
                               ? 'text-purple-400 group-hover:text-purple-300 group-hover:bg-purple-500/10'
-                              : 'text-slate-400 group-hover:text-sky-400 group-hover:bg-sky-500/10'
+                              : 'group-hover-program-accent-surface text-slate-400'
                               }`}>
                               {item._type === 'thesis' ? <Shield className="w-7 h-7" /> : <Video className="w-7 h-7" />}
                             </div>
                             <div>
                               <div className="flex items-center gap-3">
-                                <h4 className={`font-bold text-xl text-slate-100 tracking-tight transition-colors ${item._type === 'thesis' ? 'group-hover:text-purple-400' : 'group-hover:text-sky-400'
+                                <h4 className={`font-bold text-xl text-slate-100 tracking-tight transition-colors ${item._type === 'thesis' ? 'group-hover:text-purple-400' : 'group-hover-program-accent-text'
                                   }`}>
                                   {item._type === 'thesis' ? 'Thesis Defense' : `Interview #${allHistory.filter(h => h._type === 'enrollment').length - allHistory.filter(h => h._type === 'enrollment').indexOf(item)}`}
                                 </h4>
@@ -3169,12 +3221,12 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                           <div className="flex items-center gap-8">
                             <div className="text-right min-w-[100px]">
                               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em] mb-1">Final Score</p>
-                              <span className={`text-3xl font-black ${(item.total_score || 0) >= 75 ? 'text-emerald-400' : (item.total_score || 0) >= 50 ? 'text-sky-400' : 'text-rose-400'
+                              <span className={`text-3xl font-black ${(item.total_score || 0) >= 75 ? 'text-emerald-400' : (item.total_score || 0) >= 50 ? 'text-program-accent' : 'text-rose-400'
                                 }`}>
                                 {item.total_score || 0}%
                               </span>
                             </div>
-                            <div className="w-10 h-10 rounded-full flex items-center justify-center bg-slate-800 text-slate-500 group-hover:bg-sky-500 group-hover:text-black transition-all duration-300 shadow-inner">
+                            <div className="group-hover-program-accent-fill w-10 h-10 rounded-full flex items-center justify-center bg-slate-800 text-slate-500 transition-all duration-300 shadow-inner">
                               <ChevronRight className="w-6 h-6" />
                             </div>
                           </div>
@@ -3211,11 +3263,11 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         <p className="text-sm font-bold text-slate-100">{activity.label}</p>
                         <div className="mt-3 flex items-end justify-between gap-4">
                           <div>
-                            <p className="text-2xl font-black text-gold-text">{activity.completed}</p>
+                            <p className="text-program-accent text-2xl font-black">{activity.completed}</p>
                             <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Completed</p>
                           </div>
                           <div className="text-right">
-                            <p className="text-2xl font-black text-sky-400">{activity.average == null ? 'N/A' : `${activity.average}%`}</p>
+                            <p className="text-program-accent text-2xl font-black">{activity.average == null ? 'N/A' : `${activity.average}%`}</p>
                             <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{activity.scored} scored</p>
                           </div>
                         </div>
@@ -3245,7 +3297,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                               initial={{ width: 0 }}
                               animate={{ width: `${skill.value}%` }}
                               transition={{ duration: 1, delay: 0.5 + (idx * 0.1) }}
-                              className={`h-full ${skill.color} rounded-full`}
+                              className="program-accent-fill h-full rounded-full"
                             />
                           </div>
                         </div>
@@ -3255,7 +3307,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
 
                   <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl backdrop-blur-sm">
                     <div className="mb-6 flex items-center gap-4">
-                      <div className="w-12 h-12 shrink-0 rounded-2xl bg-sky-500/10 flex items-center justify-center text-sky-400">
+                      <div className="program-accent-surface w-12 h-12 shrink-0 rounded-2xl flex items-center justify-center">
                         <BarChart2 className="w-6 h-6" />
                       </div>
                       <div>
@@ -3269,7 +3321,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         const presentation = {
                           improved: { label: 'Improved', badge: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400', change: 'text-emerald-400' },
                           declined: { label: 'Needs attention', badge: 'border-rose-500/30 bg-rose-500/10 text-rose-400', change: 'text-rose-400' },
-                          steady: { label: 'No change', badge: 'border-sky-500/30 bg-sky-500/10 text-sky-400', change: 'text-sky-400' },
+                          steady: { label: 'No change', badge: 'border-slate-700 bg-slate-800/70 text-slate-400', change: 'text-slate-500' },
                           baseline: { label: 'Baseline', badge: 'border-amber-500/30 bg-amber-500/10 text-amber-400', change: 'text-amber-400' },
                           'no-data': { label: 'No data', badge: 'border-slate-700 bg-slate-800/70 text-slate-400', change: 'text-slate-500' },
                         }[insight.status];
@@ -3390,7 +3442,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         return breakdown.map((item, idx) => (
                           <div key={idx} className={`bg-slate-900 p-4 rounded-2xl border border-slate-800/50 text-center ${breakdown.length % 3 !== 0 && idx === breakdown.length - 1 ? 'sm:col-span-3' : ''}`}>
                             <p className="text-xs text-slate-400 mb-1 uppercase tracking-wider">{item.label}</p>
-                            <p className={`text-2xl font-black ${isThesisResult(interviewResult) ? 'text-purple-400' : 'text-sky-400'}`}>{item.score || 0}</p>
+                            <p className={`text-2xl font-black ${isThesisResult(interviewResult) ? 'text-purple-400' : 'text-program-accent'}`}>{item.score || 0}</p>
                           </div>
                         ));
                       })()}
@@ -3399,9 +3451,9 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     {interviewResult.feedback_summary && (
                       <div className={`p-6 rounded-2xl mt-6 text-left border ${isThesisResult(interviewResult)
                         ? 'bg-purple-500/10 border-purple-500/20'
-                        : 'bg-indigo-500/10 border-indigo-500/20'
+                        : 'program-accent-surface program-accent-border'
                         }`}>
-                        <h4 className={`text-sm uppercase tracking-wider font-bold mb-3 ${isThesisResult(interviewResult) ? 'text-purple-400' : 'text-indigo-400'
+                        <h4 className={`text-sm uppercase tracking-wider font-bold mb-3 ${isThesisResult(interviewResult) ? 'text-purple-400' : 'text-program-accent'
                           }`}>AI Feedback Summary</h4>
                         <p className="text-sm text-slate-300 leading-relaxed">{interviewResult.feedback_summary}</p>
                       </div>
@@ -3430,7 +3482,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                   <div className="flex items-center gap-8">
                     {/* Profile Picture with Camera Overlay */}
                     <div className="relative group">
-                      <div className="w-24 h-24 rounded-full bg-slate-800 border-2 border-slate-700 overflow-hidden shrink-0 group-hover:border-sky-500/50 transition-colors">
+                      <div className="group-hover-program-accent-border w-24 h-24 rounded-full bg-slate-800 border-2 border-slate-700 overflow-hidden shrink-0 transition-colors">
                         <img
                           src={profile.profilePicture}
                           alt="Profile"
@@ -3438,7 +3490,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         />
                       </div>
                       {/* Camera Overlay Trigger */}
-                      <label className="absolute bottom-0 right-0 w-8 h-8 bg-sky-500 hover:bg-sky-400 text-black rounded-full flex items-center justify-center cursor-pointer shadow-lg transform translate-x-1 translate-y-1 transition-all hover:scale-110 active:scale-95 z-10 border-2 border-slate-900">
+                      <label className="program-accent-button absolute bottom-0 right-0 w-8 h-8 rounded-full flex items-center justify-center cursor-pointer shadow-lg transform translate-x-1 translate-y-1 transition-all hover:scale-110 active:scale-95 z-10 border-2 border-slate-900">
                         <Camera className="w-4 h-4" />
                         <input
                           type="file"
@@ -3463,7 +3515,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         type="text"
                         value={profile.name}
                         onChange={(e) => setProfile({ ...profile, name: e.target.value })}
-                        className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
+                        className="program-accent-focus w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 transition-all duration-300"
                       />
                     </div>
 
@@ -3485,7 +3537,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         type="password"
                         value={profile.password || ''}
                         onChange={(e) => setProfile({ ...profile, password: e.target.value })}
-                        className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
+                        className="program-accent-focus w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 transition-all duration-300"
                         placeholder="••••••••"
                       />
                     </div>
@@ -3497,7 +3549,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         type="text"
                         value={profile.department}
                         onChange={(e) => setProfile({ ...profile, department: e.target.value })}
-                        className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all duration-300"
+                        className="program-accent-focus w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 transition-all duration-300"
                       />
                     </div>
                   </div>
@@ -3517,7 +3569,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     <button
                       onClick={handleSave}
                       disabled={isSaving}
-                      className="px-6 py-3 bg-sky-500 hover:bg-sky-400 text-black rounded-xl font-semibold transition-colors shadow-lg shadow-sky-500/20 disabled:opacity-50"
+                      className="program-accent-button px-6 py-3 rounded-xl font-semibold transition-colors shadow-lg disabled:opacity-50"
                     >
                       {isSaving ? 'Saving...' : 'Save'}
                     </button>

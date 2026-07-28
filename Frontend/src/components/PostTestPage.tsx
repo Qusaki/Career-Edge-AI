@@ -348,7 +348,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
             <button
               onClick={completePostTest}
               disabled={completing || !messages.some(message => message.sender === 'user')}
-              className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+              className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
               {completing ? 'Completing…' : 'Complete Interview'}
@@ -357,10 +357,10 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
 
           <section className="flex-1 rounded-lg border border-line bg-card p-5">
             <div className="mb-4">
-              <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-gold-text">Post-Test Session</p>
+              <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Post-Test Session</p>
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="text-3xl font-bold tracking-tight text-ink">Post-Test Interview</h1>
-                <span className="rounded-full bg-active px-3 py-1 text-sm font-bold text-gold-text">
+                <span className="program-accent-surface rounded-full px-3 py-1 text-sm font-bold">
                   Question {currentQuestionNumber} of 5
                 </span>
               </div>
@@ -385,7 +385,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
                 </div>
               ) : (
                 <>
-                  <Volume2 className={`mb-4 h-10 w-10 ${isVoiceSpeaking ? 'text-gold-text' : 'text-muted'}`} />
+                  <Volume2 className={`mb-4 h-10 w-10 ${isVoiceSpeaking ? 'text-program-accent' : 'text-muted'}`} />
                   <p className="max-w-lg text-sm leading-relaxed text-muted">
                     {isVoiceSpeaking
                       ? 'Listen carefully to the interviewer, then answer after the audio finishes.'
@@ -403,7 +403,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
                   {visibleUserMessages.length > 0 && (
                     <div className="mt-6 w-full max-w-2xl space-y-3 border-t border-line pt-5 text-left">
                       {visibleUserMessages.map((message, index) => (
-                        <div key={index} className="ml-auto max-w-[82%] rounded-lg bg-accent px-4 py-3 text-sm leading-relaxed text-accent-ink">
+                        <div key={index} className="program-accent-fill ml-auto max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed">
                           <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">You</p>
                           {message.text}
                         </div>
@@ -418,7 +418,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
               <button
                 onClick={isListening ? stopListening : recordAndSendReply}
                 disabled={isAiResponding || isVoiceSpeaking}
-                className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
+                className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
               >
                 {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
                 {isListening ? 'Stop Recording' : 'Speak Answer'}
@@ -433,7 +433,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
   return (
     <div className="w-full">
       <header className="mb-6">
-        <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-gold-text">Assessment</p>
+        <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Assessment</p>
         <h1 className="text-4xl font-bold tracking-tight text-ink md:text-5xl">Post-Test</h1>
         <p className="mt-1.5 text-lg font-medium text-muted">
           Measure your progress with a final department-specific interview.
@@ -456,7 +456,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
             <button
               onClick={completePostTest}
               disabled={completing || !messages.some(message => message.sender === 'user')}
-              className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+              className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
               {completing ? 'Completing…' : 'Complete Interview'}
@@ -471,7 +471,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
             <button
               onClick={isListening ? stopListening : recordAndSendReply}
               disabled={isAiResponding}
-              className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'bg-accent text-accent-ink hover:bg-gold-text'}`}
+              className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
             >
               {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
               {isListening ? 'Stop Recording' : 'Speak Answer'}
@@ -482,7 +482,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
         <section className="rounded-lg border border-line bg-card p-5">
           <div className="flex flex-col justify-between gap-6 md:flex-row md:items-center">
             <div className="flex items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-active text-gold-text">
+              <div className="program-accent-surface flex h-12 w-12 shrink-0 items-center justify-center rounded-lg">
                 <ClipboardCheck className="h-6 w-6" />
               </div>
               <div>
@@ -495,7 +495,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
             <button
               onClick={startPostTest}
               disabled={starting}
-              className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-ink transition-colors hover:bg-gold-text disabled:cursor-not-allowed disabled:opacity-60"
+              className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {starting ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <ArrowRight className="h-5 w-5" />}
               {starting ? 'Starting…' : 'Start Post-Test'}
@@ -507,7 +507,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
       <section className="mt-6">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-lg font-bold italic tracking-tight text-ink">Recent Post-Tests</h2>
-          <button onClick={loadSessions} className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-gold-text hover:text-accent-ink">
+          <button onClick={loadSessions} className="program-accent-link flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider transition-colors">
             <RefreshCw className="h-4 w-4" /> Refresh
           </button>
         </div>
@@ -525,7 +525,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
                 <p className="mt-0.5 text-xs text-muted">{new Date(session.start_time).toLocaleString()}</p>
               </div>
               <div className="text-right">
-                <span className="rounded-full bg-active px-2.5 py-1 text-xs font-bold capitalize text-gold-text">{session.status}</span>
+                <span className="program-accent-surface rounded-full px-2.5 py-1 text-xs font-bold capitalize">{session.status}</span>
                 {session.total_score != null && (
                   <p className="mt-1 text-sm font-bold text-ink">
                     {session.eye_contact_samples
