@@ -13,6 +13,7 @@ import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME, ge
 import { API_URL } from '../config/api';
 import {
   buildActivityComparison,
+  getCommunicationSkillScore,
   getEnrollmentEvaluationTotal,
   getNormalizedActivityScore,
   getThesisEvaluationTotal,
@@ -201,9 +202,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
       else { performance = "Needs Practice"; perfColor = "text-rose-400"; perfMsg = "Keep practicing!"; }
     }
 
-    const communicationScoredHistory = scoredCommunication.filter(item =>
-      communicationSkillCriteria.some(criteria => criteria.field !== 'score_eye_contact' && item[criteria.field] != null)
-    );
     const skillBreakdown = communicationSkillCriteria.map(criteria => {
       if (criteria.field === 'score_eye_contact') {
         const cameraRecords = [
@@ -232,9 +230,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         };
       }
 
-      const recordsWithScore = communicationScoredHistory.filter(item => item[criteria.field] != null);
-      const score = recordsWithScore.length > 0
-        ? parseFloat((recordsWithScore.reduce((acc, curr) => acc + (curr[criteria.field] || 0), 0) / recordsWithScore.length).toFixed(1))
+      const recordedScores = scoredCommunication
+        .map(item => getCommunicationSkillScore(item, criteria.field))
+        .filter((score): score is number => score != null);
+      const score = recordedScores.length > 0
+        ? parseFloat((recordedScores.reduce((sum, currentScore) => sum + currentScore, 0) / recordedScores.length).toFixed(1))
         : null;
 
       return {

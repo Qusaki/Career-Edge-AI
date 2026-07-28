@@ -57,6 +57,8 @@ def complete_intro_session(session_id: int, request: PreTestIntroCompleteRequest
         session.score_courtesy = bounded_integer_score(evaluation, "score_courtesy", minimum=1, maximum=3, default=1)
         session.score_correctness = bounded_integer_score(evaluation, "score_correctness", minimum=1, maximum=3, default=1)
         session.score_conciseness = bounded_integer_score(evaluation, "score_conciseness", minimum=1, maximum=3, default=1)
+        session.score_vocabulary = bounded_integer_score(evaluation, "score_vocabulary", minimum=1, maximum=5, default=1)
+        session.score_grammar = bounded_integer_score(evaluation, "score_grammar", minimum=1, maximum=5, default=1)
         session.eye_contact_samples = bounded_integer_score(
             evaluation, "eye_contact_samples", minimum=0, maximum=10_000_000, default=0
         )

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, useMotionValue, useSpring, useTransform } from 'motion/react';
-import { Mic, FileText, CheckCircle, BarChart, Play, ArrowRight, Github, Facebook, Sparkles, BrainCircuit, Target, GraduationCap, Menu, X, MessageSquare, Video, Plus, Send, MousePointer2, Paperclip, LogOut, MapPin, Phone, Mail, Globe } from 'lucide-react';
+import { Mic, FileText, CheckCircle, BarChart, Play, ArrowRight, Github, Facebook, BrainCircuit, Target, GraduationCap, Menu, X, MessageSquare, Video, Plus, Send, MousePointer2, Paperclip, LogOut, MapPin, Phone, Mail, Globe } from 'lucide-react';
 import { AuthPage } from './components/AuthPage';
 import { Dashboard } from './components/Dashboard';
 
@@ -464,10 +464,6 @@ export default function App() {
               transition={{ duration: 0.8 }}
               className="flex flex-col gap-6"
             >
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-400 text-xs font-medium w-fit">
-                <Sparkles className="w-3.5 h-3.5" />
-                AI-Powered Interview Prep
-              </div>
               <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.1]">
                 Your Voice turns into a <span className="text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-rose-400">bright opportunity.</span>
               </h1>

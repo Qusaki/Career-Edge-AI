@@ -1,407 +1,76 @@
-INFO:     127.0.0.1:61670 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56199 - "OPTIONS /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53005 - "OPTIONS /upcoming-student-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61354 - "OPTIONS /thesis-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57188 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63694 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50354 - "OPTIONS /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56199 - "OPTIONS /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53005 - "OPTIONS /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57188 - "OPTIONS /upcoming-student-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63694 - "OPTIONS /thesis-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50354 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56199 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53005 - "OPTIONS /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57188 - "OPTIONS /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63694 - "GET /users/me HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:56199 - "GET /thesis-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:50354 - "GET /upcoming-student-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:53005 - "GET /pre-test-intro/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57188 - "GET /pre-test-active-listening/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:63694 - "GET /post-test-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:50354 - "GET /users/me HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:56199 - "GET /drills/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:53005 - "GET /thesis-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57188 - "GET /upcoming-student-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:53005 - "GET /drills/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:56199 - "GET /post-test-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:50354 - "GET /pre-test-active-listening/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:63694 - "GET /pre-test-intro/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:58570 - "POST /auth/login HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58570 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58570 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:56827 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53432 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:62608 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59056 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49343 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56827 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:62608 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:53432 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:59056 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49343 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49343 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:59056 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59056 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:57072 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57072 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57072 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57072 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:60903 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56313 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:58661 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63164 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:58661 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60903 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:59669 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:53144 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:53751 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60035 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50929 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54514 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60035 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58433 - "OPTIONS /upcoming-student-interview/start HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58433 - "POST /upcoming-student-interview/start HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:57014 - "OPTIONS /upcoming-student-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57014 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:61695 - "OPTIONS /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52338 - "OPTIONS /thesis-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56357 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55455 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:62872 - "OPTIONS /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61170 - "OPTIONS /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52338 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61695 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:55455 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:61170 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:62872 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52338 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61170 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63906 - "POST /upcoming-student-interview/start HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:64866 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:56301 - "GET /post-test-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:49942 - "GET /users/me HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:53304 - "GET /pre-test-intro/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:56713 - "GET /pre-test-active-listening/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:61182 - "GET /upcoming-student-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:49769 - "GET /thesis-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:56301 - "GET /drills/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57044 - "POST /auth/login HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "OPTIONS /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "OPTIONS /upcoming-student-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "OPTIONS /thesis-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "OPTIONS /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "OPTIONS /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "OPTIONS /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "OPTIONS /upcoming-student-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "OPTIONS /thesis-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "OPTIONS /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "OPTIONS /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57044 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:54398 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:60944 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56864 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49843 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54024 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56864 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:54024 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:49843 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:60944 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:56127 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56127 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56127 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:60357 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60357 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60357 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60357 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60357 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60357 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:51198 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52304 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57896 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61588 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:58667 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:55248 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55248 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55248 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55248 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:62818 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51705 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:62626 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57408 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60397 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50963 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57408 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60397 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50963 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57408 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51484 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57141 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51484 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57141 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57604 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57604 - "GET /pre-test-active-listening/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57604 - "OPTIONS /pre-test-active-listening/start HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57604 - "POST /pre-test-active-listening/start HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57604 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51333 - "GET /pre-test-active-listening/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57604 - "OPTIONS /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57604 - "OPTIONS /upcoming-student-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51333 - "OPTIONS /thesis-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57604 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57604 - "OPTIONS /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57604 - "OPTIONS /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51333 - "GET /pre-test-active-listening/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57604 - "OPTIONS /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51333 - "OPTIONS /upcoming-student-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57604 - "OPTIONS /thesis-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51333 - "OPTIONS /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57604 - "OPTIONS /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51333 - "GET /pre-test-intro/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57604 - "GET /users/me HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:51333 - "GET /upcoming-student-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57604 - "GET /thesis-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:51333 - "GET /post-test-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57604 - "GET /pre-test-active-listening/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:51333 - "GET /drills/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57604 - "GET /pre-test-intro/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:51333 - "GET /users/me HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57604 - "GET /upcoming-student-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:51333 - "GET /thesis-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57604 - "GET /post-test-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:51333 - "GET /pre-test-active-listening/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57604 - "GET /drills/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:51333 - "GET /pre-test-intro/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:51333 - "GET /pre-test-intro/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:60227 - "POST /auth/login HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60227 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57796 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:62803 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:64606 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60227 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:57796 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:64606 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:64606 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57796 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:64606 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:59769 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55017 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:59769 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59769 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55930 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59769 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:55930 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:60132 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55745 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60132 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60132 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:55745 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50781 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55745 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50781 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55745 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:50781 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50781 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50781 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54224 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50781 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52439 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52439 - "POST /pre-test-active-listening/start HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52439 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56713 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57815 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:49841 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56204 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:56306 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57487 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49266 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49841 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:64387 - "OPTIONS /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61154 - "OPTIONS /upcoming-student-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52878 - "OPTIONS /thesis-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61433 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49243 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58180 - "OPTIONS /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:64387 - "OPTIONS /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61154 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61433 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:58180 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:64387 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49243 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61154 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:64387 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61050 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:55445 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:62616 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63168 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:65316 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51071 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55445 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53893 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53893 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53893 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53893 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53893 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52100 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52100 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52100 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54673 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57408 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63430 - "OPTIONS /upcoming-student-interview/start HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63430 - "POST /upcoming-student-interview/start HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:59870 - "OPTIONS /upcoming-student-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59870 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:53192 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53388 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53192 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53388 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53388 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53388 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53192 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56013 - "POST /upcoming-student-interview/start HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:49291 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:51656 - "OPTIONS /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58689 - "OPTIONS /thesis-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61249 - "OPTIONS /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52852 - "OPTIONS /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51407 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:58689 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56994 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52852 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:51656 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58689 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56994 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51430 - "POST /upcoming-student-interview/start HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:62956 - "GET /users/me HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57312 - "GET /upcoming-student-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:62067 - "GET /thesis-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:61026 - "GET /pre-test-intro/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:62334 - "GET /pre-test-active-listening/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:54834 - "GET /post-test-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:54834 - "GET /pre-test-active-listening/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:62067 - "GET /upcoming-student-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:62956 - "GET /drills/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:62334 - "GET /pre-test-intro/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:57312 - "GET /users/me HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:61026 - "GET /thesis-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:62067 - "GET /drills/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:54834 - "GET /post-test-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:65117 - "POST /auth/login HTTP/1.1" 200 OK
-INFO:     127.0.0.1:65117 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:65117 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:63238 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63238 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63238 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63238 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63238 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63238 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:63295 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:58465 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:56279 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61492 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50060 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61492 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:56279 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:50060 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:54085 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54085 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54085 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54085 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54085 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:63777 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53713 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49990 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:59918 - "POST /upcoming-student-interview/start HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:58105 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:53062 - "OPTIONS /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51021 - "OPTIONS /upcoming-student-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58180 - "OPTIONS /thesis-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52459 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55317 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:65059 - "OPTIONS /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53062 - "OPTIONS /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51021 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52459 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:65059 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:53062 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55317 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51021 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53062 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55317 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:53062 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51021 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:53062 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53062 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53062 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53062 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51825 - "OPTIONS /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61206 - "OPTIONS /upcoming-student-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61543 - "OPTIONS /thesis-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58486 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50157 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58464 - "OPTIONS /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51825 - "OPTIONS /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61206 - "OPTIONS /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61543 - "OPTIONS /upcoming-student-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50157 - "OPTIONS /thesis-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58464 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51825 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61206 - "OPTIONS /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61543 - "OPTIONS /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50157 - "GET /users/me HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:61543 - "GET /pre-test-active-listening/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:58464 - "GET /upcoming-student-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:61206 - "GET /pre-test-intro/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:51825 - "GET /thesis-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:50157 - "GET /post-test-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:51825 - "GET /upcoming-student-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:61206 - "GET /pre-test-active-listening/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:61543 - "GET /drills/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:58464 - "GET /users/me HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:50157 - "GET /pre-test-intro/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:61543 - "GET /drills/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:51825 - "GET /thesis-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:61206 - "GET /post-test-interview/ HTTP/1.1" 401 Unauthorized
-INFO:     127.0.0.1:49623 - "POST /auth/login HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49623 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49623 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:55708 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:62288 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59696 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54457 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:50478 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55708 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:62288 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:54209 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59696 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50478 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54209 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59696 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50478 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:54209 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:59696 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:51580 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53577 - "GET /drills/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51580 - "GET /users/me HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51150 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:51580 - "GET /post-test-interview/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53577 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:52189 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
-INFO:     127.0.0.1:51580 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56635 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59830 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53119 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56635 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56635 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53119 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56635 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63306 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63306 - "OPTIONS /pre-test-active-listening/start HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63306 - "POST /pre-test-active-listening/start HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63306 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63306 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52124 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61161 - "OPTIONS /users/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58734 - "OPTIONS /upcoming-student-interview/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53378 - "OPTIONS /thesis-interview/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61161 - "OPTIONS /drills/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50060 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65057 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58734 - "OPTIONS /users/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62560 - "OPTIONS /post-test-interview/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61161 - "OPTIONS /upcoming-student-interview/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50060 - "OPTIONS /thesis-interview/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65057 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58734 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62560 - "OPTIONS /post-test-interview/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61161 - "OPTIONS /drills/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65057 - "GET /upcoming-student-interview/ HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:50060 - "GET /users/me HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:58734 - "GET /thesis-interview/ HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:61161 - "GET /pre-test-intro/ HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:62560 - "GET /drills/ HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:62560 - "GET /thesis-interview/ HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:65057 - "GET /pre-test-active-listening/ HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:50060 - "GET /post-test-interview/ HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:61161 - "GET /users/me HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:58734 - "GET /upcoming-student-interview/ HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:50060 - "GET /pre-test-active-listening/ HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:61161 - "GET /post-test-interview/ HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:65057 - "GET /drills/ HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:62560 - "GET /pre-test-intro/ HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:50996 - "POST /auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50996 - "GET /users/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50996 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:57810 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:55201 - "GET /users/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53826 - "GET /post-test-interview/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61118 - "GET /drills/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62943 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55201 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:62943 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:53826 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:61118 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61118 - "GET /drills/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61118 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61118 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:59151 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:61816 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61816 - "GET /drills/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61816 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61816 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:55441 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:61501 - "GET /post-test-interview/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61501 - "GET /users/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58913 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:61501 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61501 - "GET /post-test-interview/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61458 - "OPTIONS /users/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64448 - "OPTIONS /upcoming-student-interview/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58482 - "OPTIONS /thesis-interview/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53652 - "OPTIONS /pre-test-intro/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62455 - "OPTIONS /pre-test-active-listening/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55464 - "OPTIONS /post-test-interview/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61458 - "OPTIONS /drills/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64448 - "GET /users/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61458 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:62455 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:55464 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64448 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55464 - "GET /post-test-interview/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64448 - "GET /drills/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56819 - "GET /thesis-interview/ HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:62173 - "GET /users/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59042 - "GET /pre-test-intro/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64393 - "GET /upcoming-student-interview/ HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:62173 - "GET /post-test-interview/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59042 - "GET /drills/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62173 - "GET /pre-test-active-listening/ HTTP/1.1" 200 OK

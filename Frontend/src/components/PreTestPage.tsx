@@ -57,8 +57,20 @@ const getWebSocketUrl = (apiUrl: string, path: string, token: string) => {
 const ACTIVE_LISTENING_FIRST_TOKEN_TIMEOUT_MS = 180000;
 
 const getBasicIntroEvaluation = (transcript: string) => {
-  const wordCount = transcript.trim().split(/\s+/).filter(Boolean).length;
+  const words = transcript.trim().toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) || [];
+  const wordCount = words.length;
+  const uniqueWordCount = new Set(words).size;
   const score = wordCount >= 60 ? 3 : wordCount >= 30 ? 2 : 1;
+  const vocabularyScore = uniqueWordCount >= 45 ? 5
+    : uniqueWordCount >= 32 ? 4
+      : uniqueWordCount >= 20 ? 3
+        : uniqueWordCount >= 10 ? 2
+          : 1;
+  const grammarScore = wordCount >= 60 ? 5
+    : wordCount >= 45 ? 4
+      : wordCount >= 30 ? 3
+        : wordCount >= 15 ? 2
+          : 1;
 
   return {
     score_clarity: score,
@@ -66,6 +78,8 @@ const getBasicIntroEvaluation = (transcript: string) => {
     score_courtesy: 3,
     score_correctness: score,
     score_conciseness: wordCount <= 140 ? 3 : 2,
+    score_vocabulary: vocabularyScore,
+    score_grammar: grammarScore,
     feedback_summary: 'Introduction submitted. Review clarity, completeness, courtesy, correctness, conciseness, and delivery.',
   };
 };

@@ -19,6 +19,8 @@ class PreTestIntroSession(Base):
     score_courtesy = Column(Integer, nullable=True)
     score_correctness = Column(Integer, nullable=True)
     score_conciseness = Column(Integer, nullable=True)
+    score_vocabulary = Column(Integer, nullable=True)
+    score_grammar = Column(Integer, nullable=True)
     score_eye_contact = Column(Integer, nullable=True)
     eye_contact_samples = Column(Integer, nullable=True)
     

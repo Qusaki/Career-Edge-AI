@@ -17,6 +17,7 @@ const toFiniteNumber = (value: unknown): number | null => {
 };
 
 const clampPercentage = (value: number) => Math.min(100, Math.max(0, value));
+const clampFivePointScore = (value: number) => Math.min(5, Math.max(0, value));
 
 export const isCompletedActivity = (item: ScoreRecord): boolean => {
   if (['completed', 'pending_sync', 'synced'].includes(String(item.status || ''))) return true;
@@ -45,6 +46,37 @@ export const getNormalizedActivityScore = (item: ScoreRecord): number | null => 
   }
 
   return clampPercentage(totalScore);
+};
+
+/**
+ * Returns a normalized 0-5 communication skill score. Historical Who Am I?
+ * records predate explicit Vocabulary and Grammar fields, so their closest
+ * rubric equivalents are normalized from the original 1-3 scale.
+ */
+export const getCommunicationSkillScore = (
+  item: ScoreRecord,
+  field: string,
+): number | null => {
+  const directScore = toFiniteNumber(item[field]);
+  const source = String(item._source || '');
+  if (directScore != null) {
+    const legacyThreePointFields = ['score_clarity', 'score_courtesy', 'score_conciseness'];
+    if (source === 'pre-test-intro' && legacyThreePointFields.includes(field)) {
+      return clampFivePointScore((directScore / 3) * 5);
+    }
+    return clampFivePointScore(directScore);
+  }
+
+  if (source !== 'pre-test-intro') return null;
+  const legacyField = field === 'score_vocabulary'
+    ? 'score_completeness'
+    : field === 'score_grammar'
+      ? 'score_correctness'
+      : null;
+  if (!legacyField) return null;
+
+  const legacyScore = toFiniteNumber(item[legacyField]);
+  return legacyScore == null ? null : clampFivePointScore((legacyScore / 3) * 5);
 };
 
 const activityTimestamp = (item: ScoreRecord): number => {
