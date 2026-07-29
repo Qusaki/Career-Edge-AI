@@ -81,8 +81,29 @@ interface ProfessorAssetWaiter {
   reject: (error: Error) => void;
 }
 
+interface LocalWebLLMOptions {
+  enrollmentFinalTurn?: boolean;
+}
+
 const APP_THEME_STORAGE_KEY = 'career-edge-theme';
 const DEFAULT_AVATAR_HOST = 'api.dicebear.com';
+const ENROLLMENT_FINAL_RESPONSE_TIMEOUT_MS = 60_000;
+const ENROLLMENT_FINAL_RESPONSE_FALLBACK = 'Thank you for completing your Career Edge interview. Your five responses have been recorded, and you can now continue to validation.';
+const ENROLLMENT_FINAL_TURN_INSTRUCTION = 'The student has just submitted their fifth and final answer. Do not ask another question or request another response. Give one brief, supportive, non-empty closing statement that acknowledges the interview is complete and tells the student they can continue to validation. Keep it concise for speech.';
+
+class EnrollmentFinalResponseTimeoutError extends Error {
+  constructor() {
+    super('Enrollment final response generation timed out.');
+    this.name = 'EnrollmentFinalResponseTimeoutError';
+  }
+}
+
+const isUsableEnrollmentClosingResponse = (text: string) => {
+  const normalizedText = text.trim();
+  if (!normalizedText || normalizedText.includes('?')) return false;
+
+  return !/(?:^|[.!]\s+)(?:please\s+)?(?:tell|describe|explain|share|discuss)\b/i.test(normalizedText);
+};
 
 const getCustomProfileImageUrl = (imageUrl?: string | null) => {
   const normalizedImageUrl = imageUrl?.trim() || '';
@@ -842,11 +863,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [conversationLog, setConversationLog] = useState<{ sender: 'user' | 'ai', text: string }[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [isEnrollmentFinalProfessorTurnReady, setIsEnrollmentFinalProfessorTurnReady] = useState(false);
 
   const recognitionRef = React.useRef<any>(null);
   const audioQueueRef = React.useRef<string[]>([]);
   const isPlayingRef = React.useRef(false);
   const isAiSpeakingRef = React.useRef(false);
+  const conversationLogRef = React.useRef(conversationLog);
+  const chatMessagesRef = React.useRef(chatMessages);
+  const enrollmentFinalGenerationSequenceRef = React.useRef(0);
+  const activeEnrollmentFinalGenerationRef = React.useRef<number | null>(null);
   const audioPlayerRef = React.useRef<HTMLAudioElement | null>(null);
   const audioContextRef = React.useRef<AudioContext | null>(null);
   const analyserRef = React.useRef<AnalyserNode | null>(null);
@@ -860,6 +886,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const [currentAudioStartTime, setCurrentAudioStartTime] = useState(0);
   const [activeAnalyser, setActiveAnalyser] = useState<AnalyserNode | null>(null);
   const browserTtsAnalyserRef = React.useRef<AnalyserNode | null>(null);
+
+  useEffect(() => {
+    conversationLogRef.current = conversationLog;
+  }, [conversationLog]);
+
+  useEffect(() => {
+    chatMessagesRef.current = chatMessages;
+  }, [chatMessages]);
 
   if (!browserTtsAnalyserRef.current) {
     browserTtsAnalyserRef.current = {
@@ -1107,9 +1141,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     return null;
   };
 
-  const handleLocalWebLLM = async (userText: string, currentMessages: any[]) => {
+  const handleLocalWebLLM = async (
+    userText: string,
+    currentMessages: any[],
+    options: LocalWebLLMOptions = {},
+  ) => {
+    const isEnrollmentFinalTurn =
+      options.enrollmentFinalTurn === true &&
+      activeInterviewModeRef.current === 'enrollment';
+    const finalGenerationAttemptId = isEnrollmentFinalTurn
+      ? ++enrollmentFinalGenerationSequenceRef.current
+      : null;
+
+    if (finalGenerationAttemptId !== null) {
+      activeEnrollmentFinalGenerationRef.current = finalGenerationAttemptId;
+      setIsEnrollmentFinalProfessorTurnReady(false);
+    }
+
+    const ownsFinalGeneration = () =>
+      finalGenerationAttemptId !== null &&
+      activeEnrollmentFinalGenerationRef.current === finalGenerationAttemptId;
+
     const unavailableMessage = getWebLLMUnavailableMessage();
-    if (unavailableMessage) {
+    if (unavailableMessage && !isEnrollmentFinalTurn) {
       alert(unavailableMessage);
       setIsAiSpeaking(false);
       isAiSpeakingRef.current = false;
@@ -1118,7 +1172,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
 
     // Add user message to state
     const newMessages = [...currentMessages, { role: 'user', content: userText }];
+    chatMessagesRef.current = newMessages;
     setChatMessages(newMessages);
+    const generationMessages = isEnrollmentFinalTurn
+      ? newMessages.map((message, index) => (
+        index === 0 && message.role === 'system'
+          ? {
+            ...message,
+            content: `${message.content}\n\n${ENROLLMENT_FINAL_TURN_INSTRUCTION}`,
+          }
+          : message
+      ))
+      : newMessages;
 
     setAiResponseText('');
     setIsAiSpeaking(true);
@@ -1140,13 +1205,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
 
     try {
       console.log("Starting WebLLM generation...");
-      const responseStream = await webLLMEngine!.chat.completions.create({
-        messages: newMessages,
-        stream: true,
-        temperature: 0.7,
-        max_tokens: 220,
-      });
-
       let fullResponse = "";
       let sentenceBuffer = "";
 
@@ -1257,30 +1315,112 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         ttsProcessingPromise = processTtsQueue();
       };
 
-      for await (const chunk of responseStream) {
-        if (!isAiSpeakingRef.current) break; // Abort if user left the room early
-
+      const processResponseChunk = (chunk: { choices: Array<{ delta?: { content?: string | null } }> }) => {
+        if (!isAiSpeakingRef.current) return false;
+        if (isEnrollmentFinalTurn && !ownsFinalGeneration()) return false;
         const delta = chunk.choices[0]?.delta?.content || "";
         fullResponse += delta;
         sentenceBuffer += delta;
-        setAiResponseText(prev => prev + delta);
 
-        const delimiters = ['. ', '! ', '? ', '\n'];
-        for (const delimiter of delimiters) {
-          if (sentenceBuffer.includes(delimiter)) {
-            const parts = sentenceBuffer.split(delimiter);
-            const toSpeak = parts[0] + delimiter;
-            sentenceBuffer = parts.slice(1).join(delimiter);
+        if (!isEnrollmentFinalTurn) {
+          setAiResponseText(prev => prev + delta);
 
-            const cleanText = toSpeak.replace(/[*_#]/g, '').trim();
-            if (cleanText) {
-              enqueueTts(cleanText);
+          const delimiters = ['. ', '! ', '? ', '\n'];
+          for (const delimiter of delimiters) {
+            if (sentenceBuffer.includes(delimiter)) {
+              const parts = sentenceBuffer.split(delimiter);
+              const toSpeak = parts[0] + delimiter;
+              sentenceBuffer = parts.slice(1).join(delimiter);
+
+              const cleanText = toSpeak.replace(/[*_#]/g, '').trim();
+              if (cleanText) {
+                enqueueTts(cleanText);
+              }
             }
           }
         }
+
+        return true;
+      };
+
+      const finalGenerationDeadline = Date.now() + ENROLLMENT_FINAL_RESPONSE_TIMEOUT_MS;
+      const waitForFinalGeneration = <T,>(promise: Promise<T>) => {
+        if (!isEnrollmentFinalTurn) return promise;
+
+        const remainingTime = finalGenerationDeadline - Date.now();
+        if (remainingTime <= 0) {
+          return Promise.reject<T>(new EnrollmentFinalResponseTimeoutError());
+        }
+
+        return new Promise<T>((resolve, reject) => {
+          const timeoutId = window.setTimeout(
+            () => reject(new EnrollmentFinalResponseTimeoutError()),
+            remainingTime,
+          );
+
+          promise.then(
+            (value) => {
+              window.clearTimeout(timeoutId);
+              resolve(value);
+            },
+            (error) => {
+              window.clearTimeout(timeoutId);
+              reject(error);
+            },
+          );
+        });
+      };
+
+      try {
+        if (unavailableMessage || !webLLMEngine) {
+          throw new Error(unavailableMessage || 'WebLLM is unavailable.');
+        }
+
+        const responseStream = await waitForFinalGeneration(
+          webLLMEngine.chat.completions.create({
+            messages: generationMessages,
+            stream: true,
+            temperature: 0.7,
+            max_tokens: isEnrollmentFinalTurn ? 100 : 220,
+          }),
+        );
+
+        if (isEnrollmentFinalTurn) {
+          const responseIterator = responseStream[Symbol.asyncIterator]();
+          while (ownsFinalGeneration() && isAiSpeakingRef.current) {
+            const nextChunk = await waitForFinalGeneration(responseIterator.next());
+            if (nextChunk.done) break;
+            if (!processResponseChunk(nextChunk.value)) return;
+          }
+        } else {
+          for await (const chunk of responseStream) {
+            if (!processResponseChunk(chunk)) break;
+          }
+        }
+      } catch (generationError) {
+        if (!isEnrollmentFinalTurn) throw generationError;
+        if (!ownsFinalGeneration()) return;
+
+        if (generationError instanceof EnrollmentFinalResponseTimeoutError) {
+          void webLLMEngine?.interruptGenerate().catch((interruptError) => {
+            console.warn('Could not interrupt timed-out Enrollment final generation.', interruptError);
+          });
+        }
+        console.warn('Using the safe Enrollment closing response.', generationError);
+        fullResponse = ENROLLMENT_FINAL_RESPONSE_FALLBACK;
       }
 
-      if (sentenceBuffer.trim() && isAiSpeakingRef.current) {
+      if (isEnrollmentFinalTurn) {
+        if (!ownsFinalGeneration()) return;
+
+        fullResponse = isUsableEnrollmentClosingResponse(fullResponse)
+          ? fullResponse.trim()
+          : ENROLLMENT_FINAL_RESPONSE_FALLBACK;
+        sentenceBuffer = '';
+        ttsQueue = [];
+        setAiResponseText(fullResponse);
+        enqueueTts(fullResponse.replace(/[*_#]/g, '').trim());
+      } else if (sentenceBuffer.trim() && isAiSpeakingRef.current) {
         const cleanText = sentenceBuffer.replace(/[*_#]/g, '').trim();
         if (cleanText) {
           enqueueTts(cleanText);
@@ -1289,23 +1429,66 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
 
       await (ttsProcessingPromise || Promise.resolve());
 
+      if (isEnrollmentFinalTurn && !ownsFinalGeneration()) return;
+
       setIsAiSpeaking(false);
       isAiSpeakingRef.current = false;
       setMouthValue(0);
 
-      setChatMessages(prev => [...prev, { role: 'assistant', content: fullResponse }]);
+      setChatMessages(prev => {
+        const nextMessages = [...prev, { role: 'assistant', content: fullResponse }];
+        chatMessagesRef.current = nextMessages;
+        return nextMessages;
+      });
       const turn = { sender: 'ai' as const, text: fullResponse.trim() };
       if (activeInterviewModeRef.current === 'thesis') {
         setThesisConversationLog(prev => [...prev, turn]);
       } else {
-        setConversationLog(prev => [...prev, turn]);
+        setConversationLog(prev => {
+          const nextConversation = [...prev, turn];
+          conversationLogRef.current = nextConversation;
+          return nextConversation;
+        });
       }
 
-      if (!isListeningRef.current) {
+      if (isEnrollmentFinalTurn) {
+        activeEnrollmentFinalGenerationRef.current = null;
+        setIsEnrollmentFinalProfessorTurnReady(true);
+      } else if (!isListeningRef.current) {
         toggleListening();
       }
 
     } catch (e) {
+      if (isEnrollmentFinalTurn) {
+        if (ownsFinalGeneration()) {
+          console.error('Enrollment final response failed unexpectedly.', e);
+          const fallbackTurn = {
+            sender: 'ai' as const,
+            text: ENROLLMENT_FINAL_RESPONSE_FALLBACK,
+          };
+          setAiResponseText(ENROLLMENT_FINAL_RESPONSE_FALLBACK);
+          setChatMessages(prev => {
+            const nextMessages = [
+              ...prev,
+              { role: 'assistant', content: ENROLLMENT_FINAL_RESPONSE_FALLBACK },
+            ];
+            chatMessagesRef.current = nextMessages;
+            return nextMessages;
+          });
+          setConversationLog(prev => {
+            const nextConversation = [...prev, fallbackTurn];
+            conversationLogRef.current = nextConversation;
+            return nextConversation;
+          });
+          activeEnrollmentFinalGenerationRef.current = null;
+          setIsEnrollmentFinalProfessorTurnReady(true);
+        }
+        setIsAiSpeaking(false);
+        isAiSpeakingRef.current = false;
+        setMouthValue(0);
+        return;
+      }
+
       console.error(e);
       setAiResponseText("Local AI Error.");
       setIsAiSpeaking(false);
@@ -1363,6 +1546,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     }
 
     if (sid) {
+      if (activeEnrollmentFinalGenerationRef.current !== null) {
+        void webLLMEngine?.interruptGenerate();
+      }
+      activeEnrollmentFinalGenerationRef.current = null;
+      enrollmentFinalGenerationSequenceRef.current += 1;
+      setIsEnrollmentFinalProfessorTurnReady(false);
+      conversationLogRef.current = [];
+      setConversationLog([]);
+      setAiResponseText('');
       setIsCameraEnabled(false);
       sessionIdRef.current = sid as number;
       setSessionId(sid as number);
@@ -1372,6 +1564,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
 
       const systemPrompt = "You are Professor Maxiel, an expert interviewer. Your sole purpose is to interview an incoming college freshman. Speak DIRECTLY to the student. Keep the interview to exactly 5 questions total. Ask exactly ONE question at a time. Conclude when finished.";
       const initialMsgs = [{ role: 'system', content: systemPrompt }];
+      chatMessagesRef.current = initialMsgs;
       setChatMessages(initialMsgs);
 
       handleLocalWebLLM("Hello! I am here and ready to begin the interview.", initialMsgs);
@@ -1405,17 +1598,41 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     if (!finalTranscript) return;
 
     const turn = { sender: 'user' as const, text: finalTranscript };
+    const currentEnrollmentConversation = conversationLogRef.current;
+    const existingEnrollmentUserTurns = currentEnrollmentConversation.filter(
+      message => message.sender === 'user',
+    ).length;
+    const isEnrollmentFinalTurn =
+      activeInterviewModeRef.current === 'enrollment' &&
+      existingEnrollmentUserTurns + 1 === 5;
+
+    if (
+      activeInterviewModeRef.current === 'enrollment' &&
+      existingEnrollmentUserTurns >= 5
+    ) {
+      return;
+    }
+
     if (activeInterviewModeRef.current === 'thesis') {
       setThesisConversationLog(prev => [...prev, turn]);
     } else {
-      setConversationLog(prev => [...prev, turn]);
+      const nextConversation = [...currentEnrollmentConversation, turn];
+      conversationLogRef.current = nextConversation;
+      setConversationLog(nextConversation);
     }
 
-    setChatMessages((prev) => {
-      const newMessages = [...prev, { role: 'user', content: finalTranscript }];
-      setTimeout(() => handleLocalWebLLM(finalTranscript, prev), 0);
-      return newMessages;
-    });
+    const currentChatMessages = chatMessagesRef.current;
+    const nextChatMessages = [
+      ...currentChatMessages,
+      { role: 'user', content: finalTranscript },
+    ];
+    chatMessagesRef.current = nextChatMessages;
+    setChatMessages(nextChatMessages);
+    setTimeout(() => {
+      void handleLocalWebLLM(finalTranscript, currentChatMessages, {
+        enrollmentFinalTurn: isEnrollmentFinalTurn,
+      });
+    }, 0);
   };
 
   const stopListening = (submitTranscript = false) => {
@@ -1459,13 +1676,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   };
 
   const exitInterview = () => {
+    if (activeEnrollmentFinalGenerationRef.current !== null) {
+      void webLLMEngine?.interruptGenerate();
+    }
+    activeEnrollmentFinalGenerationRef.current = null;
+    enrollmentFinalGenerationSequenceRef.current += 1;
+    setIsEnrollmentFinalProfessorTurnReady(false);
     if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
     stopListening();
     setIsLeaveModalOpen(false);
     setIsAiSpeaking(false);
+    isAiSpeakingRef.current = false;
     setIsListening(false);
     setSessionId(null);
     setConversationLog([]);
+    conversationLogRef.current = [];
+    chatMessagesRef.current = [];
     setInterviewResult(null);
     setIsCameraEnabled(false);
     sessionIdRef.current = null;
@@ -1483,7 +1709,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   };
 
   const finishInterviewSession = async () => {
-    if (!sessionId) return;
+    if (!sessionId || !isEnrollmentFinalProfessorTurnReady) return;
     setIsFinishingInterview(true);
     let evaluation = null;
 
@@ -1774,6 +2000,7 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
       // WebLLM Setup
       const systemPrompt = `You are Professor Maxiel, an expert panelist for a thesis defense at ${dep}. Probe the student's research abstract. Speak DIRECTLY to the student. Keep the interview to exactly 5 questions total. Ask exactly ONE question at a time. Conclude gracefully when finished.\n\nStudent's Abstract/Proposal context:\n${abstractText ? abstractText.substring(0, 5000) : 'None provided.'}`; // Truncate to 5000 chars to avoid token limits
       const initialMsgs = [{ role: 'system', content: systemPrompt }];
+      chatMessagesRef.current = initialMsgs;
       setChatMessages(initialMsgs);
 
       handleLocalWebLLM("Hello! I am here and ready to begin the thesis defense.", initialMsgs);
@@ -2092,8 +2319,10 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
   const enrollmentResponseCount = conversationLog.filter(message => message.sender === 'user').length;
   const enrollmentInstruction = isFinishingInterview
     ? 'Validating your responses and preparing your interview result...'
-    : enrollmentResponseCount >= 5
+    : enrollmentResponseCount >= 5 && isEnrollmentFinalProfessorTurnReady
       ? 'All five responses are recorded. Click “Validate Responses” in the transcript panel to receive your result.'
+      : enrollmentResponseCount >= 5
+        ? 'Professor Maxiel is finishing the interview. Validation will be available after the closing response.'
       : isMicTransitioning
         ? 'Submitting your response. Please wait for Professor Maxiel’s next question.'
         : isListening
@@ -3127,7 +3356,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         <div className="mt-3 shrink-0 border-t border-[var(--interview-border)] pt-3">
                           {(() => {
                             const userTurns = conversationLog.filter(l => l.sender === 'user').length;
-                            if (userTurns >= 5) {
+                            if (userTurns >= 5 && isEnrollmentFinalProfessorTurnReady) {
                               return (
                                 <div className="space-y-2 animate-fade-in">
                                   <p className="text-center text-xs leading-relaxed text-[var(--interview-text-secondary)]">
@@ -3140,6 +3369,14 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                                   >
                                     {isFinishingInterview ? 'Validating Responses...' : 'Validate Responses'}
                                   </button>
+                                </div>
+                              );
+                            }
+                            if (userTurns >= 5) {
+                              return (
+                                <div className="text-center space-y-1 animate-fade-in">
+                                  <span className="block text-xs font-semibold text-[var(--interview-text-primary)]">5 / 5 Responses Recorded</span>
+                                  <span className="block text-[10px] text-[var(--interview-text-muted)]">Professor Maxiel is finishing the interview...</span>
                                 </div>
                               );
                             }
