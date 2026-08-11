@@ -1,5 +1,6 @@
 import json
 import datetime
+import logging
 from typing import List
 # pyrefly: ignore [missing-import]
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, status
@@ -7,14 +8,16 @@ from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisco
 from sqlalchemy.orm import Session
 
 from database import get_db
-from core.ai import close_ai_unavailable, get_ollama_client, get_ollama_model
+from core.ai import close_ai_unavailable
 from core.deps import get_current_user, get_current_user_ws
 from models.user import User
 from models.custom_skills import CustomSkillsSession, CustomSkillsMessage
 from models.post_test_interview import PostTestInterviewSession
 from schemas.custom_skills import CustomSkillsSessionResponse, CustomSkillsSessionWithMessagesResponse, CustomSkillsCompleteRequest
+from services.ai_provider import get_ai_provider
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 def get_weakest_skills(db: Session, user_id: int) -> str:
     """Analyzes past post-test sessions to find the two weakest skills."""
@@ -115,12 +118,10 @@ async def custom_skills_ws(
     
     system_prompt = get_adaptive_system_prompt(current_user.department, session.targeted_skills)
     
-    client = get_ollama_client()
-    model_name = get_ollama_model()
-    
     messages = [{"role": "system", "content": system_prompt}]
     
     try:
+        ai_provider = get_ai_provider()
         while True:
             msg = await websocket.receive()
             if "text" in msg:
@@ -136,30 +137,21 @@ async def custom_skills_ws(
                             
                         messages.append({"role": "user", "content": user_text})
                         
-                        response_stream = await client.chat.completions.create(
-                            model=model_name,
-                            messages=messages,
-                            stream=True
-                        )
-                        
                         full_response = ""
                         sentence_buffer = ""
                         
-                        async for chunk in response_stream:
-                            if chunk.choices and len(chunk.choices) > 0:
-                                content = chunk.choices[0].delta.content
-                                if content:
-                                    full_response += content
-                                    sentence_buffer += content
-                                    
-                                    await websocket.send_json({"text": content})
-                                    
-                                    delimiters = ['. ', '! ', '? ', '.\n', '!\n', '?\n', ': ', '; ', ', ', '\n']
-                                    for punctuation in delimiters:
-                                        if punctuation in sentence_buffer:
-                                            parts = sentence_buffer.split(punctuation)
-                                            sentence_buffer = punctuation.join(parts[1:])
-                                            break
+                        async for content in ai_provider.stream_chat(messages):
+                            full_response += content
+                            sentence_buffer += content
+
+                            await websocket.send_json({"text": content})
+
+                            delimiters = ['. ', '! ', '? ', '.\n', '!\n', '?\n', ': ', '; ', ', ', '\n']
+                            for punctuation in delimiters:
+                                if punctuation in sentence_buffer:
+                                    parts = sentence_buffer.split(punctuation)
+                                    sentence_buffer = punctuation.join(parts[1:])
+                                    break
                             
                         messages.append({"role": "assistant", "content": full_response})
                         
@@ -171,16 +163,20 @@ async def custom_skills_ws(
                         # Signal turn complete
                         await websocket.send_json({"type": "turn_complete"})
                         
-                except Exception as e:
-                    print(f"[DEBUG] Custom Skills AI error: {e}")
+                except Exception as error:
+                    logger.warning(
+                        "Custom Skills AI stream failed (session_id=%s, error=%s)",
+                        session.id,
+                        type(error).__name__,
+                    )
                     await close_ai_unavailable(websocket)
                     return
     except WebSocketDisconnect:
         pass
-    except Exception as e:
+    except Exception:
         try:
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Failed to connect to AI.")
-        except:
+        except Exception:
             pass
 
 @router.post("/{session_id}/complete", response_model=CustomSkillsSessionResponse)

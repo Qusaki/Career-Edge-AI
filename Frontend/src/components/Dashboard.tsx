@@ -8,7 +8,7 @@ import { DrillsPage } from './DrillsPage';
 import { PostTestPage } from './PostTestPage';
 import { useWebLLM } from '../hooks/useWebLLM';
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
-import { db } from '../db';
+import { accountStorage, type AccountOfflineSession } from '../db';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME, getClearSpeechTimeoutMs } from '../utils/speech';
 import { API_URL } from '../config/api';
 import { getProgramAccentTheme } from '../config/programTheme';
@@ -64,6 +64,16 @@ import {
 interface DashboardProps {
   onLogout: () => void;
   isNewSignupSession: boolean;
+}
+
+interface AuthenticatedUserResponse {
+  id: number;
+  email?: string | null;
+  firstname?: string | null;
+  middlename?: string | null;
+  lastname?: string | null;
+  department?: string | null;
+  profile_picture_url?: string | null;
 }
 
 interface ProfileAvatarProps {
@@ -228,6 +238,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const [interviewHistory, setInterviewHistory] = useState<any[]>([]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [communicationHistory, setCommunicationHistory] = useState<any[]>([]);
+  const [authenticatedUserId, setAuthenticatedUserId] = useState<number | null>(null);
+  const authenticatedUserIdRef = React.useRef<number | null>(null);
   const [profile, setProfile] = useState({
     name: '',
     email: '',
@@ -252,6 +264,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   useEffect(() => {
     localStorage.setItem(APP_THEME_STORAGE_KEY, appTheme);
   }, [appTheme]);
+
+  useEffect(() => () => {
+    authenticatedUserIdRef.current = null;
+  }, []);
 
   const handleProfessorAssetReady = React.useCallback(() => {
     professorAssetStatusRef.current = 'ready';
@@ -555,7 +571,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  const fetchHistory = React.useCallback(async () => {
+  const fetchHistory = React.useCallback(async (
+    userId: number | null = authenticatedUserIdRef.current,
+    department: string = profile.department,
+  ) => {
+    if (!userId) {
+      setInterviewHistory([]);
+      return;
+    }
+
     try {
       const token = localStorage.getItem('token');
       if (!token) return;
@@ -563,17 +587,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) throw new Error(`Enrollment history request failed with ${res.status}.`);
-      const data = await res.json();
+      const responseData: unknown = await res.json();
+      const data = Array.isArray(responseData) ? responseData : [];
+      if (authenticatedUserIdRef.current !== userId) return;
       setInterviewHistory(data);
-      db.history.put({ id: 1, type: 'upcoming', data: data, timestamp: Date.now() }).catch(console.error);
+      accountStorage.putCachedHistory({
+        userId,
+        type: 'upcoming',
+        data,
+        timestamp: Date.now(),
+      }).catch(console.error);
     } catch (e) {
       console.warn("Offline: loading interview history from cache");
-      const cached = await db.history.get(1);
+      const cached = await accountStorage.getCachedHistory(userId, 'upcoming');
       const data = cached ? cached.data : [];
 
-      const offlineSessions = await db.offlineSessions.toArray();
-      const offlineUpcoming = offlineSessions.filter(s => s.type === 'upcoming').map(s => {
-        const totalScore = getEnrollmentEvaluationTotal(s.evaluation || {}, profile.department);
+      const offlineSessions = await accountStorage.getOfflineSessions(userId, 'upcoming');
+      const offlineUpcoming = offlineSessions.map(s => {
+        const totalScore = getEnrollmentEvaluationTotal(s.evaluation || {}, department);
         return {
           id: s.localId,
           status: s.status === 'pending_sync' ? 'pending_sync' : 'completed',
@@ -584,11 +615,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         };
       });
 
+      if (authenticatedUserIdRef.current !== userId) return;
       setInterviewHistory([...offlineUpcoming, ...data]);
     }
   }, [API_URL, profile.department]);
 
-  const fetchThesisHistory = React.useCallback(async () => {
+  const fetchThesisHistory = React.useCallback(async (
+    userId: number | null = authenticatedUserIdRef.current,
+    department: string = profile.department,
+  ) => {
+    if (!userId) {
+      setThesisHistory([]);
+      return;
+    }
+
     try {
       const token = localStorage.getItem('token');
       if (!token) return;
@@ -596,17 +636,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) throw new Error(`Thesis history request failed with ${res.status}.`);
-      const data = await res.json();
+      const responseData: unknown = await res.json();
+      const data = Array.isArray(responseData) ? responseData : [];
+      if (authenticatedUserIdRef.current !== userId) return;
       setThesisHistory(data);
-      db.history.put({ id: 2, type: 'thesis', data: data, timestamp: Date.now() }).catch(console.error);
+      accountStorage.putCachedHistory({
+        userId,
+        type: 'thesis',
+        data,
+        timestamp: Date.now(),
+      }).catch(console.error);
     } catch (e) {
       console.warn("Offline: loading thesis history from cache");
-      const cached = await db.history.get(2);
+      const cached = await accountStorage.getCachedHistory(userId, 'thesis');
       const data = cached ? cached.data : [];
 
-      const offlineSessions = await db.offlineSessions.toArray();
-      const offlineThesis = offlineSessions.filter(s => s.type === 'thesis').map(s => {
-        const totalScore = getThesisEvaluationTotal(s.evaluation || {}, profile.department);
+      const offlineSessions = await accountStorage.getOfflineSessions(userId, 'thesis');
+      const offlineThesis = offlineSessions.map(s => {
+        const totalScore = getThesisEvaluationTotal(s.evaluation || {}, department);
         return {
           id: s.localId,
           status: s.status === 'pending_sync' ? 'pending_sync' : 'completed',
@@ -617,11 +664,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         };
       });
 
+      if (authenticatedUserIdRef.current !== userId) return;
       setThesisHistory([...offlineThesis, ...data]);
     }
   }, [API_URL, profile.department]);
 
-  const fetchCommunicationHistory = React.useCallback(async () => {
+  const fetchCommunicationHistory = React.useCallback(async (
+    userId: number | null = authenticatedUserIdRef.current,
+  ) => {
+    if (!userId) {
+      setCommunicationHistory([]);
+      return;
+    }
+
     try {
       const token = localStorage.getItem('token');
       if (!token) return;
@@ -652,6 +707,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         throw new Error('One or more analytics history endpoints failed.');
       }
 
+      if (authenticatedUserIdRef.current !== userId) return;
       setCommunicationHistory([
         ...preTestIntro.map((item: any) => ({ ...item, _source: 'pre-test-intro' })),
         ...activeListening.map((item: any) => ({ ...item, _source: 'pre-test-active-listening' })),
@@ -664,63 +720,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   }, [API_URL]);
 
   useEffect(() => {
-    const syncOfflineData = async () => {
-      try {
-        const token = localStorage.getItem('token');
-        if (!token) return;
-
-        const pendingSessions = await db.offlineSessions.where('status').equals('pending_sync').toArray();
-        if (pendingSessions.length === 0) return;
-
-        console.log(`Syncing ${pendingSessions.length} offline sessions to cloud...`);
-
-        for (const session of pendingSessions) {
-          const endpointPrefix = session.type === 'upcoming' ? '/upcoming-student-interview' : '/thesis-interview';
-
-          // Step 1: Start
-          const startRes = await fetch(`${API_URL}${endpointPrefix}/start`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-          });
-          if (!startRes.ok) continue; // Try again later
-
-          const startData = await startRes.json();
-          const realId = startData.id;
-
-          // Step 2: Complete
-          const completeRes = await fetch(`${API_URL}${endpointPrefix}/${realId}/complete`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ conversation: session.conversationLog, evaluation: session.evaluation })
-          });
-
-          if (completeRes.ok) {
-            await db.offlineSessions.update(session.localId, { status: 'synced' });
-            console.log(`Synced session ${session.localId} -> ${realId}`);
-          }
-        }
-
-        // Refresh history
-        fetchHistory();
-        fetchThesisHistory();
-        fetchCommunicationHistory();
-      } catch (e) {
-        console.error("Sync failed", e);
-      }
-    };
-
-    window.addEventListener('online', syncOfflineData);
-    // Also try syncing on component mount if online
-    if (navigator.onLine) {
-      syncOfflineData();
-    }
+    let cancelled = false;
 
     const fetchUser = async () => {
       try {
         const token = localStorage.getItem('token');
         if (!token) {
-          // If no token, maybe we shouldn't force logout immediately if we are offline, 
-          // but if there's no token, we can't even authenticate offline.
+          authenticatedUserIdRef.current = null;
+          setAuthenticatedUserId(null);
           onLogout();
           return;
         }
@@ -730,9 +737,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
             'Authorization': `Bearer ${token}`
           }
         });
+        if (cancelled) return;
 
         if (res.ok) {
-          const data = await res.json();
+          const data = await res.json() as AuthenticatedUserResponse;
+          if (cancelled) return;
+          if (!Number.isSafeInteger(data.id) || data.id <= 0) {
+            throw new Error('The authenticated profile did not include a valid backend user ID.');
+          }
           const p = {
             name: `${data.firstname || ''} ${data.middlename || ''} ${data.lastname || ''}`.replace(/\s+/g, ' ').trim() || 'Guest User',
             email: data.email || '',
@@ -740,49 +752,148 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
             department: data.department || '',
             profilePicture: getCustomProfileImageUrl(data.profile_picture_url)
           };
+          authenticatedUserIdRef.current = data.id;
+          setAuthenticatedUserId(data.id);
           setProfile(p);
 
-          db.profile.put({
-            id: 1,
+          accountStorage.putCachedProfile({
+            userId: data.id,
             email: p.email,
-            first_name: p.name,
+            name: p.name,
             department: p.department,
-            profile_picture_url: p.profilePicture
+            profilePicture: p.profilePicture,
           }).catch(console.error);
 
         } else {
+          authenticatedUserIdRef.current = null;
+          setAuthenticatedUserId(null);
           onLogout();
         }
       } catch (error) {
-        console.error('Failed to fetch user, trying offline cache:', error);
-        try {
-          const cached = await db.profile.get(1);
-          if (cached) {
+        if (cancelled) return;
+        console.error('Failed to verify authenticated user:', error);
+        const verifiedUserId = authenticatedUserIdRef.current;
+        if (verifiedUserId) {
+          try {
+            const cached = await accountStorage.getCachedProfile(verifiedUserId);
+            if (!cached || authenticatedUserIdRef.current !== verifiedUserId) return;
             setProfile({
-              name: cached.first_name || 'Guest User',
-              email: cached.email || '',
+              name: cached.name || 'Guest User',
+              email: cached.email,
               password: '',
-              department: cached.department || '',
-              profilePicture: getCustomProfileImageUrl(cached.profile_picture_url)
+              department: cached.department,
+              profilePicture: getCustomProfileImageUrl(cached.profilePicture),
             });
-          } else {
-            // If completely failed and no cache
-            onLogout();
+            return;
+          } catch (cacheError) {
+            console.error('Failed to load the verified account cache:', cacheError);
           }
-        } catch (e) { }
+        }
+
+        // A token alone is not enough to safely select an account cache.
+        authenticatedUserIdRef.current = null;
+        setAuthenticatedUserId(null);
+        setProfile({ name: '', email: '', password: '', department: '', profilePicture: '' });
+        setInterviewHistory([]);
+        setThesisHistory([]);
+        setCommunicationHistory([]);
+        onLogout();
       }
     };
-    fetchUser();
-    fetchHistory();
-    fetchThesisHistory();
-    fetchCommunicationHistory();
-  }, [API_URL, onLogout, fetchHistory, fetchThesisHistory, fetchCommunicationHistory]);
+    void fetchUser();
+    return () => {
+      cancelled = true;
+    };
+  }, [API_URL, onLogout]);
+
+  useEffect(() => {
+    if (!authenticatedUserId) return;
+    void fetchHistory(authenticatedUserId, profile.department);
+    void fetchThesisHistory(authenticatedUserId, profile.department);
+    void fetchCommunicationHistory(authenticatedUserId);
+  }, [
+    authenticatedUserId,
+    fetchCommunicationHistory,
+    fetchHistory,
+    fetchThesisHistory,
+    profile.department,
+  ]);
+
+  useEffect(() => {
+    if (!authenticatedUserId) return;
+
+    const syncOfflineData = async () => {
+      try {
+        if (authenticatedUserIdRef.current !== authenticatedUserId) return;
+        const token = localStorage.getItem('token');
+        if (!token) return;
+
+        const pendingSessions = await accountStorage.getPendingOfflineSessions(authenticatedUserId);
+        if (pendingSessions.length === 0) return;
+
+        console.log(`Syncing ${pendingSessions.length} owned offline sessions to cloud...`);
+
+        for (const session of pendingSessions) {
+          if (
+            session.userId !== authenticatedUserId ||
+            authenticatedUserIdRef.current !== authenticatedUserId
+          ) continue;
+
+          const endpointPrefix = session.type === 'upcoming' ? '/upcoming-student-interview' : '/thesis-interview';
+          const startRes = await fetch(`${API_URL}${endpointPrefix}/start`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+          });
+          if (!startRes.ok) continue;
+
+          const startData = await startRes.json();
+          if (authenticatedUserIdRef.current !== authenticatedUserId) return;
+          const realId = startData.id;
+          const completeRes = await fetch(`${API_URL}${endpointPrefix}/${realId}/complete`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ conversation: session.conversationLog, evaluation: session.evaluation })
+          });
+
+          if (completeRes.ok && authenticatedUserIdRef.current === authenticatedUserId) {
+            await accountStorage.markOfflineSessionSynced(
+              authenticatedUserId,
+              session.type,
+              session.localId,
+            );
+            console.log(`Synced owned session ${session.localId} -> ${realId}`);
+          }
+        }
+
+        await Promise.all([
+          fetchHistory(authenticatedUserId, profile.department),
+          fetchThesisHistory(authenticatedUserId, profile.department),
+          fetchCommunicationHistory(authenticatedUserId),
+        ]);
+      } catch (e) {
+        console.error("Sync failed", e);
+      }
+    };
+
+    const handleOnline = () => { void syncOfflineData(); };
+    window.addEventListener('online', handleOnline);
+    if (navigator.onLine) void syncOfflineData();
+
+    return () => window.removeEventListener('online', handleOnline);
+  }, [
+    API_URL,
+    authenticatedUserId,
+    fetchCommunicationHistory,
+    fetchHistory,
+    fetchThesisHistory,
+    profile.department,
+  ]);
 
   useEffect(() => {
     if (activeTab === 'analytics') {
-      fetchHistory();
-      fetchThesisHistory();
-      fetchCommunicationHistory();
+      void fetchHistory();
+      void fetchThesisHistory();
+      void fetchCommunicationHistory();
     }
   }, [activeTab, fetchHistory, fetchThesisHistory, fetchCommunicationHistory]);
 
@@ -802,7 +913,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     setIsSaving(true);
     try {
       const token = localStorage.getItem('token');
-      if (!token) return;
+      const verifiedUserId = authenticatedUserIdRef.current;
+      if (!token || !verifiedUserId) return;
 
       const formData = new FormData();
 
@@ -832,13 +944,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       });
 
       if (res.ok) {
-        const updatedUser = await res.json();
-        setProfile({
+        const updatedUser = await res.json() as AuthenticatedUserResponse;
+        if (updatedUser.id !== verifiedUserId) {
+          throw new Error('The updated profile did not match the verified account.');
+        }
+        const updatedProfile = {
           name: `${updatedUser.firstname || ''} ${updatedUser.middlename || ''} ${updatedUser.lastname || ''}`.replace(/\s+/g, ' ').trim() || 'Guest User',
           email: updatedUser.email || '',
           password: '',
           department: updatedUser.department || '',
           profilePicture: getCustomProfileImageUrl(updatedUser.profile_picture_url) || profile.profilePicture
+        };
+        setProfile(updatedProfile);
+        await accountStorage.putCachedProfile({
+          userId: verifiedUserId,
+          email: updatedProfile.email,
+          name: updatedProfile.name,
+          department: updatedProfile.department,
+          profilePicture: updatedProfile.profilePicture,
         });
         setSelectedFile(null);
         setIsSaved(true);
@@ -858,12 +981,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
 
   // Speech Recognition & TTS States
   const [isListening, setIsListening] = useState(false);
-  const [transcript, setTranscript] = useState('');
+  const [recognizedSpeechText, setRecognizedSpeechText] = useState('');
   const [aiResponseText, setAiResponseText] = useState('');
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [conversationLog, setConversationLog] = useState<{ sender: 'user' | 'ai', text: string }[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [isEnrollmentFinalProfessorTurnReady, setIsEnrollmentFinalProfessorTurnReady] = useState(false);
+  const [isRecognitionReady, setIsRecognitionReady] = useState(false);
+  const [interviewMicFeedback, setInterviewMicFeedback] = useState<string | null>(null);
 
   const recognitionRef = React.useRef<any>(null);
   const audioQueueRef = React.useRef<string[]>([]);
@@ -925,8 +1050,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     audioPlayerRef.current = new Audio();
   }, []);
 
-  const transcriptRef = React.useRef('');
+  const finalizedTranscriptRef = React.useRef('');
+  const latestInterimTranscriptRef = React.useRef('');
   const isListeningRef = React.useRef(false);
+  const isRecognitionReadyRef = React.useRef(false);
   const submitTranscriptOnEndRef = React.useRef(false);
   const recognitionRestartTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const recognitionStopTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -939,6 +1066,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
   const [isMicTransitioning, setIsMicTransitioning] = useState(false);
+
+  const updateRecognitionReady = (isReady: boolean) => {
+    isRecognitionReadyRef.current = isReady;
+    setIsRecognitionReady(isReady);
+  };
 
   const processorRef = React.useRef<ScriptProcessorNode | null>(null);
 
@@ -1552,6 +1684,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       activeEnrollmentFinalGenerationRef.current = null;
       enrollmentFinalGenerationSequenceRef.current += 1;
       setIsEnrollmentFinalProfessorTurnReady(false);
+      finalizedTranscriptRef.current = '';
+      latestInterimTranscriptRef.current = '';
+      setRecognizedSpeechText('');
+      updateRecognitionReady(false);
+      setInterviewMicFeedback(null);
       conversationLogRef.current = [];
       setConversationLog([]);
       setAiResponseText('');
@@ -1587,17 +1724,33 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   };
 
   const submitInterviewTranscript = () => {
+    if (!submitTranscriptOnEndRef.current) return;
+    submitTranscriptOnEndRef.current = false;
+
     if (recognitionStopTimeoutRef.current) {
       clearTimeout(recognitionStopTimeoutRef.current);
       recognitionStopTimeoutRef.current = null;
     }
-    releaseInterviewMicrophone();
-    setIsMicTransitioning(false);
-    submitTranscriptOnEndRef.current = false;
-    const finalTranscript = transcriptRef.current.replace(/\s+/g, ' ').trim();
-    if (!finalTranscript) return;
 
-    const turn = { sender: 'user' as const, text: finalTranscript };
+    const finalizedTranscript = finalizedTranscriptRef.current.replace(/\s+/g, ' ').trim();
+    const interimTranscript = latestInterimTranscriptRef.current.replace(/\s+/g, ' ').trim();
+    const submissionText = finalizedTranscript || interimTranscript;
+
+    releaseInterviewMicrophone();
+    updateRecognitionReady(false);
+    setIsMicTransitioning(false);
+    finalizedTranscriptRef.current = '';
+    latestInterimTranscriptRef.current = '';
+    setRecognizedSpeechText('');
+
+    if (!submissionText) {
+      setInterviewMicFeedback('No speech was detected. Please try again.');
+      return;
+    }
+
+    setInterviewMicFeedback(null);
+
+    const turn = { sender: 'user' as const, text: submissionText };
     const currentEnrollmentConversation = conversationLogRef.current;
     const existingEnrollmentUserTurns = currentEnrollmentConversation.filter(
       message => message.sender === 'user',
@@ -1624,12 +1777,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     const currentChatMessages = chatMessagesRef.current;
     const nextChatMessages = [
       ...currentChatMessages,
-      { role: 'user', content: finalTranscript },
+      { role: 'user', content: submissionText },
     ];
     chatMessagesRef.current = nextChatMessages;
     setChatMessages(nextChatMessages);
     setTimeout(() => {
-      void handleLocalWebLLM(finalTranscript, currentChatMessages, {
+      void handleLocalWebLLM(submissionText, currentChatMessages, {
         enrollmentFinalTurn: isEnrollmentFinalTurn,
       });
     }, 0);
@@ -1638,6 +1791,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const stopListening = (submitTranscript = false) => {
     setIsListening(false);
     isListeningRef.current = false;
+    updateRecognitionReady(false);
     submitTranscriptOnEndRef.current = submitTranscript;
     setIsMicTransitioning(submitTranscript);
 
@@ -1688,6 +1842,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     setIsAiSpeaking(false);
     isAiSpeakingRef.current = false;
     setIsListening(false);
+    updateRecognitionReady(false);
+    finalizedTranscriptRef.current = '';
+    latestInterimTranscriptRef.current = '';
+    setRecognizedSpeechText('');
+    setInterviewMicFeedback(null);
     setSessionId(null);
     setConversationLog([]);
     conversationLogRef.current = [];
@@ -1708,8 +1867,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     setActiveTab('dashboard');
   };
 
+  const saveOwnedOfflineSession = async (
+    session: Omit<AccountOfflineSession, 'userId'>,
+  ) => {
+    const userId = authenticatedUserIdRef.current;
+    if (!userId) {
+      throw new Error('Cannot save an offline session without a verified account owner.');
+    }
+    await accountStorage.putOfflineSession({ ...session, userId });
+  };
+
   const finishInterviewSession = async () => {
     if (!sessionId || !isEnrollmentFinalProfessorTurnReady) return;
+    if (!authenticatedUserIdRef.current) {
+      alert('Your account could not be verified. Please sign in again before saving this interview.');
+      return;
+    }
     setIsFinishingInterview(true);
     let evaluation = null;
 
@@ -1771,7 +1944,7 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
 
       if (String(sessionId).startsWith('local_')) {
         // It's an offline session, save to IndexedDB directly
-        await db.offlineSessions.put({
+        await saveOwnedOfflineSession({
           localId: String(sessionId),
           type: 'upcoming',
           status: 'pending_sync',
@@ -1812,7 +1985,7 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
     } catch (e) {
       console.warn("Offline: saving completed session to cache");
       // If network fails during complete
-      await db.offlineSessions.put({
+      await saveOwnedOfflineSession({
         localId: String(sessionId), // Can be real ID if it was created before going offline
         type: 'upcoming',
         status: 'pending_sync',
@@ -2034,6 +2207,10 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
 
   const finishThesisSession = async () => {
     if (!thesisSessionIdRef.current) return;
+    if (!authenticatedUserIdRef.current) {
+      alert('Your account could not be verified. Please sign in again before saving this thesis session.');
+      return;
+    }
     setThesisIsFinishing(true);
     let evaluation = null;
 
@@ -2095,7 +2272,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
 
       if (String(thesisSessionIdRef.current).startsWith('local_')) {
         // Offline mode
-        await db.offlineSessions.put({
+        await saveOwnedOfflineSession({
           localId: String(thesisSessionIdRef.current),
           type: 'thesis',
           status: 'pending_sync',
@@ -2136,7 +2313,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
       }
     } catch (e) {
       console.warn("Offline: saving completed thesis session to cache");
-      await db.offlineSessions.put({
+      await saveOwnedOfflineSession({
         localId: String(thesisSessionIdRef.current),
         type: 'thesis',
         status: 'pending_sync',
@@ -2178,11 +2355,16 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
   const toggleListening = async () => {
     if (isMicTransitioning) return;
     if (isListeningRef.current) {
-      stopListening(true);
+      const hasRecognizedSpeech = Boolean(
+        finalizedTranscriptRef.current.trim() || latestInterimTranscriptRef.current.trim(),
+      );
+      stopListening(isRecognitionReadyRef.current || hasRecognizedSpeech);
     } else {
-      setTranscript('');
-      transcriptRef.current = '';
-      setAiResponseText('');
+      setRecognizedSpeechText('');
+      finalizedTranscriptRef.current = '';
+      latestInterimTranscriptRef.current = '';
+      updateRecognitionReady(false);
+      setInterviewMicFeedback(null);
 
       isPlayingRef.current = false;
       setIsAiSpeaking(false);
@@ -2233,25 +2415,51 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
             recognition.interimResults = true;
             recognition.lang = 'en-US';
 
+            recognition.onstart = () => {
+              if (recognitionRef.current !== recognition || !isListeningRef.current) {
+                try {
+                  recognition.stop();
+                } catch {
+                  // The recognition instance may already be stopping.
+                }
+                return;
+              }
+              updateRecognitionReady(true);
+              setInterviewMicFeedback(null);
+            };
+
             recognition.onresult = (e: any) => {
               if (isAiSpeakingRef.current) return;
               recognitionRetryCount = 0;
-              let finalTranscript = '';
+              let finalizedSegment = '';
+              let interimCandidate = '';
               for (let i = e.resultIndex; i < e.results.length; i++) {
+                const resultText = e.results[i][0].transcript;
                 if (e.results[i].isFinal) {
-                  finalTranscript += e.results[i][0].transcript;
+                  finalizedSegment += resultText;
+                } else {
+                  interimCandidate += resultText;
                 }
               }
 
-              if (finalTranscript) {
-                transcriptRef.current = [transcriptRef.current, finalTranscript.trim()]
+              const normalizedFinalizedSegment = finalizedSegment.replace(/\s+/g, ' ').trim();
+              if (normalizedFinalizedSegment) {
+                finalizedTranscriptRef.current = [
+                  finalizedTranscriptRef.current,
+                  normalizedFinalizedSegment,
+                ]
                   .filter(Boolean)
                   .join(' ');
-                setTranscript(transcriptRef.current);
               }
+
+              latestInterimTranscriptRef.current = interimCandidate.replace(/\s+/g, ' ').trim();
+              setRecognizedSpeechText(
+                finalizedTranscriptRef.current || latestInterimTranscriptRef.current,
+              );
             };
 
             recognition.onerror = (e: any) => {
+              updateRecognitionReady(false);
               if (e?.error === 'no-speech' || e?.error === 'aborted' || e?.error === 'network') {
                 if (recognitionRef.current === recognition) recognitionRef.current = null;
                 recognitionRetryCount += 1;
@@ -2263,15 +2471,22 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                 const delay = e?.error === 'network'
                   ? Math.min(4000, 500 * (2 ** Math.min(recognitionRetryCount, 3)))
                   : 250;
+                setInterviewMicFeedback(
+                  e?.error === 'network'
+                    ? 'Speech recognition was interrupted. Reconnecting...'
+                    : 'No speech was detected yet. Please try speaking again.',
+                );
                 scheduleRecognitionRestart(delay);
                 return;
               }
 
               console.error("STT Error", e);
+              setInterviewMicFeedback('Speech recognition stopped. Please try again.');
               stopListening(false);
             };
             recognition.onend = () => {
               if (recognitionRef.current === recognition) recognitionRef.current = null;
+              updateRecognitionReady(false);
               if (isListeningRef.current) {
                 scheduleRecognitionRestart(250);
               } else if (submitTranscriptOnEndRef.current) {
@@ -2286,6 +2501,8 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
               recognition.start();
             } catch (error) {
               if (recognitionRef.current === recognition) recognitionRef.current = null;
+              updateRecognitionReady(false);
+              setInterviewMicFeedback('Starting speech recognition. Please wait...');
               console.warn("Speech recognition is temporarily busy; retrying.", error);
               recognitionRetryCount += 1;
               scheduleRecognitionRestart(Math.min(2000, 300 * recognitionRetryCount));
@@ -2296,12 +2513,17 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
           startRecognition();
         } else {
           console.warn("Speech Recognition not supported in this browser.");
+          setInterviewMicFeedback('Speech recognition is not supported in this browser.');
           stopListening(false);
         }
       } catch (err) {
         console.error("Could not capture local audio for streaming:", err);
         setIsListening(false);
         isListeningRef.current = false;
+        updateRecognitionReady(false);
+        setIsMicTransitioning(false);
+        releaseInterviewMicrophone();
+        setInterviewMicFeedback('Microphone access failed. Check permission and try again.');
       }
     }
   };
@@ -2325,11 +2547,15 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
         ? 'Professor Maxiel is finishing the interview. Validation will be available after the closing response.'
       : isMicTransitioning
         ? 'Submitting your response. Please wait for Professor Maxiel’s next question.'
-        : isListening
-          ? 'Your microphone is recording. When you finish speaking, click the microphone again to submit your response.'
-          : isAiSpeaking
-            ? 'Listen carefully to Professor Maxiel. When the question ends, click the microphone to start your response.'
-            : 'Click the microphone to start answering. After speaking, click it again to stop and submit your response.';
+        : interviewMicFeedback
+          ? interviewMicFeedback
+          : isRecognitionReady
+            ? 'Your microphone is recording. When you finish speaking, click the microphone again to submit your response.'
+            : isListening
+              ? 'Starting your microphone. Please wait...'
+              : isAiSpeaking
+                ? 'Listen carefully to Professor Maxiel. When the question ends, click the microphone to start your response.'
+                : 'Click the microphone to start answering. After speaking, click it again to stop and submit your response.';
 
   return (
     <>
@@ -3327,7 +3553,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                               // Filter explicitly only for user responses
                               const userLogs = conversationLog.filter((log) => log.sender === 'user');
 
-                              if (userLogs.length === 0 && !transcript) {
+                              if (userLogs.length === 0 && !recognizedSpeechText) {
                                 return (
                                   <div className="flex flex-1 flex-col items-center justify-center py-8">
                                     <User className="mb-3 h-7 w-7 text-[var(--interview-text-muted)]" />
@@ -3450,25 +3676,33 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         onClick={toggleListening}
                         disabled={isMicTransitioning || enrollmentResponseCount >= 5}
                         className={`relative ${
-                          isListening
+                          isRecognitionReady
                             ? 'program-accent-interview-active program-accent-border'
                             : isMicTransitioning || enrollmentResponseCount >= 5
                               ? 'cursor-not-allowed border-[var(--interview-border-strong)] bg-[var(--interview-disabled)] text-[var(--interview-text-secondary)]'
                               : 'border-[var(--interview-border-strong)] bg-[var(--interview-elevated)] text-[var(--interview-text-primary)] hover:border-[var(--program-accent-on-dark)] hover:bg-[var(--interview-control-hover)]'
                         } flex h-14 w-14 items-center justify-center rounded-2xl border shadow-lg transition-all duration-300`}
-                        title={isListening ? 'Stop recording and submit answer' : 'Start recording your answer'}
-                        aria-label={
-                          isListening
+                        title={
+                          isRecognitionReady
                             ? 'Stop recording and submit answer'
-                            : isMicTransitioning
-                              ? 'Submitting answer'
-                              : enrollmentResponseCount >= 5
-                                ? 'All responses recorded'
-                                : 'Start microphone recording'
+                            : isListening
+                              ? 'Cancel microphone startup'
+                              : 'Start recording your answer'
                         }
-                        aria-pressed={isListening}
+                        aria-label={
+                          isRecognitionReady
+                            ? 'Stop recording and submit answer'
+                            : isListening
+                              ? 'Cancel microphone startup'
+                              : isMicTransitioning
+                                ? 'Submitting answer'
+                                : enrollmentResponseCount >= 5
+                                  ? 'All responses recorded'
+                                  : 'Start microphone recording'
+                        }
+                        aria-pressed={isRecognitionReady}
                       >
-                        {isListening ? (
+                        {isRecognitionReady ? (
                           <div className="relative z-10 flex h-8 w-full items-center justify-center gap-1">
                             {userAudioData.map((height, i) => (
                               <motion.div
@@ -3493,7 +3727,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         ) : (
                           <MicOff className="relative z-10 h-[22px] w-[22px]" aria-hidden="true" />
                         )}
-                        {isListening && (
+                        {isRecognitionReady && (
                           <span
                             className="absolute inset-0 rounded-2xl border-2 opacity-0"
                             style={{
@@ -3504,10 +3738,10 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         )}
                       </button>
                       <div className="min-h-7 text-center leading-tight">
-                        <span className={`block text-[11px] font-bold ${isListening ? 'program-accent-on-dark' : 'text-[var(--interview-text-primary)]'}`}>
-                          {isListening ? 'Recording...' : isMicTransitioning ? 'Submitting...' : enrollmentResponseCount >= 5 ? 'Answers Complete' : 'Start Answer'}
+                        <span className={`block text-[11px] font-bold ${isRecognitionReady ? 'program-accent-on-dark' : 'text-[var(--interview-text-primary)]'}`}>
+                          {isRecognitionReady ? 'Recording...' : isListening ? 'Starting...' : isMicTransitioning ? 'Submitting...' : enrollmentResponseCount >= 5 ? 'Answers Complete' : 'Start Answer'}
                         </span>
-                        {isListening && <span className="mt-0.5 block text-[10px] font-medium text-[var(--interview-text-secondary)]">Click to submit</span>}
+                        {isRecognitionReady && <span className="mt-0.5 block text-[10px] font-medium text-[var(--interview-text-secondary)]">Click to submit</span>}
                       </div>
                     </div>
 

@@ -1,20 +1,23 @@
 import json
 import datetime
+import logging
 # pyrefly: ignore [missing-import]
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, status
 # pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
 
 from database import get_db
-from core.ai import close_ai_unavailable, get_ollama_client, get_ollama_model
+from core.ai import close_ai_unavailable
 from core.deps import get_current_user, get_current_user_ws
 from core.scoring import bounded_integer_score, bounded_score
 from core.aws import get_abstract_text_from_s3, delete_abstract_from_s3
 from models.user import User
 from models.thesis_interview import ThesisInterviewSession, ThesisInterviewMessage
 from schemas.thesis_interview import ThesisInterviewSessionResponse, ThesisInterviewSessionWithMessagesResponse, ThesisCompleteInterviewRequest
+from services.ai_provider import get_ai_provider
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 
@@ -99,7 +102,7 @@ async def interview_chat_ws(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_ws)
 ):
-    """Handles real-time bi-directional streaming with Local Ollama API for Thesis Defense."""
+    """Handles real-time bi-directional streaming for Thesis Defense."""
     if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Forbidden: Department not authorized.")
         return
@@ -125,17 +128,14 @@ async def interview_chat_ws(
 
     abstract_text = None
     if session.abstract_s3_key:
-        print("[DEBUG] Downloading abstract text for context...")
         abstract_text = get_abstract_text_from_s3(session.abstract_s3_key)
 
     system_prompt = get_thesis_system_prompt(current_user.department, abstract_text)
     
-    client = get_ollama_client()
-    model_name = get_ollama_model()
-    
     messages = [{"role": "system", "content": system_prompt}]
     
     try:
+        ai_provider = get_ai_provider()
         while True:
             msg = await websocket.receive()
             if "text" in msg:
@@ -143,49 +143,47 @@ async def interview_chat_ws(
                     data = json.loads(msg["text"])
                     if data.get("text"):
                         user_text = data["text"]
-                        print(f"\\n[DEBUG] Received from user: '{user_text}'")
                         messages.append({"role": "user", "content": user_text})
-                        
-                        response_stream = await client.chat.completions.create(
-                            model=model_name,
-                            messages=messages,
-                            stream=True
-                        )
                         
                         full_response = ""
                         sentence_buffer = ""
                         
-                        async for chunk in response_stream:
-                            if chunk.choices and len(chunk.choices) > 0:
-                                content = chunk.choices[0].delta.content
-                                if content:
-                                    full_response += content
-                                    sentence_buffer += content
-                                    
-                                    await websocket.send_json({"text": content})
-                                    
-                                    delimiters = ['. ', '! ', '? ', '.\n', '!\n', '?\n', ': ', '; ', ', ', '\n']
-                                    for punctuation in delimiters:
-                                        if punctuation in sentence_buffer:
-                                            parts = sentence_buffer.split(punctuation)
-                                            sentence_buffer = punctuation.join(parts[1:])
-                                            break
+                        async for content in ai_provider.stream_chat(messages):
+                            full_response += content
+                            sentence_buffer += content
+
+                            await websocket.send_json({"text": content})
+
+                            delimiters = ['. ', '! ', '? ', '.\n', '!\n', '?\n', ': ', '; ', ', ', '\n']
+                            for punctuation in delimiters:
+                                if punctuation in sentence_buffer:
+                                    parts = sentence_buffer.split(punctuation)
+                                    sentence_buffer = punctuation.join(parts[1:])
+                                    break
                             
                         messages.append({"role": "assistant", "content": full_response})
                         
                         # Signal turn complete
                         await websocket.send_json({"type": "turn_complete"})
                         
-                except Exception as e:
-                    print(f"[DEBUG] Thesis Interview AI error: {e}")
+                except Exception as error:
+                    logger.warning(
+                        "Thesis AI stream failed (session_id=%s, error=%s)",
+                        session.id,
+                        type(error).__name__,
+                    )
                     await close_ai_unavailable(websocket)
                     return
             elif "bytes" in msg:
                  pass
     except WebSocketDisconnect:
-        print("\n[DEBUG] Client disconnected.")
-    except Exception as e:
-        print(f"WebSocket Error: {e}")
+        pass
+    except Exception as error:
+        logger.warning(
+            "Thesis WebSocket failed (session_id=%s, error=%s)",
+            session.id,
+            type(error).__name__,
+        )
         try:
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Failed to connect to AI.")
         except Exception:

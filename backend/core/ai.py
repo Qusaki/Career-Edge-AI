@@ -1,32 +1,36 @@
-import os
+from typing import TYPE_CHECKING
 
 # pyrefly: ignore [missing-import]
 from fastapi import WebSocket, status
-# pyrefly: ignore [missing-import]
-from openai import AsyncOpenAI
+
+from core.config import resolve_ai_settings
+from services.ai_provider import OllamaAIProvider, get_ai_provider, normalize_ollama_base_url
+
+if TYPE_CHECKING:
+    # pyrefly: ignore [missing-import]
+    from openai import AsyncOpenAI
 
 
 def get_ollama_base_url() -> str:
-    """Return an OpenAI-compatible Ollama base URL."""
-    base_url = (os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434/v1").rstrip("/")
-    if base_url.endswith("/v1"):
-        return base_url
-    return f"{base_url}/v1"
+    """Compatibility shim for legacy callers during the provider migration."""
+    return normalize_ollama_base_url(resolve_ai_settings().base_url)
 
 
-def get_ollama_client() -> AsyncOpenAI:
-    return AsyncOpenAI(base_url=get_ollama_base_url(), api_key="ollama")
+def get_ollama_client() -> "AsyncOpenAI":
+    """Compatibility shim; routers should use the provider-neutral service."""
+    provider = get_ai_provider()
+    if not isinstance(provider, OllamaAIProvider):
+        raise RuntimeError("The legacy Ollama client is unavailable.")
+    return provider.client
 
 
 def get_ollama_model() -> str:
-    return os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+    """Compatibility shim for legacy callers during the provider migration."""
+    return resolve_ai_settings().model
 
 
 def get_ai_unavailable_message() -> str:
-    return (
-        "The AI interviewer is unavailable. Make sure Ollama is running "
-        "and OLLAMA_BASE_URL points to the Ollama server."
-    )
+    return "The AI service is temporarily unavailable. Please try again."
 
 
 async def close_ai_unavailable(websocket: WebSocket) -> None:

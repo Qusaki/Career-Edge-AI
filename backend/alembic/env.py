@@ -30,11 +30,9 @@ config.set_main_option("sqlalchemy.url", db_url)
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# add your model's MetaData object here
-# for 'autogenerate' support
-from models.user import Base
-import models.upcoming_student_interview
-import models.thesis_interview
+# Import the central model registry so every concrete model is registered before
+# Alembic configures its migration context.
+from models import Base
 
 target_metadata = Base.metadata
 

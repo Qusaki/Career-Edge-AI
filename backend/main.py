@@ -2,6 +2,7 @@
 from fastapi import FastAPI
 # pyrefly: ignore [missing-import]
 from fastapi.middleware.cors import CORSMiddleware
+from core.config import settings
 from routers import (
     auth,
     user,
@@ -23,40 +24,48 @@ import models.post_test_interview
 import models.drills
 import models.custom_skills
 
-# Automatically create tables if they don't exist
-Base.metadata.create_all(bind=engine)
+LOCAL_SCHEMA_ENVIRONMENTS = frozenset({"development", "dev", "local"})
 
-app = FastAPI(
+
+def should_auto_create_schema(environment: str) -> bool:
+    """Permit temporary automatic schema creation only in local development."""
+    return environment in LOCAL_SCHEMA_ENVIRONMENTS
+
+
+if should_auto_create_schema(settings.ENVIRONMENT):
+    Base.metadata.create_all(bind=engine)
+
+api = FastAPI(
     title="Career Edge AI Backend API",
     description="Career Edge AI Platform Backend",
     version="1.0.4",
 )
 
-# Add CORS Middleware to allow frontend to connect
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # frontend url
+# Wrap the complete API so even error responses receive CORS headers.
+app = CORSMiddleware(
+    app=api,
+    allow_origins=list(settings.CORS_ALLOWED_ORIGINS),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
-app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
-app.include_router(user.router, prefix="/users", tags=["Users"])
-app.include_router(upcoming_student_interview.router, prefix="/upcoming-student-interview", tags=["Upcoming Student Interview"])
-app.include_router(thesis_interview.router, prefix="/thesis-interview", tags=["Thesis Interview"])
-app.include_router(pre_test_intro.router, prefix="/pre-test-intro", tags=["Pre-test Exercises"])
-app.include_router(pre_test_active_listening.router, prefix="/pre-test-active-listening", tags=["Pre-test Exercises"])
-app.include_router(post_test_interview.router, prefix="/post-test-interview", tags=["Post-test Exercises"])
-app.include_router(drills.router, prefix="/drills", tags=["Drills"])
-app.include_router(custom_skills.router, prefix="/custom-skills", tags=["Custom Skills AI Session"])
+api.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+api.include_router(user.router, prefix="/users", tags=["Users"])
+api.include_router(upcoming_student_interview.router, prefix="/upcoming-student-interview", tags=["Upcoming Student Interview"])
+api.include_router(thesis_interview.router, prefix="/thesis-interview", tags=["Thesis Interview"])
+api.include_router(pre_test_intro.router, prefix="/pre-test-intro", tags=["Pre-test Exercises"])
+api.include_router(pre_test_active_listening.router, prefix="/pre-test-active-listening", tags=["Pre-test Exercises"])
+api.include_router(post_test_interview.router, prefix="/post-test-interview", tags=["Post-test Exercises"])
+api.include_router(drills.router, prefix="/drills", tags=["Drills"])
+api.include_router(custom_skills.router, prefix="/custom-skills", tags=["Custom Skills AI Session"])
 
 
-@app.get("/")
+@api.get("/")
 async def root():
     return {"message": "Career Edge AI Backend API"}
 
 
-@app.get("/health")
+@api.get("/health")
 async def health_check():
     return {"status": "healthy"}
