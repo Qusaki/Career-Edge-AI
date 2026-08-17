@@ -12,7 +12,8 @@ from routers import (
     pre_test_active_listening,
     post_test_interview,
     drills,
-    custom_skills
+    custom_skills,
+    offline_sync,
 )
 from database import engine, Base
 import models.user
@@ -23,6 +24,7 @@ import models.pre_test_active_listening
 import models.post_test_interview
 import models.drills
 import models.custom_skills
+import models.offline_sync
 
 LOCAL_SCHEMA_ENVIRONMENTS = frozenset({"development", "dev", "local"})
 
@@ -59,6 +61,7 @@ api.include_router(pre_test_active_listening.router, prefix="/pre-test-active-li
 api.include_router(post_test_interview.router, prefix="/post-test-interview", tags=["Post-test Exercises"])
 api.include_router(drills.router, prefix="/drills", tags=["Drills"])
 api.include_router(custom_skills.router, prefix="/custom-skills", tags=["Custom Skills AI Session"])
+api.include_router(offline_sync.router, prefix="/offline-sync", tags=["Offline Synchronization"])
 
 
 @api.get("/")

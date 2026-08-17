@@ -20,7 +20,11 @@ const clampPercentage = (value: number) => Math.min(100, Math.max(0, value));
 const clampFivePointScore = (value: number) => Math.min(5, Math.max(0, value));
 
 export const isCompletedActivity = (item: ScoreRecord): boolean => {
-  if (['completed', 'pending_sync', 'synced'].includes(String(item.status || ''))) return true;
+  const status = String(item.status || '');
+  if (['in_progress', 'completed_local', 'pending_sync', 'syncing', 'sync_failed', 'synced'].includes(status)) {
+    return false;
+  }
+  if (status === 'completed') return true;
   return item.end_time != null || toFiniteNumber(item.total_score) != null || toFiniteNumber(item.score) != null;
 };
 

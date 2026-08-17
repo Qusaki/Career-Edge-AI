@@ -1,7 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  createOfflineAudioRecorder,
+  getMicrophoneErrorMessage,
+  type OfflineAudioCapture,
+  type OfflineAudioRecorderController,
+} from '../offline/offlineAudioRecorder';
+import type { OfflineActivityType } from '../db';
 
 type TranscriptHandler = (transcript: string) => void;
 type ErrorHandler = (message: string) => void;
+export interface OfflineSpeechAudioOptions {
+  enabled: boolean;
+  activityType: OfflineActivityType;
+  turnId: string;
+  answerIndex: number;
+  persistAudio: (input: {
+    activityType: OfflineActivityType;
+    turnId: string;
+    answerIndex: number;
+    capture: OfflineAudioCapture;
+    transcriptText?: string;
+  }) => Promise<boolean>;
+}
 type RecognitionSession = {
   onTranscript: TranscriptHandler;
   onError?: ErrorHandler;
@@ -10,6 +30,7 @@ type RecognitionSession = {
   delivered: boolean;
   retryCount: number;
   fatalError: boolean;
+  offlineAudio?: OfflineSpeechAudioOptions;
 };
 
 const getSpeechRecognition = () => {
@@ -54,6 +75,7 @@ const getSpeechErrorMessage = (event: any) => {
 export function useSpeechInput() {
   const recognitionRef = useRef<any>(null);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
+  const offlineRecorderRef = useRef<OfflineAudioRecorderController | null>(null);
   const listeningRef = useRef(false);
   const startingRef = useRef(false);
   const sessionRef = useRef<RecognitionSession | null>(null);
@@ -75,7 +97,7 @@ export function useSpeechInput() {
     microphoneStreamRef.current = null;
   }, []);
 
-  const deliverTranscript = useCallback(() => {
+  const deliverTranscript = useCallback(async () => {
     if (stopTimeoutRef.current) {
       clearTimeout(stopTimeoutRef.current);
       stopTimeoutRef.current = null;
@@ -95,8 +117,28 @@ export function useSpeechInput() {
       .trim();
 
     sessionRef.current = null;
+    if (session.offlineAudio) {
+      const capture = await offlineRecorderRef.current?.stopRecording() ?? null;
+      if (capture) {
+        const persisted = await session.offlineAudio.persistAudio({
+          activityType: session.offlineAudio.activityType,
+          turnId: session.offlineAudio.turnId,
+          answerIndex: session.offlineAudio.answerIndex,
+          capture,
+          transcriptText: transcript || undefined,
+        });
+        if (!persisted) {
+          session.onError?.('The recording could not be saved locally. Your answer was not advanced; retry or use the typed answer.');
+          releaseMicrophone();
+          return;
+        }
+      }
+    }
+    offlineRecorderRef.current?.releaseRecorder();
+    offlineRecorderRef.current = null;
     releaseMicrophone();
     if (transcript) session.onTranscript(transcript);
+    else if (session.offlineAudio) session.onError?.('Your audio was saved locally, but no transcript was produced. Type your answer to continue.');
   }, [releaseMicrophone]);
 
   const stopListening = useCallback(() => {
@@ -106,7 +148,7 @@ export function useSpeechInput() {
     const recognition = recognitionRef.current;
     if (!recognition) {
       setIsListening(false);
-      deliverTranscript();
+      void deliverTranscript();
       return;
     }
 
@@ -116,12 +158,12 @@ export function useSpeechInput() {
       stopTimeoutRef.current = setTimeout(() => {
         if (recognitionRef.current === recognition) recognitionRef.current = null;
         setIsListening(false);
-        deliverTranscript();
+        void deliverTranscript();
       }, 1500);
     } catch {
       recognitionRef.current = null;
       setIsListening(false);
-      deliverTranscript();
+      void deliverTranscript();
     }
   }, [clearRestart, deliverTranscript]);
 
@@ -135,6 +177,8 @@ export function useSpeechInput() {
       stopTimeoutRef.current = null;
     }
     sessionRef.current = null;
+    offlineRecorderRef.current?.cancelRecording();
+    offlineRecorderRef.current = null;
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
     try {
@@ -170,6 +214,8 @@ export function useSpeechInput() {
       if (stopTimeoutRef.current) clearTimeout(stopTimeoutRef.current);
       stopTimeoutRef.current = null;
       sessionRef.current = null;
+      offlineRecorderRef.current?.cancelRecording();
+      offlineRecorderRef.current = null;
       try {
         recognitionRef.current?.abort();
       } catch {
@@ -180,11 +226,19 @@ export function useSpeechInput() {
     };
   }, [clearRestart, releaseMicrophone]);
 
-  const startListening = useCallback(async (onTranscript: TranscriptHandler, onError?: ErrorHandler) => {
+  const startListening = useCallback(async (
+    onTranscript: TranscriptHandler,
+    onError?: ErrorHandler,
+    offlineAudio?: OfflineSpeechAudioOptions,
+  ) => {
     const supportMessage = getSpeechSupportMessage();
-    if (supportMessage) {
+    if (supportMessage && !offlineAudio?.enabled) {
       setIsSupported(false);
       onError?.(supportMessage);
+      return false;
+    }
+    if (offlineAudio?.enabled && typeof MediaRecorder === 'undefined') {
+      onError?.('This browser cannot record audio locally. Use the typed answer instead.');
       return false;
     }
 
@@ -206,10 +260,10 @@ export function useSpeechInput() {
           autoGainControl: true,
         },
       });
-    } catch {
+    } catch (error) {
       if (requestGenerationRef.current !== requestGeneration) return false;
       startingRef.current = false;
-      onError?.('Microphone access was blocked or unavailable. Allow microphone permission, then try again.');
+      onError?.(getMicrophoneErrorMessage(error));
       return false;
     }
     if (requestGenerationRef.current !== requestGeneration) {
@@ -227,9 +281,37 @@ export function useSpeechInput() {
       delivered: false,
       retryCount: 0,
       fatalError: false,
+      offlineAudio: offlineAudio?.enabled ? offlineAudio : undefined,
     };
     listeningRef.current = true;
     setIsListening(true);
+
+    if (offlineAudio?.enabled) {
+      offlineRecorderRef.current = createOfflineAudioRecorder({
+        stream: microphoneStream,
+        onLimitReached: reason => onError?.(
+          reason === 'duration'
+            ? 'The five-minute recording limit was reached. Stop the mic to save it, then type an answer if needed.'
+            : 'The 25 MB recording limit was reached. Stop the mic to save it, then type an answer if needed.',
+        ),
+      });
+      try {
+        if (!await offlineRecorderRef.current.startRecording()) {
+          listeningRef.current = false;
+          setIsListening(false);
+          releaseMicrophone();
+          onError?.('Local audio recording is unavailable. Use the typed answer instead.');
+          return false;
+        }
+      } catch (error) {
+        listeningRef.current = false;
+        setIsListening(false);
+        offlineRecorderRef.current = null;
+        releaseMicrophone();
+        onError?.(error instanceof Error ? error.message : 'Local audio recording could not start. Use the typed answer instead.');
+        return false;
+      }
+    }
 
     const scheduleRestart = (delay: number) => {
       if (!listeningRef.current || restartTimeoutRef.current) return;
@@ -285,11 +367,13 @@ export function useSpeechInput() {
         }
 
         session.fatalError = true;
-        session.delivered = true;
-        listeningRef.current = false;
-        setIsListening(false);
-        releaseMicrophone();
         session.onError?.(getSpeechErrorMessage(event));
+        if (!session.offlineAudio) {
+          session.delivered = true;
+          listeningRef.current = false;
+          setIsListening(false);
+          releaseMicrophone();
+        }
       };
 
       recognition.onend = () => {
@@ -300,8 +384,9 @@ export function useSpeechInput() {
           return;
         }
 
+        if (session.offlineAudio && session.fatalError && listeningRef.current) return;
         setIsListening(false);
-        deliverTranscript();
+        void deliverTranscript();
       };
 
       recognitionRef.current = recognition;
@@ -317,9 +402,37 @@ export function useSpeechInput() {
     };
 
     startRecognitionRef.current = startRecognition;
-    startRecognition();
+    if (SpeechRecognition) startRecognition();
+    else onError?.('Speech recognition is unavailable offline. Audio will still be saved; type your answer to continue.');
     return true;
   }, [clearRestart, deliverTranscript, releaseMicrophone]);
 
-  return { isListening, isSupported, startListening, stopListening, cancelListening };
+  const enableOfflineRecording = useCallback(async (offlineAudio: OfflineSpeechAudioOptions) => {
+    const session = sessionRef.current;
+    const stream = microphoneStreamRef.current;
+    if (!offlineAudio.enabled || !session || !stream || !listeningRef.current) return false;
+    session.offlineAudio = offlineAudio;
+    if (offlineRecorderRef.current) return true;
+    if (typeof MediaRecorder === 'undefined') {
+      session.onError?.('This browser cannot record audio locally. Use the typed answer instead.');
+      return false;
+    }
+    offlineRecorderRef.current = createOfflineAudioRecorder({
+      stream,
+      onLimitReached: reason => session.onError?.(
+        reason === 'duration'
+          ? 'The five-minute recording limit was reached. Stop the mic to save it, then type an answer if needed.'
+          : 'The 25 MB recording limit was reached. Stop the mic to save it, then type an answer if needed.',
+      ),
+    });
+    try {
+      return await offlineRecorderRef.current.startRecording();
+    } catch (error) {
+      offlineRecorderRef.current = null;
+      session.onError?.(error instanceof Error ? error.message : 'Local audio recording could not start. Use the typed answer instead.');
+      return false;
+    }
+  }, []);
+
+  return { isListening, isSupported, startListening, stopListening, cancelListening, enableOfflineRecording };
 }

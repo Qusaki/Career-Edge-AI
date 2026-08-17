@@ -3,9 +3,13 @@ import { ArrowLeft, ArrowRight, Dumbbell, LoaderCircle, Mic, MicOff, RefreshCw, 
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
+import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
+import { createClientSessionId } from '../offline/sessionFoundation';
+import { evaluateDrill, getOfflineNegotiationTurn } from '../offline/localEvaluation';
+import { DRILLS_VERSION, getOfflineDrillPrompt, hasCurrentQuestionPack, NEGOTIATION_OPENING_PROMPT } from '../offline/questionPacks';
 
 type DrillSession = {
-  id: number;
+  id: number | string;
   drill_level: string;
   drill_type: string;
   start_time: string;
@@ -127,11 +131,26 @@ const formatPrompt = (prompt: unknown) => {
   }).join('\n');
 };
 
-export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl: string; onSessionModeChange?: (isSessionMode: boolean) => void }) {
+type DrillsPageProps = OfflineActivityBridgeProps & {
+  apiUrl: string;
+  onSessionModeChange?: (isSessionMode: boolean) => void;
+};
+
+export function DrillsPage({
+  apiUrl,
+  onSessionModeChange = () => {},
+  effectiveOnline,
+  sessionMode,
+  resumeSession,
+  onActivityStart,
+  onActivityCheckpoint,
+  onActivityEnd,
+  onOfflineAudioCaptured,
+}: DrillsPageProps) {
   const [sessions, setSessions] = useState<DrillSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState<string | null>(null);
-  const [completing, setCompleting] = useState<number | null>(null);
+  const [completing, setCompleting] = useState<number | string | null>(null);
   const [activeSession, setActiveSession] = useState<DrillSession | null>(null);
   const [activePrompt, setActivePrompt] = useState('');
   const [spokenResponse, setSpokenResponse] = useState('');
@@ -145,7 +164,67 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const exerciseGenerationRef = useRef(0);
-  const { isListening, startListening, stopListening, cancelListening } = useSpeechInput();
+  const resumedSessionRef = useRef<string | null>(null);
+  const sessionModeRef = useRef(sessionMode);
+  const { isListening, startListening, stopListening, cancelListening, enableOfflineRecording } = useSpeechInput();
+
+  useEffect(() => {
+    if (sessionMode !== 'offline' || !isListening || !activeSession) return;
+    const isNegotiation = activeSession.drill_type === 'negotiation';
+    const answerIndex = isNegotiation
+      ? negotiationMessages.filter(message => message.sender === 'user').length + 1
+      : 1;
+    void enableOfflineRecording({
+      enabled: true,
+      activityType: 'drill',
+      turnId: isNegotiation ? `negotiation-${answerIndex}` : 'drill-response-1',
+      answerIndex,
+      persistAudio: onOfflineAudioCaptured,
+    });
+  }, [activeSession, enableOfflineRecording, isListening, negotiationMessages, onOfflineAudioCaptured, sessionMode]);
+
+  useEffect(() => { sessionModeRef.current = sessionMode; }, [sessionMode]);
+
+  useEffect(() => {
+    if (!resumeSession || resumeSession.type !== 'drill' || resumedSessionRef.current === resumeSession.clientSessionId) return;
+    resumedSessionRef.current = resumeSession.clientSessionId;
+    if (!hasCurrentQuestionPack('drill', resumeSession.questionPackVersion)) {
+      setError('This saved offline activity uses an older question version. It was preserved and cannot be resumed automatically.');
+      return;
+    }
+    const drillType = String(resumeSession.activityState.drillType || '');
+    const drill = drills.find(item => item.drillType === drillType);
+    if (!drill) {
+      setError('The saved Drill type is not available in the current offline question pack.');
+      return;
+    }
+    const restoredNegotiationMessages = resumeSession.conversationLog.map(message => ({
+      sender: message.sender === 'ai' ? 'bot' as const : 'user' as const,
+      text: message.text,
+    }));
+    setActiveSession({
+      id: resumeSession.clientSessionId,
+      drill_level: drill.drillLevel,
+      drill_type: drill.drillType,
+      start_time: new Date(resumeSession.startedAt).toISOString(),
+      status: 'active',
+    });
+    setActivePrompt(String(resumeSession.activityState.prompt || resumeSession.currentQuestion));
+    setSpokenResponse(String(resumeSession.activityState.spokenResponse || resumeSession.answers[0]?.text || ''));
+    setNegotiationMessages(drill.isNegotiation ? restoredNegotiationMessages : []);
+    setNegotiationTurn(Number(resumeSession.activityState.negotiationTurn || 0));
+    setCurrentOffer(Number(resumeSession.activityState.currentOffer || 35000));
+    setNegotiationGameOver(Boolean(resumeSession.activityState.negotiationGameOver));
+    setNotice('Your saved offline Drill has been restored from its last checkpoint.');
+    onSessionModeChange(true);
+  }, [onSessionModeChange, resumeSession]);
+
+  useEffect(() => {
+    if (sessionMode === 'offline' && activeSession) {
+      setNegotiationLoading(false);
+      setNotice('This Drill remains offline until completion. Local prompts, checkpoints, and provisional scoring are active.');
+    }
+  }, [activeSession, sessionMode]);
 
   const speakText = useCallback((text: string) => {
     if (!('speechSynthesis' in window)) return;
@@ -162,6 +241,10 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
   }, []);
 
   const loadSessions = useCallback(async () => {
+    if (!effectiveOnline) {
+      setLoading(false);
+      return;
+    }
     const token = localStorage.getItem('token');
     if (!token) return;
     setLoading(true);
@@ -177,7 +260,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
     } finally {
       setLoading(false);
     }
-  }, [apiUrl]);
+  }, [apiUrl, effectiveOnline]);
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
 
@@ -188,8 +271,6 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
   }, [cancelListening]);
 
   const startDrill = async (drill: Drill) => {
-    const token = localStorage.getItem('token');
-    if (!token) return;
     const attemptId = exerciseGenerationRef.current + 1;
     exerciseGenerationRef.current = attemptId;
     setStarting(drill.drillType);
@@ -204,6 +285,50 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
     cancelListening();
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     try {
+      if (!effectiveOnline) {
+        const clientSessionId = createClientSessionId();
+        const prompt = getOfflineDrillPrompt(drill.drillType, clientSessionId);
+        const formattedPrompt = formatPrompt(prompt);
+        const openingOffer = NEGOTIATION_OPENING_PROMPT;
+        const initialNegotiationMessages: NegotiationMessage[] = drill.isNegotiation
+          ? [{ sender: 'bot', text: openingOffer }]
+          : [];
+        const checkpoint = await onActivityStart({
+          type: 'drill',
+          mode: 'offline',
+          clientSessionId,
+          questionPackVersion: DRILLS_VERSION,
+          currentQuestion: drill.isNegotiation ? openingOffer : formattedPrompt,
+          conversationLog: initialNegotiationMessages.map(message => ({ sender: 'ai' as const, text: message.text })),
+          currentStep: 0,
+          activityState: {
+            drillType: drill.drillType,
+            drillLevel: drill.drillLevel,
+            prompt: formattedPrompt,
+            spokenResponse: '',
+            negotiationTurn: 0,
+            currentOffer: 35000,
+            negotiationGameOver: false,
+          },
+        });
+        if (!checkpoint || exerciseGenerationRef.current !== attemptId) return;
+        setActiveSession({
+          id: checkpoint.clientSessionId,
+          drill_level: drill.drillLevel,
+          drill_type: drill.drillType,
+          start_time: new Date(checkpoint.startedAt).toISOString(),
+          status: 'active',
+        });
+        setActivePrompt(formattedPrompt);
+        setNegotiationMessages(initialNegotiationMessages);
+        setNotice(`${drill.title} started offline. Your provisional result will be queued for sync.`);
+        onSessionModeChange(true);
+        speakText(drill.isNegotiation ? openingOffer : formattedPrompt);
+        return;
+      }
+
+      const token = localStorage.getItem('token');
+      if (!token) return;
       const promptResponse = drill.generatorEndpoint
         ? await fetch(`${apiUrl}${drill.generatorEndpoint}`, {
           headers: { Authorization: `Bearer ${token}` },
@@ -240,7 +365,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
       setActiveSession(session);
       setActivePrompt(formattedPrompt);
       if (drill.isNegotiation) {
-        const openingOffer = 'We can offer ₱35,000 for this role. Given our budget constraint, that is already a competitive starting offer. What do you think?';
+        const openingOffer = NEGOTIATION_OPENING_PROMPT;
         setNegotiationMessages([
           {
             sender: 'bot',
@@ -252,6 +377,23 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
         speakText(formattedPrompt);
       }
       setNotice(`${drill.title} session #${session.id} is ready.`);
+      void onActivityStart({
+        type: 'drill',
+        serverSessionId: typeof session.id === 'number' ? session.id : null,
+        questionPackVersion: DRILLS_VERSION,
+        currentQuestion: drill.isNegotiation ? NEGOTIATION_OPENING_PROMPT : formattedPrompt,
+        conversationLog: drill.isNegotiation ? [{ sender: 'ai', text: NEGOTIATION_OPENING_PROMPT }] : [],
+        currentStep: 0,
+        activityState: {
+          drillType: drill.drillType,
+          drillLevel: drill.drillLevel,
+          prompt: formattedPrompt,
+          spokenResponse: '',
+          negotiationTurn: 0,
+          currentOffer: 35000,
+          negotiationGameOver: false,
+        },
+      });
       onSessionModeChange(true);
       await loadSessions();
     } catch (err) {
@@ -278,6 +420,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
     setNegotiationGameOver(false);
     setIsVoiceSpeaking(false);
     setNotice('Drill exited. Mark it complete later to finish it properly.');
+    void onActivityEnd('abandoned');
     onSessionModeChange(false);
   };
 
@@ -287,30 +430,85 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
 
     setNegotiationLoading(true);
     setError(null);
+    const userMessages = [...negotiationMessages, { sender: 'user' as const, text }];
+    const userCheckpointSaved = await onActivityCheckpoint({
+      conversationLog: userMessages.map(message => ({
+        sender: message.sender === 'bot' ? 'ai' as const : 'user' as const,
+        text: message.text,
+      })),
+      responseCount: userMessages.filter(message => message.sender === 'user').length,
+      currentStep: negotiationTurn + 1,
+      answers: userMessages
+        .filter(message => message.sender === 'user')
+        .map((message, index) => ({ step: index + 1, text: message.text, createdAt: Date.now() })),
+      activityState: {
+        drillType: activeSession?.drill_type,
+        drillLevel: activeSession?.drill_level,
+        prompt: activePrompt,
+        spokenResponse,
+        negotiationTurn,
+        currentOffer,
+        negotiationGameOver,
+      },
+    });
+    if (!userCheckpointSaved) {
+      setNegotiationLoading(false);
+      return;
+    }
     setNegotiationReply('');
-    setNegotiationMessages(prev => [...prev, { sender: 'user', text }]);
+    setNegotiationMessages(userMessages);
 
     try {
-      const response = await fetch(`${apiUrl}/drills/hard/negotiation/turn`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_message: text,
-          turn_number: negotiationTurn,
-          current_offer: currentOffer,
-        }),
+      let data: { response: string; new_offer: number; is_game_over: boolean };
+      if (sessionModeRef.current === 'offline') {
+        const localTurn = getOfflineNegotiationTurn(text, negotiationTurn, currentOffer);
+        data = {
+          response: localTurn.response,
+          new_offer: localTurn.newOffer,
+          is_game_over: localTurn.isGameOver,
+        };
+      } else {
+        const response = await fetch(`${apiUrl}/drills/hard/negotiation/turn`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_message: text, turn_number: negotiationTurn, current_offer: currentOffer }),
+        });
+        if (!response.ok) throw new Error('Unable to process negotiation turn.');
+        data = await response.json();
+        if (String(sessionModeRef.current) === 'offline') {
+          const localTurn = getOfflineNegotiationTurn(text, negotiationTurn, currentOffer);
+          data = {
+            response: localTurn.response,
+            new_offer: localTurn.newOffer,
+            is_game_over: localTurn.isGameOver,
+          };
+        }
+      }
+      const nextTurn = negotiationTurn + 1;
+      const nextMessages = [...userMessages, { sender: 'bot' as const, text: data.response }];
+      const responseSaved = await onActivityCheckpoint({
+        conversationLog: nextMessages.map(message => ({
+          sender: message.sender === 'bot' ? 'ai' as const : 'user' as const,
+          text: message.text,
+        })),
+        currentQuestion: data.response,
+        responseCount: nextMessages.filter(message => message.sender === 'user').length,
+        currentStep: nextTurn,
+        activityState: {
+          drillType: activeSession?.drill_type,
+          drillLevel: activeSession?.drill_level,
+          prompt: activePrompt,
+          spokenResponse,
+          negotiationTurn: nextTurn,
+          currentOffer: data.new_offer,
+          negotiationGameOver: data.is_game_over,
+        },
       });
-      if (!response.ok) throw new Error('Unable to process negotiation turn.');
-      const data: {
-        response: string;
-        agreement_reached: boolean;
-        new_offer: number;
-        is_game_over: boolean;
-      } = await response.json();
+      if (!responseSaved) return;
       setCurrentOffer(data.new_offer);
-      setNegotiationTurn(prev => prev + 1);
+      setNegotiationTurn(nextTurn);
       setNegotiationGameOver(data.is_game_over);
-      setNegotiationMessages(prev => [...prev, { sender: 'bot', text: data.response }]);
+      setNegotiationMessages(nextMessages);
       speakText(data.response);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to process negotiation turn.');
@@ -321,19 +519,118 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
 
   const recordDrillResponse = () => {
     setError(null);
-    startListening(transcript => {
-      setSpokenResponse(prev => [prev, transcript].filter(Boolean).join(' ').trim());
-    }, setError);
+    startListening(async transcript => {
+        const nextResponse = [spokenResponse, transcript].filter(Boolean).join(' ').trim();
+        const saved = await onActivityCheckpoint({
+          currentQuestion: activePrompt,
+          currentStep: 1,
+          responseCount: nextResponse ? 1 : 0,
+          answers: nextResponse ? [{ step: 1, text: nextResponse, createdAt: Date.now() }] : [],
+          activityState: {
+            drillType: activeSession?.drill_type,
+            drillLevel: activeSession?.drill_level,
+            prompt: activePrompt,
+            spokenResponse: nextResponse,
+            negotiationTurn,
+            currentOffer,
+            negotiationGameOver,
+          },
+        });
+        if (saved) setSpokenResponse(nextResponse);
+    }, setError, sessionMode === 'offline' && activeSession ? {
+      enabled: true,
+      activityType: 'drill',
+      turnId: 'drill-response-1',
+      answerIndex: 1,
+      persistAudio: onOfflineAudioCaptured,
+    } : undefined);
   };
 
   const recordNegotiationReply = () => {
     setError(null);
-    startListening(transcript => sendNegotiationReply(transcript), setError);
+    const answerIndex = negotiationMessages.filter(message => message.sender === 'user').length + 1;
+    startListening(transcript => void sendNegotiationReply(transcript), setError, sessionMode === 'offline' && activeSession ? {
+      enabled: true,
+      activityType: 'drill',
+      turnId: `negotiation-${answerIndex}`,
+      answerIndex,
+      persistAudio: onOfflineAudioCaptured,
+    } : undefined);
+  };
+
+  const saveTypedDrillResponse = async () => {
+    const text = spokenResponse.trim();
+    if (!text) return;
+    await onActivityCheckpoint({
+      currentQuestion: activePrompt,
+      currentStep: 1,
+      responseCount: 1,
+      answers: [{ step: 1, text, createdAt: Date.now() }],
+      activityState: {
+        drillType: activeSession?.drill_type,
+        drillLevel: activeSession?.drill_level,
+        prompt: activePrompt,
+        spokenResponse: text,
+        negotiationTurn,
+        currentOffer,
+        negotiationGameOver,
+      },
+    });
   };
 
   const completeDrill = async () => {
+    if (!activeSession) return;
+    if (sessionMode === 'offline') {
+      setCompleting(activeSession.id);
+      setError(null);
+      try {
+        const result = evaluateDrill(activeSession.drill_type, { spokenResponse, negotiationMessages });
+        const rawAnswers = activeSession.drill_type === 'negotiation'
+          ? negotiationMessages.filter(message => message.sender === 'user').map((message, index) => ({ step: index + 1, text: message.text, createdAt: Date.now() }))
+          : [{ step: 1, text: spokenResponse.trim(), createdAt: Date.now() }];
+        const saved = await onActivityCheckpoint({
+          conversationLog: activeSession.drill_type === 'negotiation'
+            ? negotiationMessages.map(message => ({ sender: message.sender === 'bot' ? 'ai' as const : 'user' as const, text: message.text }))
+            : [],
+          answers: rawAnswers,
+          responseCount: rawAnswers.length,
+          currentStep: rawAnswers.length,
+          localEvaluation: result.evaluation,
+          localScore: result.localScore,
+          evaluationAuthority: 'local_provisional',
+          pendingEvaluation: null,
+          activityState: {
+            drillType: activeSession.drill_type,
+            drillLevel: activeSession.drill_level,
+            prompt: activePrompt,
+            spokenResponse,
+            negotiationTurn,
+            currentOffer,
+            negotiationGameOver,
+          },
+        });
+        if (!saved || !await onActivityEnd('completed_local')) return;
+        cancelListening();
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+        setActiveSession(null);
+        setActivePrompt('');
+        setSpokenResponse('');
+        setNegotiationMessages([]);
+        setNegotiationReply('');
+        setNegotiationTurn(0);
+        setCurrentOffer(35000);
+        setNegotiationGameOver(false);
+        setNotice('Drill completed locally and is pending sync.');
+        onSessionModeChange(false);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unable to calculate the provisional Drill score.');
+      } finally {
+        setCompleting(null);
+      }
+      return;
+    }
     const token = localStorage.getItem('token');
-    if (!token || !activeSession) return;
+    if (!token) return;
     const attemptId = exerciseGenerationRef.current;
     setCompleting(activeSession.id);
     setError(null);
@@ -363,6 +660,7 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
       cancelListening();
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
       setNotice(`Drill session #${completedSession.id} was marked complete.`);
+      void onActivityEnd('cloud_completed');
       setActiveSession(null);
       setActivePrompt('');
       setSpokenResponse('');
@@ -459,6 +757,12 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
                     {isListening ? 'Stop Recording' : negotiationGameOver ? 'Negotiation Ended' : 'Speak Reply'}
                   </button>
                 </div>
+                {sessionMode === 'offline' && !negotiationGameOver && (
+                  <div className="mx-auto mt-4 flex max-w-2xl gap-2">
+                    <textarea value={negotiationReply} onChange={event => setNegotiationReply(event.target.value)} placeholder="Or type your negotiation reply while offline." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none" />
+                    <button type="button" onClick={() => void sendNegotiationReply()} disabled={!negotiationReply.trim() || negotiationLoading} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Submit</button>
+                  </div>
+                )}
               </>
             ) : (
               <>
@@ -478,6 +782,12 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
                     {isListening ? 'Stop Recording' : 'Speak Answer'}
                   </button>
                 </div>
+                {sessionMode === 'offline' && (
+                  <div className="mx-auto mt-4 flex max-w-2xl gap-2">
+                    <textarea value={spokenResponse} onChange={event => setSpokenResponse(event.target.value)} placeholder="Or type your Drill response while offline." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none" />
+                    <button type="button" onClick={() => void saveTypedDrillResponse()} disabled={!spokenResponse.trim()} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Save</button>
+                  </div>
+                )}
               </>
             )}
           </section>
@@ -500,33 +810,6 @@ export function DrillsPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl:
         <div className={`mb-5 rounded-lg border p-3 text-sm ${error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-success'}`}>
           {error || notice}
         </div>
-      )}
-
-      {activeSession && (
-        <section className="mb-6 rounded-lg border border-line bg-card p-5">
-          <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
-            <div>
-              <div className="program-accent-surface mb-3 flex h-11 w-11 items-center justify-center rounded-lg">
-                <Sparkles className="h-6 w-6" />
-              </div>
-              <h2 className="text-xl font-bold text-ink">Current Drill #{activeSession.id}</h2>
-              <p className="text-program-accent mt-1 text-sm font-bold uppercase tracking-wider">
-                {activeSession.drill_level} · {activeSession.drill_type.replace(/_/g, ' ')}
-              </p>
-              <pre className="mt-4 whitespace-pre-wrap rounded-lg border border-line bg-background p-4 font-sans text-sm leading-relaxed text-ink">
-                {activePrompt || 'Prompt loaded.'}
-              </pre>
-            </div>
-            <button
-              onClick={completeDrill}
-              disabled={completing !== null}
-              className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {completing === activeSession.id ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
-              {completing === activeSession.id ? 'Completing…' : 'Mark Complete'}
-            </button>
-          </div>
-        </section>
       )}
 
       <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">

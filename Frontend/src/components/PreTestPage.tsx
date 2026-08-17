@@ -5,9 +5,20 @@ import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
+import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
+import { createClientSessionId } from '../offline/sessionFoundation';
+import {
+  getOfflineActiveListeningPrompt,
+  getActiveListeningPromptForServerSession,
+  hasCurrentQuestionPack,
+  PRETEST_ACTIVE_LISTENING_VERSION,
+  PRETEST_WHO_AM_I_PROMPT,
+  PRETEST_WHO_AM_I_VERSION,
+} from '../offline/questionPacks';
+import { evaluateActiveListening, evaluateWhoAmI } from '../offline/localEvaluation';
 
 type Session = {
-  id: number;
+  id: number | string;
   start_time: string;
   status: string;
   total_score?: number | null;
@@ -60,50 +71,22 @@ const ACTIVE_LISTENING_FIRST_TOKEN_TIMEOUT_MS = 180000;
 const ACTIVE_LISTENING_MAX_RETRIES = 1;
 const ACTIVE_LISTENING_RETRY_BACKOFF_MS = 500;
 
-const getBasicIntroEvaluation = (transcript: string) => {
-  const words = transcript.trim().toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) || [];
-  const wordCount = words.length;
-  const uniqueWordCount = new Set(words).size;
-  const score = wordCount >= 60 ? 3 : wordCount >= 30 ? 2 : 1;
-  const vocabularyScore = uniqueWordCount >= 45 ? 5
-    : uniqueWordCount >= 32 ? 4
-      : uniqueWordCount >= 20 ? 3
-        : uniqueWordCount >= 10 ? 2
-          : 1;
-  const grammarScore = wordCount >= 60 ? 5
-    : wordCount >= 45 ? 4
-      : wordCount >= 30 ? 3
-        : wordCount >= 15 ? 2
-          : 1;
-
-  return {
-    score_clarity: score,
-    score_completeness: score,
-    score_courtesy: 3,
-    score_correctness: score,
-    score_conciseness: wordCount <= 140 ? 3 : 2,
-    score_vocabulary: vocabularyScore,
-    score_grammar: grammarScore,
-    feedback_summary: 'Introduction submitted. Review clarity, completeness, courtesy, correctness, conciseness, and delivery.',
-  };
+type PreTestPageProps = OfflineActivityBridgeProps & {
+  apiUrl: string;
+  onSessionModeChange?: (isSessionMode: boolean) => void;
 };
 
-const getBasicActiveListeningEvaluation = (messages: ChatMessage[]) => {
-  const userText = messages.filter(message => message.sender === 'user').map(message => message.text).join(' ');
-  const wordCount = userText.trim().split(/\s+/).filter(Boolean).length;
-  const score = wordCount >= 80 ? 4 : wordCount >= 40 ? 3 : 2;
-
-  return {
-    score_vocabulary: score,
-    score_clarity: score,
-    score_grammar: score,
-    score_courtesy: 4,
-    score_conciseness: score,
-    feedback_summary: 'Active listening exercise completed. Review the transcript for the AI feedback and summary accuracy.',
-  };
-};
-
-export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl: string; onSessionModeChange?: (isSessionMode: boolean) => void }) {
+export function PreTestPage({
+  apiUrl,
+  onSessionModeChange = () => {},
+  effectiveOnline,
+  sessionMode,
+  resumeSession,
+  onActivityStart,
+  onActivityCheckpoint,
+  onActivityEnd,
+  onOfflineAudioCaptured,
+}: PreTestPageProps) {
   const [sessions, setSessions] = useState<(Session & { exercise: string })[]>([]);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState<string | null>(null);
@@ -118,17 +101,101 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
   const [connectionState, setConnectionState] = useState<RealtimeConnectionState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [versionMismatch, setVersionMismatch] = useState(false);
+  const resumedSessionRef = useRef<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const messagesRef = useRef<ChatMessage[]>([]);
   const aiMessageOpenRef = useRef(false);
   const aiSpeechBufferRef = useRef('');
   const activeListeningTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionAttemptRef = useRef(0);
   const lifecycleGenerationRef = useRef(0);
-  const { isListening, startListening, stopListening, cancelListening } = useSpeechInput();
+  const { isListening, startListening, stopListening, cancelListening, enableOfflineRecording } = useSpeechInput();
   const eyeTracker = useEyeContactTracker(Boolean(activeExercise && activeSession));
 
+  useEffect(() => {
+    if (sessionMode !== 'offline' || !isListening || !activeSession || !activeExercise) return;
+    const isIntro = activeExercise.kind === 'intro';
+    const answerIndex = isIntro ? 1 : messagesRef.current.filter(message => message.sender === 'user').length + 1;
+    void enableOfflineRecording({
+      enabled: true,
+      activityType: isIntro ? 'pre_test_intro' : 'pre_test_active_listening',
+      turnId: isIntro ? 'intro-1' : `active-listening-${answerIndex}`,
+      answerIndex,
+      persistAudio: onOfflineAudioCaptured,
+    });
+  }, [activeExercise, activeSession, enableOfflineRecording, isListening, onOfflineAudioCaptured, sessionMode]);
+
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+  useEffect(() => {
+    if (!resumeSession || resumedSessionRef.current === resumeSession.clientSessionId) return;
+    if (!['pre_test_intro', 'pre_test_active_listening'].includes(resumeSession.type)) return;
+    resumedSessionRef.current = resumeSession.clientSessionId;
+    if (!hasCurrentQuestionPack(resumeSession.type, resumeSession.questionPackVersion)) {
+      setVersionMismatch(true);
+      setError('This saved offline activity uses an older question version. It was preserved and cannot be resumed automatically.');
+      return;
+    }
+
+    const exercise = exercises.find(item =>
+      resumeSession.type === 'pre_test_intro' ? item.kind === 'intro' : item.kind === 'active-listening'
+    );
+    if (!exercise) return;
+    const restoredMessages = resumeSession.conversationLog as ChatMessage[];
+    setVersionMismatch(false);
+    setActiveExercise(exercise);
+    setActiveSession({
+      id: resumeSession.clientSessionId,
+      start_time: new Date(resumeSession.startedAt).toISOString(),
+      status: 'active',
+    });
+    setIntroTranscript(resumeSession.type === 'pre_test_intro' ? (resumeSession.answers[0]?.text || '') : '');
+    messagesRef.current = restoredMessages;
+    setMessages(restoredMessages);
+    setConnectionState(resumeSession.type === 'pre_test_active_listening' ? 'ready' : 'idle');
+    setNotice('Your saved offline Pre-Test activity has been restored from its last checkpoint.');
+    onSessionModeChange(true);
+  }, [onSessionModeChange, resumeSession]);
+
+  useEffect(() => {
+    if (sessionMode !== 'offline' || !activeSession || !activeExercise) return;
+    if (activeExercise.kind === 'active-listening') {
+      const answerCount = messagesRef.current.filter(message => message.sender === 'user').length;
+      if (answerCount === 0 && resumeSession) {
+        const canonicalPrompt = resumeSession.serverSessionId
+          ? getActiveListeningPromptForServerSession(resumeSession.serverSessionId)
+          : getOfflineActiveListeningPrompt(resumeSession.clientSessionId);
+        const alignedMessages: ChatMessage[] = [{ sender: 'ai', text: canonicalPrompt }];
+        void onActivityCheckpoint({
+          currentQuestion: canonicalPrompt,
+          conversationLog: alignedMessages,
+          currentStep: 0,
+          responseCount: 0,
+        }).then(saved => {
+          if (!saved) return;
+          messagesRef.current = alignedMessages;
+          setMessages(alignedMessages);
+        });
+      }
+    }
+    connectionAttemptRef.current += 1;
+    clearActiveListeningTimeout();
+    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+    reconnectTimeoutRef.current = null;
+    wsRef.current?.close(1000, 'Activity locked offline.');
+    wsRef.current = null;
+    setConnectionState(activeExercise.kind === 'active-listening' ? 'ready' : 'idle');
+    setIsAiResponding(false);
+    setNotice('Connection restored later will not switch this activity back to cloud AI. Progress is saved locally.');
+  }, [activeExercise, activeSession, onActivityCheckpoint, resumeSession, sessionMode]);
+
   const loadSessions = useCallback(async () => {
+    if (!effectiveOnline) {
+      setLoading(false);
+      return;
+    }
     const token = localStorage.getItem('token');
     if (!token) return;
     setLoading(true);
@@ -150,7 +217,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
     } finally {
       setLoading(false);
     }
-  }, [apiUrl]);
+  }, [apiUrl, effectiveOnline]);
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
 
@@ -241,7 +308,19 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
         clearActiveListeningTimeout();
         aiMessageOpenRef.current = false;
         setIsAiResponding(false);
-        if (aiSpeechBufferRef.current.trim()) speakText(aiSpeechBufferRef.current.trim());
+        const completedQuestion = aiSpeechBufferRef.current.trim();
+        if (completedQuestion) {
+          speakText(completedQuestion);
+          onActivityCheckpoint({
+            conversationLog: messagesRef.current,
+            currentQuestion: completedQuestion,
+            responseCount: messagesRef.current.filter(message => message.sender === 'user').length,
+            eyeContactSummary: {
+              score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+              samples: eyeTracker.samples,
+            },
+          });
+        }
         aiSpeechBufferRef.current = '';
         return;
       }
@@ -261,13 +340,17 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
         setIsAiResponding(true);
         aiSpeechBufferRef.current += data.text;
         setMessages(prev => {
+          let next: ChatMessage[];
           if (aiMessageOpenRef.current && prev[prev.length - 1]?.sender === 'ai') {
-            return prev.map((message, index) =>
+            next = prev.map((message, index) =>
               index === prev.length - 1 ? { ...message, text: message.text + data.text } : message
             );
+          } else {
+            aiMessageOpenRef.current = true;
+            next = [...prev, { sender: 'ai', text: data.text }];
           }
-          aiMessageOpenRef.current = true;
-          return [...prev, { sender: 'ai', text: data.text }];
+          messagesRef.current = next;
+          return next;
         });
       }
     };
@@ -307,8 +390,6 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
   }
 
   const startExercise = async (exercise: Exercise) => {
-    const token = localStorage.getItem('token');
-    if (!token) return;
     const lifecycleGeneration = lifecycleGenerationRef.current + 1;
     lifecycleGenerationRef.current = lifecycleGeneration;
     setStarting(exercise.endpoint);
@@ -320,6 +401,46 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
     setConnectionState('idle');
     cancelListening();
     try {
+      if (!effectiveOnline) {
+        const type = exercise.kind === 'intro' ? 'pre_test_intro' : 'pre_test_active_listening';
+        const clientSessionId = createClientSessionId();
+        const questionPackVersion = exercise.kind === 'intro'
+          ? PRETEST_WHO_AM_I_VERSION
+          : PRETEST_ACTIVE_LISTENING_VERSION;
+        const prompt = exercise.kind === 'intro'
+          ? PRETEST_WHO_AM_I_PROMPT
+          : getOfflineActiveListeningPrompt(clientSessionId);
+        const initialMessages: ChatMessage[] = exercise.kind === 'active-listening'
+          ? [{ sender: 'ai', text: prompt }]
+          : [];
+        const checkpoint = await onActivityStart({
+          type,
+          mode: 'offline',
+          clientSessionId,
+          questionPackVersion,
+          currentQuestion: prompt,
+          conversationLog: initialMessages,
+          currentStep: 0,
+          activityState: { exerciseKind: exercise.kind, exerciseTitle: exercise.title },
+        });
+        if (!checkpoint || lifecycleGenerationRef.current !== lifecycleGeneration) return;
+        setActiveExercise(exercise);
+        setActiveSession({
+          id: checkpoint.clientSessionId,
+          start_time: new Date(checkpoint.startedAt).toISOString(),
+          status: 'active',
+        });
+        messagesRef.current = initialMessages;
+        setMessages(initialMessages);
+        setConnectionState(exercise.kind === 'active-listening' ? 'ready' : 'idle');
+        setNotice(`${exercise.title} started offline. Your progress will be saved on this device.`);
+        onSessionModeChange(true);
+        if (exercise.kind === 'active-listening') speakText(prompt);
+        return;
+      }
+
+      const token = localStorage.getItem('token');
+      if (!token) return;
       const response = await fetch(`${apiUrl}${exercise.endpoint}/start`, {
         method: 'POST',
         headers: {
@@ -336,6 +457,17 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
       setActiveExercise(exercise);
       setActiveSession(session);
       onSessionModeChange(true);
+      const type = exercise.kind === 'intro' ? 'pre_test_intro' : 'pre_test_active_listening';
+      const canonicalPrompt = exercise.kind === 'intro'
+        ? PRETEST_WHO_AM_I_PROMPT
+        : getActiveListeningPromptForServerSession(Number(session.id));
+      void onActivityStart({
+        type,
+        serverSessionId: typeof session.id === 'number' ? session.id : null,
+        questionPackVersion: exercise.kind === 'intro' ? PRETEST_WHO_AM_I_VERSION : PRETEST_ACTIVE_LISTENING_VERSION,
+        currentQuestion: canonicalPrompt,
+        activityState: { exerciseKind: exercise.kind, exerciseTitle: exercise.title },
+      });
       if (exercise.kind === 'active-listening') {
         connectActiveListeningChat(session);
       } else {
@@ -371,34 +503,136 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
     setIsVoiceSpeaking(false);
     setConnectionState('idle');
     setNotice('Exercise exited. Complete the exercise later to finish it properly.');
+    void onActivityEnd('abandoned');
     onSessionModeChange(false);
   };
 
-  const sendReply = (spokenText = reply) => {
+  const sendReply = async (spokenText = reply) => {
     const text = spokenText.trim();
     if (!text || isAiResponding) return;
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (sessionMode !== 'offline' && (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)) return;
     aiMessageOpenRef.current = false;
     aiSpeechBufferRef.current = '';
-    setMessages(prev => [...prev, { sender: 'user', text }]);
-    wsRef.current.send(JSON.stringify({ text }));
+    const nextMessages = [...messagesRef.current, { sender: 'user' as const, text }];
+    const saved = await onActivityCheckpoint({
+      conversationLog: nextMessages,
+      responseCount: nextMessages.filter(message => message.sender === 'user').length,
+      answers: nextMessages
+        .filter(message => message.sender === 'user')
+        .map((message, index) => ({ step: index + 1, text: message.text, createdAt: Date.now() })),
+      eyeContactSummary: {
+        score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+        samples: eyeTracker.samples,
+      },
+      pendingEvaluation: sessionMode === 'offline'
+        ? { aiFeedback: true, reason: 'Active Listening feedback requires server evaluation after sync.' }
+        : null,
+    });
+    if (!saved) return;
+    messagesRef.current = nextMessages;
+    setMessages(nextMessages);
+    if (sessionMode === 'offline') {
+      setReply('');
+      setNotice('Response saved locally. Detailed AI feedback is pending until this activity is synchronized.');
+      return;
+    }
+    wsRef.current?.send(JSON.stringify({ text }));
   };
 
   const recordIntro = () => {
+    if (!activeExercise) return;
     setError(null);
-    startListening(transcript => {
-      setIntroTranscript(prev => [prev, transcript].filter(Boolean).join(' ').trim());
-    }, setError);
+    startListening(async transcript => {
+        const nextTranscript = [introTranscript, transcript].filter(Boolean).join(' ').trim();
+        const saved = await onActivityCheckpoint({
+          currentStep: 1,
+          responseCount: nextTranscript ? 1 : 0,
+          answers: nextTranscript ? [{ step: 1, text: nextTranscript, createdAt: Date.now() }] : [],
+          eyeContactSummary: {
+            score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+            samples: eyeTracker.samples,
+          },
+        });
+        if (saved) setIntroTranscript(nextTranscript);
+    }, setError, sessionMode === 'offline' && activeSession ? {
+      enabled: true,
+      activityType: activeExercise.kind === 'intro' ? 'pre_test_intro' : 'pre_test_active_listening',
+      turnId: 'intro-1',
+      answerIndex: 1,
+      persistAudio: onOfflineAudioCaptured,
+    } : undefined);
+  };
+
+  const saveTypedIntro = async () => {
+    const text = introTranscript.trim();
+    if (!text) return;
+    await onActivityCheckpoint({
+      currentStep: 1,
+      responseCount: 1,
+      answers: [{ step: 1, text, createdAt: Date.now() }],
+      eyeContactSummary: {
+        score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+        samples: eyeTracker.samples,
+      },
+    });
   };
 
   const recordAndSendReply = () => {
     setError(null);
-    startListening(transcript => sendReply(transcript), setError);
+    const answerIndex = messagesRef.current.filter(message => message.sender === 'user').length + 1;
+    startListening(transcript => void sendReply(transcript), setError, sessionMode === 'offline' && activeSession ? {
+      enabled: true,
+      activityType: 'pre_test_active_listening',
+      turnId: `active-listening-${answerIndex}`,
+      answerIndex,
+      persistAudio: onOfflineAudioCaptured,
+    } : undefined);
   };
 
   const completeActiveExercise = async () => {
+    if (!activeSession || !activeExercise) return;
+    if (sessionMode === 'offline') {
+      setCompleting(true);
+      setError(null);
+      const isIntro = activeExercise.kind === 'intro';
+      const result = isIntro ? evaluateWhoAmI(introTranscript) : evaluateActiveListening(messages);
+      const checkpointSaved = await onActivityCheckpoint({
+        conversationLog: isIntro ? [] : messages,
+        responseCount: isIntro ? (introTranscript.trim() ? 1 : 0) : messages.filter(message => message.sender === 'user').length,
+        currentStep: isIntro ? 1 : messages.filter(message => message.sender === 'user').length,
+        answers: isIntro
+          ? [{ step: 1, text: introTranscript.trim(), createdAt: Date.now() }]
+          : messages.filter(message => message.sender === 'user').map((message, index) => ({ step: index + 1, text: message.text, createdAt: Date.now() })),
+        localEvaluation: result.evaluation,
+        localScore: result.localScore,
+        evaluationAuthority: 'local_provisional',
+        pendingEvaluation: isIntro ? null : {
+          aiFeedback: true,
+          reason: 'Summary accuracy and detailed AI feedback require server evaluation after sync.',
+        },
+        eyeContactSummary: {
+          score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+          samples: eyeTracker.samples,
+        },
+      });
+      if (!checkpointSaved || !await onActivityEnd('completed_local')) {
+        setCompleting(false);
+        return;
+      }
+      cancelListening();
+      setActiveExercise(null);
+      setActiveSession(null);
+      setMessages([]);
+      messagesRef.current = [];
+      setIntroTranscript('');
+      setConnectionState('idle');
+      setNotice(`${activeExercise.title} completed locally and is pending sync.`);
+      onSessionModeChange(false);
+      setCompleting(false);
+      return;
+    }
     const token = localStorage.getItem('token');
-    if (!token || !activeSession || !activeExercise) return;
+    if (!token) return;
     const lifecycleGeneration = lifecycleGenerationRef.current;
     setCompleting(true);
     setError(null);
@@ -414,14 +648,15 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
         body: JSON.stringify(isIntro ? {
           transcript: introTranscript,
           evaluation: {
-            ...getBasicIntroEvaluation(introTranscript),
+            ...evaluateWhoAmI(introTranscript).evaluation,
             eye_contact_score: eyeTracker.samples > 0 ? eyeTracker.score : null,
             eye_contact_samples: eyeTracker.samples,
           },
         } : {
           conversation: messages,
           evaluation: {
-            ...getBasicActiveListeningEvaluation(messages),
+            ...evaluateActiveListening(messages).evaluation,
+            feedback_summary: 'Active listening exercise completed. Review the transcript for the AI feedback and summary accuracy.',
             eye_contact_score: eyeTracker.samples > 0 ? eyeTracker.score : null,
             eye_contact_samples: eyeTracker.samples,
           },
@@ -445,6 +680,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
       setMessages([]);
       setIntroTranscript('');
       setNotice(`${activeExercise.title} session #${completedSession.id} completed.`);
+      void onActivityEnd('cloud_completed');
       onSessionModeChange(false);
       await loadSessions();
     } catch (err) {
@@ -511,12 +747,24 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                 <div className="rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
                   <p className="text-program-accent font-bold">Prompt</p>
                   <p className="mt-1">
-                    Please introduce yourself. Include your name, course or department, interests, strengths, and why you are preparing for interviews.
+                    {PRETEST_WHO_AM_I_PROMPT}
                   </p>
                 </div>
                 <div className="mt-4 min-h-[35vh] rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
-                  {introTranscript || <span className="text-muted">Press the mic and speak your self-introduction.</span>}
+                  {sessionMode === 'offline' ? (
+                    <textarea
+                      value={introTranscript}
+                      onChange={event => setIntroTranscript(event.target.value)}
+                      placeholder="Speak with the mic or type your self-introduction here."
+                      className="min-h-[30vh] w-full resize-y bg-transparent text-ink outline-none placeholder:text-muted"
+                    />
+                  ) : introTranscript || <span className="text-muted">Press the mic and speak your self-introduction.</span>}
                 </div>
+                {sessionMode === 'offline' && (
+                  <div className="mt-3 flex justify-end">
+                    <button type="button" onClick={() => void saveTypedIntro()} disabled={!introTranscript.trim()} className="rounded-lg border border-line px-4 py-2 text-sm font-semibold disabled:opacity-50">Save Typed Answer</button>
+                  </div>
+                )}
                 <div className="mt-4 flex justify-center">
                   <button
                     onClick={isListening ? stopListening : recordIntro}
@@ -580,6 +828,12 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
                     {isListening ? 'Stop Recording' : 'Speak Answer'}
                   </button>
                 </div>
+                {sessionMode === 'offline' && (
+                  <div className="mx-auto mt-4 flex max-w-2xl gap-2">
+                    <textarea value={reply} onChange={event => setReply(event.target.value)} placeholder="Or type your summary while offline." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none" />
+                    <button type="button" onClick={() => void sendReply()} disabled={!reply.trim()} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Submit</button>
+                  </div>
+                )}
               </>
             )}
           </section>
@@ -630,7 +884,7 @@ export function PreTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl
               <div className="rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
                 <p className="text-program-accent font-bold">Prompt</p>
                 <p className="mt-1">
-                  Please introduce yourself. Include your name, course or department, interests, strengths, and why you are preparing for interviews.
+                  {PRETEST_WHO_AM_I_PROMPT}
                 </p>
               </div>
               <div className="mt-4 min-h-48 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">

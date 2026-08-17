@@ -9,11 +9,12 @@ from alembic.migration import MigrationContext
 from sqlalchemy.engine import make_url
 
 
-EXPECTED_REVISION = "c7f2a9d4e6b1"
+EXPECTED_REVISION = "a8d4e2f6b1c3"
 EXPECTED_TABLES = {
     "custom_skills_messages",
     "custom_skills_sessions",
     "drill_sessions",
+    "offline_sync_receipts",
     "post_test_interview_messages",
     "post_test_interview_sessions",
     "pre_test_active_listening_messages",

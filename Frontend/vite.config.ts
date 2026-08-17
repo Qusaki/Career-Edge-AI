@@ -20,6 +20,7 @@ export default defineConfig(() => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,json,wasm,task}'],
+          globIgnores: ['**/offline-webllm-*.js'],
           maximumFileSizeToCacheInBytes: 5000000000, // Large max size for model weights if cached in service worker (though IndexedDB is better)
         },
         manifest: {
@@ -40,6 +41,15 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+      },
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('@mlc-ai/web-llm')) return 'offline-webllm';
+          },
+        },
       },
     },
     server: {

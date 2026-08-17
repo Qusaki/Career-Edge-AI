@@ -5,9 +5,14 @@ import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
+import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
+import { createClientSessionId } from '../offline/sessionFoundation';
+import { evaluatePostTest } from '../offline/localEvaluation';
+import { getPostTestQuestions, hasCurrentQuestionPack, POST_TEST_VERSION } from '../offline/questionPacks';
+import { appendOfflinePostTestAnswer } from '../offline/activityRuntime';
 
 type Session = {
-  id: number;
+  id: number | string;
   start_time: string;
   status: string;
   total_score?: number | null;
@@ -33,25 +38,28 @@ const getWebSocketUrl = (apiUrl: string, path: string, token: string) => {
   return url.toString();
 };
 
-const getBasicPostTestEvaluation = (messages: ChatMessage[]) => {
-  const userTurns = messages.filter(message => message.sender === 'user' && message.text.trim()).length;
-  const baseScore = userTurns >= 5 ? 4 : userTurns >= 3 ? 3 : 2;
-
-  return {
-    score_vocabulary: baseScore,
-    score_clarity: baseScore,
-    score_grammar: baseScore,
-    score_courtesy: 4,
-    score_conciseness: baseScore,
-    feedback_summary: 'Post-test interview completed. Review the transcript for detailed performance notes.',
-  };
-};
-
 const POST_TEST_FIRST_PROMPT_TIMEOUT_MS = 30000;
 const POST_TEST_MAX_RETRIES = 1;
 const POST_TEST_RETRY_BACKOFF_MS = 500;
 
-export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUrl: string; onSessionModeChange?: (isSessionMode: boolean) => void }) {
+type PostTestPageProps = OfflineActivityBridgeProps & {
+  apiUrl: string;
+  userDepartment: string;
+  onSessionModeChange?: (isSessionMode: boolean) => void;
+};
+
+export function PostTestPage({
+  apiUrl,
+  onSessionModeChange = () => {},
+  effectiveOnline,
+  sessionMode,
+  resumeSession,
+  onActivityStart,
+  onActivityCheckpoint,
+  onActivityEnd,
+  onOfflineAudioCaptured,
+  userDepartment,
+}: PostTestPageProps) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
@@ -66,14 +74,90 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const messagesRef = useRef<ChatMessage[]>([]);
   const aiMessageOpenRef = useRef(false);
   const aiSpeechBufferRef = useRef('');
   const firstPromptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionAttemptRef = useRef(0);
   const lifecycleGenerationRef = useRef(0);
-  const { isListening, startListening, stopListening, cancelListening } = useSpeechInput();
+  const resumedSessionRef = useRef<string | null>(null);
+  const { isListening, startListening, stopListening, cancelListening, enableOfflineRecording } = useSpeechInput();
   const eyeTracker = useEyeContactTracker(Boolean(activeSession));
+
+  useEffect(() => {
+    if (sessionMode !== 'offline' || !isListening || !activeSession) return;
+    const answerIndex = messagesRef.current.filter(message => message.sender === 'user').length + 1;
+    void enableOfflineRecording({
+      enabled: true,
+      activityType: 'post_test',
+      turnId: `post-test-${answerIndex}`,
+      answerIndex,
+      persistAudio: onOfflineAudioCaptured,
+    });
+  }, [activeSession, enableOfflineRecording, isListening, onOfflineAudioCaptured, sessionMode]);
+
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+  useEffect(() => {
+    if (!resumeSession || resumeSession.type !== 'post_test' || resumedSessionRef.current === resumeSession.clientSessionId) return;
+    resumedSessionRef.current = resumeSession.clientSessionId;
+    if (!hasCurrentQuestionPack('post_test', resumeSession.questionPackVersion)) {
+      setError('This saved offline activity uses an older question version. It was preserved and cannot be resumed automatically.');
+      return;
+    }
+    const restoredMessages = resumeSession.conversationLog as ChatMessage[];
+    const questions = getPostTestQuestions(String(resumeSession.activityState.department || userDepartment));
+    const answerCount = restoredMessages.filter(message => message.sender === 'user').length;
+    const currentQuestion = resumeSession.currentQuestion || questions[Math.min(answerCount, questions.length - 1)];
+    messagesRef.current = restoredMessages;
+    setMessages(restoredMessages);
+    setLatestAiQuestion(currentQuestion);
+    setActiveSession({
+      id: resumeSession.clientSessionId,
+      start_time: new Date(resumeSession.startedAt).toISOString(),
+      status: 'active',
+    });
+    setConnectionState('ready');
+    setNotice('Your saved offline Post-Test has been restored from its last checkpoint.');
+    onSessionModeChange(true);
+  }, [onSessionModeChange, resumeSession, userDepartment]);
+
+  useEffect(() => {
+    if (sessionMode !== 'offline' || !activeSession) return;
+    const alignWithOfflinePack = async () => {
+      const questions = getPostTestQuestions(userDepartment);
+      const answerCount = messagesRef.current.filter(message => message.sender === 'user').length;
+      if (answerCount >= questions.length) return;
+      const expectedQuestion = questions[answerCount];
+      const currentMessages = messagesRef.current;
+      const lastMessage = currentMessages[currentMessages.length - 1];
+      const alignedMessages: ChatMessage[] = lastMessage?.sender === 'user'
+        ? [...currentMessages, { sender: 'ai', text: expectedQuestion }]
+        : lastMessage?.sender === 'ai' && lastMessage.text !== expectedQuestion
+          ? [...currentMessages.slice(0, -1), { sender: 'ai', text: expectedQuestion }]
+          : currentMessages;
+      const saved = await onActivityCheckpoint({
+        currentQuestion: expectedQuestion,
+        conversationLog: alignedMessages,
+        currentStep: answerCount,
+        responseCount: answerCount,
+      });
+      if (!saved) return;
+      messagesRef.current = alignedMessages;
+      setMessages(alignedMessages);
+      setLatestAiQuestion(expectedQuestion);
+    };
+    void alignWithOfflinePack();
+    connectionAttemptRef.current += 1;
+    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+    reconnectTimeoutRef.current = null;
+    wsRef.current?.close(1000, 'Activity locked offline.');
+    wsRef.current = null;
+    setConnectionState('ready');
+    setIsAiResponding(false);
+    setNotice('This Post-Test remains offline until it is completed or abandoned.');
+  }, [activeSession, onActivityCheckpoint, sessionMode, userDepartment]);
 
   const speakText = useCallback((text: string) => {
     if (!('speechSynthesis' in window)) return;
@@ -101,6 +185,10 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
   };
 
   const loadSessions = useCallback(async () => {
+    if (!effectiveOnline) {
+      setLoading(false);
+      return;
+    }
     const token = localStorage.getItem('token');
     if (!token) return;
     setLoading(true);
@@ -116,7 +204,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
     } finally {
       setLoading(false);
     }
-  }, [apiUrl]);
+  }, [apiUrl, effectiveOnline]);
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
 
@@ -198,6 +286,15 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
           const completedQuestion = aiSpeechBufferRef.current.trim();
           setLatestAiQuestion(completedQuestion);
           speakText(completedQuestion);
+          onActivityCheckpoint({
+            conversationLog: messagesRef.current,
+            currentQuestion: completedQuestion,
+            responseCount: messagesRef.current.filter(message => message.sender === 'user').length,
+            eyeContactSummary: {
+              score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+              samples: eyeTracker.samples,
+            },
+          });
         }
         aiSpeechBufferRef.current = '';
         return;
@@ -218,16 +315,19 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
         setIsAiResponding(true);
         aiSpeechBufferRef.current += data.text;
         setMessages(prev => {
+          let next: ChatMessage[];
           if (aiMessageOpenRef.current && prev[prev.length - 1]?.sender === 'ai') {
-            return prev.map((message, index) =>
+            next = prev.map((message, index) =>
               index === prev.length - 1 ? { ...message, text: message.text + data.text } : message
             );
+          } else if (prev[prev.length - 1]?.sender === 'ai' && prev[prev.length - 1]?.text === data.text) {
+            next = prev;
+          } else {
+            aiMessageOpenRef.current = true;
+            next = [...prev, { sender: 'ai', text: data.text }];
           }
-          if (prev[prev.length - 1]?.sender === 'ai' && prev[prev.length - 1]?.text === data.text) {
-            return prev;
-          }
-          aiMessageOpenRef.current = true;
-          return [...prev, { sender: 'ai', text: data.text }];
+          messagesRef.current = next;
+          return next;
         });
       }
     };
@@ -267,8 +367,6 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
   }
 
   const startPostTest = async () => {
-    const token = localStorage.getItem('token');
-    if (!token) return;
     const lifecycleGeneration = lifecycleGenerationRef.current + 1;
     lifecycleGenerationRef.current = lifecycleGeneration;
     setStarting(true);
@@ -280,6 +378,38 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
     cancelListening();
     setConnectionState('idle');
     try {
+      const questions = getPostTestQuestions(userDepartment);
+      if (!effectiveOnline) {
+        const clientSessionId = createClientSessionId();
+        const initialMessages: ChatMessage[] = [{ sender: 'ai', text: questions[0] }];
+        const checkpoint = await onActivityStart({
+          type: 'post_test',
+          mode: 'offline',
+          clientSessionId,
+          questionPackVersion: POST_TEST_VERSION,
+          currentQuestion: questions[0],
+          conversationLog: initialMessages,
+          currentStep: 0,
+          activityState: { department: userDepartment },
+        });
+        if (!checkpoint || lifecycleGenerationRef.current !== lifecycleGeneration) return;
+        messagesRef.current = initialMessages;
+        setMessages(initialMessages);
+        setLatestAiQuestion(questions[0]);
+        setActiveSession({
+          id: checkpoint.clientSessionId,
+          start_time: new Date(checkpoint.startedAt).toISOString(),
+          status: 'active',
+        });
+        setConnectionState('ready');
+        setNotice('Post-Test started offline. Complete all five questions; your provisional result will be queued for sync.');
+        onSessionModeChange(true);
+        speakText(questions[0]);
+        return;
+      }
+
+      const token = localStorage.getItem('token');
+      if (!token) return;
       const response = await fetch(`${apiUrl}/post-test-interview/start`, {
         method: 'POST',
         headers: {
@@ -300,14 +430,23 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
       if (sessionDetailResponse.ok) {
         const sessionDetail: { messages?: Array<{ role: string; content: string }> } = await sessionDetailResponse.json();
         if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
-        setMessages((sessionDetail.messages || []).map(message => ({
+        const restoredMessages = (sessionDetail.messages || []).map(message => ({
           sender: message.role === 'ai' ? 'ai' : 'user',
           text: message.content,
-        })));
+        })) as ChatMessage[];
+        messagesRef.current = restoredMessages;
+        setMessages(restoredMessages);
       }
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
       setActiveSession(session);
       onSessionModeChange(true);
+      void onActivityStart({
+        type: 'post_test',
+        serverSessionId: typeof session.id === 'number' ? session.id : null,
+        questionPackVersion: POST_TEST_VERSION,
+        currentQuestion: questions[0],
+        activityState: { department: userDepartment },
+      });
       connectPostTestChat(session);
       await loadSessions();
     } catch (err) {
@@ -338,28 +477,114 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
     setConnectionState('idle');
     setLatestAiQuestion('');
     setNotice('Post-test exited. Complete the interview later to finish it properly.');
+    void onActivityEnd('abandoned');
     onSessionModeChange(false);
     void loadSessions();
   };
 
-  const sendReply = (spokenText = reply) => {
+  const sendReply = async (spokenText = reply) => {
     const text = spokenText.trim();
-    if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || isAiResponding || isVoiceSpeaking) return;
+    if (!text || isAiResponding || isVoiceSpeaking) return;
+    if (sessionMode !== 'offline' && (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)) return;
     aiMessageOpenRef.current = false;
     aiSpeechBufferRef.current = '';
-    setMessages(prev => [...prev, { sender: 'user', text }]);
-    wsRef.current.send(JSON.stringify({ text }));
+    const questions = getPostTestQuestions(userDepartment);
+    const offlineTurn = sessionMode === 'offline'
+      ? appendOfflinePostTestAnswer(messagesRef.current, text, questions)
+      : null;
+    const userMessages = offlineTurn
+      ? offlineTurn.conversationLog.filter(message => message.sender === 'user')
+      : [...messagesRef.current, { sender: 'user' as const, text }];
+    const answerCount = offlineTurn?.answerCount
+      ?? userMessages.filter(message => message.sender === 'user').length;
+    const nextQuestion = offlineTurn?.nextQuestion || '';
+    const checkpointMessages = offlineTurn?.conversationLog || userMessages;
+    const saved = await onActivityCheckpoint({
+      conversationLog: checkpointMessages,
+      currentQuestion: offlineTurn?.currentQuestion || questions[Math.min(answerCount - 1, questions.length - 1)],
+      currentStep: answerCount,
+      responseCount: answerCount,
+      answers: userMessages
+        .filter(message => message.sender === 'user')
+        .map((message, index) => ({ step: index + 1, text: message.text, createdAt: Date.now() })),
+      eyeContactSummary: {
+        score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+        samples: eyeTracker.samples,
+      },
+    });
+    if (!saved) return;
+    messagesRef.current = checkpointMessages;
+    setMessages(checkpointMessages);
+    if (sessionMode === 'offline') {
+      setLatestAiQuestion(nextQuestion);
+      setReply('');
+      if (nextQuestion) speakText(nextQuestion);
+      else setNotice('All five offline Post-Test answers are saved. Complete the interview to queue it for sync.');
+      return;
+    }
+    wsRef.current?.send(JSON.stringify({ text }));
     setReply('');
   };
 
   const recordAndSendReply = () => {
     setError(null);
-    startListening(transcript => sendReply(transcript), setError);
+    const answerIndex = messagesRef.current.filter(message => message.sender === 'user').length + 1;
+    startListening(transcript => void sendReply(transcript), setError, sessionMode === 'offline' && activeSession ? {
+      enabled: true,
+      activityType: 'post_test',
+      turnId: `post-test-${answerIndex}`,
+      answerIndex,
+      persistAudio: onOfflineAudioCaptured,
+    } : undefined);
   };
 
   const completePostTest = async () => {
+    if (!activeSession) return;
+    if (sessionMode === 'offline') {
+      if (messages.filter(message => message.sender === 'user').length < 5) {
+        setError('Complete all five Post-Test questions before finishing this offline session.');
+        return;
+      }
+      setCompleting(true);
+      setError(null);
+      const result = evaluatePostTest(messages);
+      const rawAnswers = messages.filter(message => message.sender === 'user').map((message, index) => ({
+        step: index + 1,
+        text: message.text,
+        createdAt: Date.now(),
+      }));
+      const saved = await onActivityCheckpoint({
+        conversationLog: messages,
+        answers: rawAnswers,
+        responseCount: rawAnswers.length,
+        currentStep: rawAnswers.length,
+        localEvaluation: result.evaluation,
+        localScore: result.localScore,
+        evaluationAuthority: 'local_provisional',
+        pendingEvaluation: null,
+        eyeContactSummary: {
+          score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+          samples: eyeTracker.samples,
+        },
+      });
+      if (!saved || !await onActivityEnd('completed_local')) {
+        setCompleting(false);
+        return;
+      }
+      cancelListening();
+      cancelSpeech();
+      setActiveSession(null);
+      setMessages([]);
+      messagesRef.current = [];
+      setLatestAiQuestion('');
+      setConnectionState('idle');
+      setNotice('Post-Test completed locally and is pending sync.');
+      onSessionModeChange(false);
+      setCompleting(false);
+      return;
+    }
     const token = localStorage.getItem('token');
-    if (!token || !activeSession) return;
+    if (!token) return;
     const lifecycleGeneration = lifecycleGenerationRef.current;
     setCompleting(true);
     setError(null);
@@ -374,7 +599,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
         body: JSON.stringify({
           conversation: messages,
           evaluation: {
-            ...getBasicPostTestEvaluation(messages),
+            ...evaluatePostTest(messages).evaluation,
             eye_contact_score: eyeTracker.samples > 0 ? eyeTracker.score : null,
             eye_contact_samples: eyeTracker.samples,
           },
@@ -398,6 +623,7 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
       setMessages([]);
       setLatestAiQuestion('');
       setNotice(`Post-Test session ${completedSession.id} completed.`);
+      void onActivityEnd('cloud_completed');
       onSessionModeChange(false);
       await loadSessions();
     } catch (err) {
@@ -429,7 +655,9 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
             </button>
             <button
               onClick={completePostTest}
-              disabled={completing || !messages.some(message => message.sender === 'user')}
+              disabled={completing || (sessionMode === 'offline'
+                ? messages.filter(message => message.sender === 'user').length < 5
+                : !messages.some(message => message.sender === 'user'))}
               className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
@@ -527,6 +755,12 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
                 {isListening ? 'Stop Recording' : 'Speak Answer'}
               </button>
             </div>
+            {sessionMode === 'offline' && (
+              <div className="mx-auto mt-4 flex max-w-2xl gap-2">
+                <textarea value={reply} onChange={event => setReply(event.target.value)} placeholder="Or type your answer while offline." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none" />
+                <button type="button" onClick={() => void sendReply()} disabled={!reply.trim() || visibleUserMessages.length >= 5} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Submit</button>
+              </div>
+            )}
           </section>
         </div>
       </div>
@@ -558,7 +792,9 @@ export function PostTestPage({ apiUrl, onSessionModeChange = () => {} }: { apiUr
             </div>
             <button
               onClick={completePostTest}
-              disabled={completing || !messages.some(message => message.sender === 'user')}
+              disabled={completing || (sessionMode === 'offline'
+                ? messages.filter(message => message.sender === 'user').length < 5
+                : !messages.some(message => message.sender === 'user'))}
               className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}

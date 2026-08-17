@@ -3,6 +3,7 @@ import { motion, useMotionValue, useSpring, useTransform } from 'motion/react';
 import { Mic, FileText, CheckCircle, BarChart, Play, ArrowRight, Github, Facebook, BrainCircuit, Target, GraduationCap, Menu, X, MessageSquare, Video, Plus, Send, MousePointer2, Paperclip, LogOut, MapPin, Phone, Mail, Globe } from 'lucide-react';
 import { AuthPage } from './components/AuthPage';
 import { Dashboard } from './components/Dashboard';
+import { forgetVerifiedAccount } from './offline/accountBinding';
 
 const MorphingGraphic = () => {
   const [isResume, setIsResume] = useState(false);
@@ -50,7 +51,17 @@ const MorphingGraphic = () => {
     }
   };
 
-  const resumeStates = [];
+  type ResumeState = {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    r: string;
+    color: string;
+    isBg?: boolean;
+  };
+
+  const resumeStates: ResumeState[] = [];
 
   // 16 Background Bars
   for (let i = 0; i < 16; i++) {
@@ -403,6 +414,7 @@ export default function App() {
         isNewSignupSession={isNewSignupSession}
         onLogout={() => {
           localStorage.removeItem('token');
+          forgetVerifiedAccount();
           setIsNewSignupSession(false);
           setCurrentView('landing');
         }}

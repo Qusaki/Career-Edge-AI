@@ -7,17 +7,59 @@ import { PreTestPage } from './PreTestPage';
 import { DrillsPage } from './DrillsPage';
 import { PostTestPage } from './PostTestPage';
 import { useWebLLM } from '../hooks/useWebLLM';
+import type { MLCEngine } from '@mlc-ai/web-llm';
+import { useConnectivity } from '../hooks/useConnectivity';
+import {
+  retryOfflineSessionManually,
+  syncOfflineQueueWithRetry,
+} from '../offline/offlineSyncClient';
+import { maintainOwnedOfflineStorage } from '../offline/offlineCleanup';
+import { getVerifiedAccountForToken, rememberVerifiedAccount } from '../offline/accountBinding';
+import { getQuestionPackVersion, hasCurrentQuestionPack } from '../offline/questionPacks';
+import {
+  appendOfflineInterviewAnswer,
+  createOfflineInterviewActivityState,
+  evaluateOfflineInterview,
+  generateWebLLMProfessorTurn,
+  getFallbackProfessorTurn,
+  OFFLINE_INTERVIEW_RESPONSE_LIMIT,
+  readOfflineInterviewActivityState,
+  transitionOfflineInterviewToFallback,
+  type OfflineInterviewActivityState,
+  type OfflineInterviewEngine,
+  type OfflineInterviewKind,
+} from '../offline/interviewRuntime';
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
-import { accountStorage, type AccountOfflineSession } from '../db';
+import {
+  accountStorage,
+  type AccountOfflineSession,
+  type OfflineActivityType,
+} from '../db';
+import {
+  createOfflineAudioRecorder,
+  getMicrophoneErrorMessage,
+  hasStorageCapacity,
+  OFFLINE_AUDIO_STORAGE_HEADROOM_BYTES,
+  toOfflineAudioRecord,
+  type OfflineAudioRecorderController,
+} from '../offline/offlineAudioRecorder';
+import {
+  createActivityCheckpoint,
+  createCompletedLocalCheckpoint,
+  createPendingSyncCheckpoint,
+  mergeActivityCheckpoint,
+  type ActivityCheckpointUpdate,
+  type OfflineAudioCheckpointInput,
+  type ActivitySessionEnd,
+  type ActivitySessionStart,
+} from '../offline/sessionFoundation';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME, getClearSpeechTimeoutMs } from '../utils/speech';
 import { API_URL } from '../config/api';
 import { getProgramAccentTheme } from '../config/programTheme';
 import {
   buildActivityComparison,
   getCommunicationSkillScore,
-  getEnrollmentEvaluationTotal,
   getNormalizedActivityScore,
-  getThesisEvaluationTotal,
   isCompletedActivity,
 } from '../utils/analytics';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -95,11 +137,25 @@ interface LocalWebLLMOptions {
   enrollmentFinalTurn?: boolean;
 }
 
+type OnlineInterviewMode = 'enrollment' | 'thesis';
+
+interface OnlineInterviewHistoryMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 const APP_THEME_STORAGE_KEY = 'career-edge-theme';
 const DEFAULT_AVATAR_HOST = 'api.dicebear.com';
 const ENROLLMENT_FINAL_RESPONSE_TIMEOUT_MS = 60_000;
 const ENROLLMENT_FINAL_RESPONSE_FALLBACK = 'Thank you for completing your Career Edge interview. Your five responses have been recorded, and you can now continue to validation.';
 const ENROLLMENT_FINAL_TURN_INSTRUCTION = 'The student has just submitted their fifth and final answer. Do not ask another question or request another response. Give one brief, supportive, non-empty closing statement that acknowledges the interview is complete and tells the student they can continue to validation. Keep it concise for speech.';
+
+const getWebSocketUrl = (apiUrl: string, path: string, token: string) => {
+  const url = new URL(path, apiUrl.endsWith('/') ? apiUrl : `${apiUrl}/`);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.searchParams.set('token', token);
+  return url.toString();
+};
 
 class EnrollmentFinalResponseTimeoutError extends Error {
   constructor() {
@@ -184,6 +240,9 @@ class ProfessorAssetErrorBoundary extends React.Component<
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSession }) => {
+  const connectivity = useConnectivity(API_URL);
+  const connectivityOnlineRef = React.useRef(connectivity.effectiveOnline);
+  connectivityOnlineRef.current = connectivity.effectiveOnline;
   const [activeTab, setActiveTab] = useState<'dashboard' | 'pre-test' | 'drills' | 'post-test' | 'history' | 'analytics' | 'profile' | 'settings' | 'support' | 'privacy' | 'interview-type' | 'university-setup' | 'new-interview' | 'interview-session' | 'interview-result' | 'thesis-setup' | 'thesis-session'>(() => {
     if (window.location.pathname === '/pre-test') return 'pre-test';
     if (window.location.pathname === '/drills') return 'drills';
@@ -194,17 +253,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     if (window.location.pathname === '/profile') return 'profile';
     return 'dashboard';
   });
-  const shouldLoadInterviewAI = ['interview-type', 'university-setup', 'new-interview', 'interview-session', 'thesis-setup', 'thesis-session'].includes(activeTab);
   const {
     engine: webLLMEngine,
     isLoading: isLlmLoading,
-    progress: llmProgress,
     status: llmStatus,
     error: llmError,
     isReady: isLlmReady,
     hasError: hasLlmError,
-    retry: retryWebLLM
-  } = useWebLLM('Llama-3.2-1B-Instruct-q4f16_1-MLC', shouldLoadInterviewAI);
+    initializeCached: initializeCachedWebLLM,
+    release: releaseWebLLM,
+  } = useWebLLM('Llama-3.2-1B-Instruct-q4f16_1-MLC', false);
   const [isModuleSessionMode, setIsModuleSessionMode] = useState(false);
   const [prevTab, setPrevTab] = useState<string>('dashboard');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -240,6 +298,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const [communicationHistory, setCommunicationHistory] = useState<any[]>([]);
   const [authenticatedUserId, setAuthenticatedUserId] = useState<number | null>(null);
   const authenticatedUserIdRef = React.useRef<number | null>(null);
+  const [activeActivityCheckpoint, setActiveActivityCheckpoint] = useState<AccountOfflineSession | null>(null);
+  const activeActivityCheckpointRef = React.useRef<AccountOfflineSession | null>(null);
+  const [showConnectionLossPrompt, setShowConnectionLossPrompt] = useState(false);
+  const [offlineFoundationError, setOfflineFoundationError] = useState<string | null>(null);
+  const [connectionRestoredNotice, setConnectionRestoredNotice] = useState(false);
+  const [resumableOfflineSession, setResumableOfflineSession] = useState<AccountOfflineSession | null>(null);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [syncQueueSessions, setSyncQueueSessions] = useState<AccountOfflineSession[]>([]);
+  const [lastSyncNotice, setLastSyncNotice] = useState<string | null>(null);
+  const checkpointOperationRef = React.useRef<Promise<void>>(Promise.resolve());
+  const restoredEyeContactSummaryRef = React.useRef<{ score: number | null; samples: number } | null>(null);
   const [profile, setProfile] = useState({
     name: '',
     email: '',
@@ -349,6 +418,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [thesisResult, setThesisResult] = useState<any>(null);
   const [thesisConversationLog, setThesisConversationLog] = useState<{ sender: 'user' | 'ai', text: string }[]>([]);
+  const thesisConversationLogRef = React.useRef(thesisConversationLog);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [thesisHistory, setThesisHistory] = useState<any[]>([]);
   const [thesisElapsedSeconds, setThesisElapsedSeconds] = useState(0);
@@ -365,6 +435,152 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       (activeTab === 'thesis-session' && !thesisResult)
     )
   );
+
+  const queueCheckpointOperation = React.useCallback((operation: () => Promise<unknown>) => {
+    const queued = checkpointOperationRef.current
+      .catch(() => undefined)
+      .then(operation)
+      .then(() => undefined);
+    checkpointOperationRef.current = queued.catch(() => undefined);
+    return queued;
+  }, []);
+
+  const persistActivityCheckpoint = React.useCallback(async (checkpoint: AccountOfflineSession) => {
+    try {
+      await queueCheckpointOperation(() => accountStorage.putOfflineSession(checkpoint));
+      setOfflineFoundationError(null);
+      return true;
+    } catch (error) {
+      console.error('Unable to persist the activity checkpoint.', error);
+      setOfflineFoundationError(
+        'Career Edge could not save this activity locally. Keep this page open and retry before leaving.',
+      );
+      return false;
+    }
+  }, [queueCheckpointOperation]);
+
+  const beginActivityCheckpoint = React.useCallback(async (input: ActivitySessionStart) => {
+    const userId = authenticatedUserIdRef.current;
+    if (!userId) {
+      setOfflineFoundationError('A verified account is required before this activity can be saved offline.');
+      return null;
+    }
+    const checkpoint = createActivityCheckpoint(
+      userId,
+      input,
+      input.mode ?? 'online',
+      input.clientSessionId,
+    );
+    activeActivityCheckpointRef.current = checkpoint;
+    setActiveActivityCheckpoint(checkpoint);
+    const saved = await persistActivityCheckpoint(checkpoint);
+    if (!saved) {
+      activeActivityCheckpointRef.current = null;
+      setActiveActivityCheckpoint(null);
+      return null;
+    }
+    return checkpoint;
+  }, [persistActivityCheckpoint]);
+
+  const updateActivityCheckpoint = React.useCallback(async (update: ActivityCheckpointUpdate) => {
+    const current = activeActivityCheckpointRef.current;
+    if (!current) return false;
+    const next = mergeActivityCheckpoint(current, update);
+    activeActivityCheckpointRef.current = next;
+    setActiveActivityCheckpoint(next);
+    return persistActivityCheckpoint(next);
+  }, [persistActivityCheckpoint]);
+
+  const persistOfflineAudioCapture = React.useCallback(async (input: OfflineAudioCheckpointInput) => {
+    const current = activeActivityCheckpointRef.current;
+    if (!current || current.mode !== 'offline' || current.type !== input.activityType) return false;
+    if (!await hasStorageCapacity(input.capture.sizeBytes + OFFLINE_AUDIO_STORAGE_HEADROOM_BYTES)) {
+      setOfflineFoundationError('Browser storage is too low to save this recording. Your session remains open; use the typed answer or clear local site data.');
+      return false;
+    }
+    const { record, reference } = toOfflineAudioRecord({
+      userId: current.userId,
+      clientSessionId: current.clientSessionId,
+      activityType: current.type,
+      turnId: input.turnId,
+      answerIndex: input.answerIndex,
+    }, input.capture, input.transcriptText);
+    try {
+      await queueCheckpointOperation(() => accountStorage.putOfflineAudio(record));
+      const latest = activeActivityCheckpointRef.current;
+      if (!latest || latest.clientSessionId !== current.clientSessionId) return false;
+      const withoutReplacedTurn = latest.audioReferences.filter(item => item.turnId !== reference.turnId);
+      const next = mergeActivityCheckpoint(latest, {
+        audioReferences: [...withoutReplacedTurn, reference],
+      });
+      activeActivityCheckpointRef.current = next;
+      setActiveActivityCheckpoint(next);
+      const saved = await persistActivityCheckpoint(next);
+      if (!saved) return false;
+      setOfflineFoundationError(null);
+      return true;
+    } catch (error) {
+      console.error('Unable to persist offline audio metadata.', error);
+      setOfflineFoundationError('The recording could not be saved locally. Your activity has not advanced; retry or use the typed answer.');
+      return false;
+    }
+  }, [persistActivityCheckpoint, queueCheckpointOperation]);
+
+  const endActivityCheckpoint = React.useCallback(async (outcome: ActivitySessionEnd) => {
+    const current = activeActivityCheckpointRef.current;
+    if (!current) return false;
+    if (outcome === 'completed_local') {
+      const completed = createCompletedLocalCheckpoint(current);
+      activeActivityCheckpointRef.current = completed;
+      setActiveActivityCheckpoint(completed);
+      if (!await persistActivityCheckpoint(completed)) return false;
+
+      const queued = createPendingSyncCheckpoint(completed);
+      activeActivityCheckpointRef.current = queued;
+      setActiveActivityCheckpoint(queued);
+      if (!await persistActivityCheckpoint(queued)) return false;
+
+      activeActivityCheckpointRef.current = null;
+      setActiveActivityCheckpoint(null);
+      setShowConnectionLossPrompt(false);
+      return true;
+    }
+
+    activeActivityCheckpointRef.current = null;
+    setActiveActivityCheckpoint(null);
+    setShowConnectionLossPrompt(false);
+    try {
+      await queueCheckpointOperation(
+        () => accountStorage.deleteOfflineSession(current.userId, current.type, current.localId),
+      );
+      return true;
+    } catch (error) {
+      console.error('Unable to clear the completed activity checkpoint.', error);
+      setOfflineFoundationError('The local activity checkpoint could not be cleared safely.');
+      return false;
+    }
+  }, [persistActivityCheckpoint, queueCheckpointOperation]);
+
+  const getActiveActivityMode = React.useCallback((type: OfflineActivityType) => {
+    const active = activeActivityCheckpointRef.current;
+    return active?.type === type ? active.mode : 'online';
+  }, []);
+
+  const getCheckpointEyeContactSummary = React.useCallback(() => {
+    const saved = restoredEyeContactSummaryRef.current;
+    const currentSamples = eyeTracker.samples;
+    const currentScore = currentSamples > 0 ? eyeTracker.score : null;
+    if (!saved || saved.samples <= 0) {
+      return { score: currentScore, samples: currentSamples };
+    }
+    if (currentSamples <= 0 || currentScore === null) return saved;
+    const savedScore = saved.score ?? 0;
+    const samples = saved.samples + currentSamples;
+    return {
+      score: Math.round(((savedScore * saved.samples + currentScore * currentSamples) / samples) * 100) / 100,
+      samples,
+    };
+  }, [eyeTracker.samples, eyeTracker.score]);
   const communicationSkillCriteria = [
     {
       label: 'Vocabulary Usage',
@@ -603,17 +819,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       const data = cached ? cached.data : [];
 
       const offlineSessions = await accountStorage.getOfflineSessions(userId, 'upcoming');
-      const offlineUpcoming = offlineSessions.map(s => {
-        const totalScore = getEnrollmentEvaluationTotal(s.evaluation || {}, department);
-        return {
+      const offlineUpcoming = offlineSessions
+        .filter(s => ['completed_local', 'pending_sync', 'sync_failed'].includes(s.status))
+        .map(s => ({
           id: s.localId,
-          status: s.status === 'pending_sync' ? 'pending_sync' : 'completed',
+          status: 'pending_sync',
           start_time: new Date(s.timestamp).toISOString(),
-          total_score: totalScore,
-          passed: totalScore >= 70,
-          isOffline: true
-        };
-      });
+          total_score: null,
+          passed: null,
+          isOffline: true,
+          pendingSync: true,
+        }));
 
       if (authenticatedUserIdRef.current !== userId) return;
       setInterviewHistory([...offlineUpcoming, ...data]);
@@ -652,17 +868,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       const data = cached ? cached.data : [];
 
       const offlineSessions = await accountStorage.getOfflineSessions(userId, 'thesis');
-      const offlineThesis = offlineSessions.map(s => {
-        const totalScore = getThesisEvaluationTotal(s.evaluation || {}, department);
-        return {
+      const offlineThesis = offlineSessions
+        .filter(s => ['completed_local', 'pending_sync', 'sync_failed'].includes(s.status))
+        .map(s => ({
           id: s.localId,
-          status: s.status === 'pending_sync' ? 'pending_sync' : 'completed',
+          status: 'pending_sync',
           start_time: new Date(s.timestamp).toISOString(),
-          total_score: totalScore,
-          passed: totalScore >= 70,
-          isOffline: true
-        };
-      });
+          total_score: null,
+          passed: null,
+          isOffline: true,
+          pendingSync: true,
+        }));
 
       if (authenticatedUserIdRef.current !== userId) return;
       setThesisHistory([...offlineThesis, ...data]);
@@ -723,8 +939,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     let cancelled = false;
 
     const fetchUser = async () => {
+      const token = localStorage.getItem('token');
       try {
-        const token = localStorage.getItem('token');
         if (!token) {
           authenticatedUserIdRef.current = null;
           setAuthenticatedUserId(null);
@@ -763,11 +979,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
             department: p.department,
             profilePicture: p.profilePicture,
           }).catch(console.error);
+          rememberVerifiedAccount(token, data.id).catch((bindingError) => {
+            console.error('Failed to remember the verified offline account binding:', bindingError);
+          });
 
-        } else {
+        } else if (res.status === 401 || res.status === 403) {
           authenticatedUserIdRef.current = null;
           setAuthenticatedUserId(null);
           onLogout();
+        } else {
+          throw new Error(`The authenticated profile endpoint returned HTTP ${res.status}.`);
         }
       } catch (error) {
         if (cancelled) return;
@@ -787,6 +1008,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
             return;
           } catch (cacheError) {
             console.error('Failed to load the verified account cache:', cacheError);
+          }
+        }
+
+        if (token) {
+          const boundUserId = await getVerifiedAccountForToken(token);
+          if (boundUserId) {
+            try {
+              const cached = await accountStorage.getCachedProfile(boundUserId);
+              if (cancelled || !cached) return;
+              authenticatedUserIdRef.current = boundUserId;
+              setAuthenticatedUserId(boundUserId);
+              setProfile({
+                name: cached.name || 'Guest User',
+                email: cached.email,
+                password: '',
+                department: cached.department,
+                profilePicture: getCustomProfileImageUrl(cached.profilePicture),
+              });
+              return;
+            } catch (cacheError) {
+              console.error('Failed to load the bound account cache:', cacheError);
+            }
           }
         }
 
@@ -820,74 +1063,160 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   ]);
 
   useEffect(() => {
-    if (!authenticatedUserId) return;
+    if (!authenticatedUserId) {
+      setResumableOfflineSession(null);
+      setPendingSyncCount(0);
+      setSyncQueueSessions([]);
+      return;
+    }
 
-    const syncOfflineData = async () => {
+    let cancelled = false;
+    const inspectOwnedOfflineState = async () => {
       try {
-        if (authenticatedUserIdRef.current !== authenticatedUserId) return;
-        const token = localStorage.getItem('token');
-        if (!token) return;
-
-        const pendingSessions = await accountStorage.getPendingOfflineSessions(authenticatedUserId);
-        if (pendingSessions.length === 0) return;
-
-        console.log(`Syncing ${pendingSessions.length} owned offline sessions to cloud...`);
-
-        for (const session of pendingSessions) {
-          if (
-            session.userId !== authenticatedUserId ||
-            authenticatedUserIdRef.current !== authenticatedUserId
-          ) continue;
-
-          const endpointPrefix = session.type === 'upcoming' ? '/upcoming-student-interview' : '/thesis-interview';
-          const startRes = await fetch(`${API_URL}${endpointPrefix}/start`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-          });
-          if (!startRes.ok) continue;
-
-          const startData = await startRes.json();
-          if (authenticatedUserIdRef.current !== authenticatedUserId) return;
-          const realId = startData.id;
-          const completeRes = await fetch(`${API_URL}${endpointPrefix}/${realId}/complete`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ conversation: session.conversationLog, evaluation: session.evaluation })
-          });
-
-          if (completeRes.ok && authenticatedUserIdRef.current === authenticatedUserId) {
-            await accountStorage.markOfflineSessionSynced(
-              authenticatedUserId,
-              session.type,
-              session.localId,
-            );
-            console.log(`Synced owned session ${session.localId} -> ${realId}`);
-          }
-        }
-
-        await Promise.all([
-          fetchHistory(authenticatedUserId, profile.department),
-          fetchThesisHistory(authenticatedUserId, profile.department),
-          fetchCommunicationHistory(authenticatedUserId),
+        const [resumable, queue] = await Promise.all([
+          accountStorage.getResumableOfflineSessions(authenticatedUserId),
+          accountStorage.getPendingOfflineSessions(authenticatedUserId),
         ]);
-      } catch (e) {
-        console.error("Sync failed", e);
+        if (cancelled || authenticatedUserIdRef.current !== authenticatedUserId) return;
+        setResumableOfflineSession(resumable[0] || null);
+        setPendingSyncCount(queue.length);
+        setSyncQueueSessions(queue);
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Unable to inspect the account-scoped offline queue.', error);
+          setOfflineFoundationError('Saved offline activities could not be inspected safely.');
+        }
       }
     };
+    void inspectOwnedOfflineState();
+    return () => { cancelled = true; };
+  }, [authenticatedUserId, connectivity.effectiveOnline, activeActivityCheckpoint?.updatedAt]);
 
-    const handleOnline = () => { void syncOfflineData(); };
-    window.addEventListener('online', handleOnline);
-    if (navigator.onLine) void syncOfflineData();
+  useEffect(() => {
+    if (!authenticatedUserId) return;
+    void maintainOwnedOfflineStorage({ userId: authenticatedUserId }).catch(error => {
+      console.warn('Offline retention maintenance could not run safely.', error);
+    });
+  }, [authenticatedUserId]);
 
-    return () => window.removeEventListener('online', handleOnline);
+  const applySyncQueueUpdate = React.useCallback((updated: AccountOfflineSession) => {
+    if (authenticatedUserIdRef.current !== updated.userId) return;
+    setSyncQueueSessions(current => {
+      const remaining = current.filter(session => session.clientSessionId !== updated.clientSessionId);
+      return updated.status === 'synced' ? remaining : [...remaining, updated];
+    });
+    if (updated.status === 'synced') setLastSyncNotice('Synced');
+  }, []);
+
+  useEffect(() => {
+    setPendingSyncCount(syncQueueSessions.length);
+  }, [syncQueueSessions]);
+
+  useEffect(() => {
+    if (!connectivity.effectiveOnline) return;
+    if (!authenticatedUserId) return;
+    const active = activeActivityCheckpointRef.current;
+    if (active?.mode === 'offline' && active.status === 'in_progress') return;
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    void syncOfflineQueueWithRetry({
+      apiUrl: API_URL,
+      token,
+      userId: authenticatedUserId,
+      isCurrentUser: () => authenticatedUserIdRef.current === authenticatedUserId,
+      isOnline: () => connectivityOnlineRef.current,
+      hasActiveOfflineSession: () => {
+        const current = activeActivityCheckpointRef.current;
+        return current?.mode === 'offline' && current.status === 'in_progress';
+      },
+      onSessionUpdated: applySyncQueueUpdate,
+    }).then(async synchronized => {
+      if (authenticatedUserIdRef.current !== authenticatedUserId) return;
+      const remaining = await accountStorage.getPendingOfflineSessions(authenticatedUserId);
+      setPendingSyncCount(remaining.length);
+      setSyncQueueSessions(remaining);
+      if (synchronized <= 0) return;
+      await Promise.all([
+        fetchHistory(authenticatedUserId, profile.department),
+        fetchThesisHistory(authenticatedUserId, profile.department),
+        fetchCommunicationHistory(authenticatedUserId),
+      ]);
+    }).catch(error => {
+      console.warn('Bounded offline synchronization stopped safely.', error);
+      setOfflineFoundationError(
+        error instanceof Error ? error.message : 'An offline activity could not be synchronized.',
+      );
+    });
+  }, [
+    authenticatedUserId,
+    connectivity.effectiveOnline,
+    activeActivityCheckpoint?.updatedAt,
+    fetchCommunicationHistory,
+    fetchHistory,
+    fetchThesisHistory,
+    applySyncQueueUpdate,
+    profile.department,
+  ]);
+
+  const retryFailedSync = React.useCallback(async (session: AccountOfflineSession) => {
+    if (
+      !authenticatedUserId
+      || session.userId !== authenticatedUserId
+      || !connectivityOnlineRef.current
+      || (activeActivityCheckpointRef.current?.mode === 'offline'
+        && activeActivityCheckpointRef.current.status === 'in_progress')
+    ) return;
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    setOfflineFoundationError(null);
+    try {
+      await retryOfflineSessionManually(session, {
+        apiUrl: API_URL,
+        token,
+        userId: authenticatedUserId,
+        onSessionUpdated: applySyncQueueUpdate,
+      });
+      await Promise.all([
+        fetchHistory(authenticatedUserId, profile.department),
+        fetchThesisHistory(authenticatedUserId, profile.department),
+        fetchCommunicationHistory(authenticatedUserId),
+      ]);
+    } catch (error) {
+      setOfflineFoundationError(
+        error instanceof Error ? error.message : 'The saved activity could not be synchronized.',
+      );
+    }
   }, [
     API_URL,
+    applySyncQueueUpdate,
     authenticatedUserId,
     fetchCommunicationHistory,
     fetchHistory,
     fetchThesisHistory,
     profile.department,
   ]);
+
+  useEffect(() => {
+    const active = activeActivityCheckpointRef.current;
+    if (!active) {
+      setShowConnectionLossPrompt(false);
+      return;
+    }
+
+    if (active.mode === 'online') {
+      if (connectivity.connectionState === 'offline' || connectivity.connectionState === 'degraded') {
+        setShowConnectionLossPrompt(true);
+      } else if (connectivity.connectionState === 'online') {
+        setShowConnectionLossPrompt(false);
+      }
+      return;
+    }
+
+    setShowConnectionLossPrompt(false);
+    if (connectivity.connectionState === 'online') {
+      setConnectionRestoredNotice(true);
+    }
+  }, [connectivity.connectionState, activeActivityCheckpoint]);
 
   useEffect(() => {
     if (activeTab === 'analytics') {
@@ -989,6 +1318,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const [isEnrollmentFinalProfessorTurnReady, setIsEnrollmentFinalProfessorTurnReady] = useState(false);
   const [isRecognitionReady, setIsRecognitionReady] = useState(false);
   const [interviewMicFeedback, setInterviewMicFeedback] = useState<string | null>(null);
+  const [latestOfflineRecordingUrl, setLatestOfflineRecordingUrl] = useState<string | null>(null);
+  const [onlineInterviewError, setOnlineInterviewError] = useState<string | null>(null);
+  const [canRetryOnlineResponse, setCanRetryOnlineResponse] = useState(false);
+  const [typedInterviewAnswer, setTypedInterviewAnswer] = useState('');
+  const [isSubmittingOfflineAnswer, setIsSubmittingOfflineAnswer] = useState(false);
 
   const recognitionRef = React.useRef<any>(null);
   const audioQueueRef = React.useRef<string[]>([]);
@@ -1011,10 +1345,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const [currentAudioStartTime, setCurrentAudioStartTime] = useState(0);
   const [activeAnalyser, setActiveAnalyser] = useState<AnalyserNode | null>(null);
   const browserTtsAnalyserRef = React.useRef<AnalyserNode | null>(null);
+  const onlineResponseBufferRef = React.useRef('');
+  const onlinePreviousAiResponseRef = React.useRef('');
+  const onlinePendingUserTextRef = React.useRef('');
+  const onlineResponseFinalTurnRef = React.useRef(false);
+  const thesisAbstractTextRef = React.useRef('');
+  const offlineWebLLMEngineRef = React.useRef<MLCEngine | null>(null);
+  const offlineAnswerSubmissionRef = React.useRef(false);
 
   useEffect(() => {
     conversationLogRef.current = conversationLog;
   }, [conversationLog]);
+
+  useEffect(() => {
+    thesisConversationLogRef.current = thesisConversationLog;
+  }, [thesisConversationLog]);
 
   useEffect(() => {
     chatMessagesRef.current = chatMessages;
@@ -1061,6 +1406,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const userAudioContextRef = React.useRef<AudioContext | null>(null);
   const userAnalyserRef = React.useRef<AnalyserNode | null>(null);
   const userMediaStreamRef = React.useRef<MediaStream | null>(null);
+  const offlineInterviewRecorderRef = React.useRef<OfflineAudioRecorderController | null>(null);
   const userAnimationRef = React.useRef<number>(0);
   const [userAudioData, setUserAudioData] = useState<number[]>(new Array(3).fill(8));
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
@@ -1628,12 +1974,524 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     }
   };
 
-  const startInterviewSession = async () => {
-    const unavailableMessage = getWebLLMUnavailableMessage();
-    if (unavailableMessage) {
-      alert(unavailableMessage);
+  const speakOnlineInterviewResponse = (text: string) => new Promise<void>((resolve) => {
+    if (!('speechSynthesis' in window)) {
+      resolve();
       return;
     }
+
+    const utterance = new SpeechSynthesisUtterance(text.replace(/[*_#]/g, '').trim());
+    utterance.lang = 'en-US';
+    utterance.rate = CLEAR_AI_SPEECH_RATE;
+    utterance.pitch = CLEAR_AI_SPEECH_PITCH;
+    utterance.volume = CLEAR_AI_SPEECH_VOLUME;
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(voice =>
+      voice.lang.startsWith('en') && /aria|ava|emma|jenny|joanna|samantha|zira|female/i.test(voice.name)
+    ) || voices.find(voice => voice.lang.startsWith('en'));
+    if (preferredVoice) utterance.voice = preferredVoice;
+
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      window.clearTimeout(fallbackTimer);
+      resolve();
+    };
+    const fallbackTimer = window.setTimeout(finish, getClearSpeechTimeoutMs(text));
+    utterance.onend = finish;
+    utterance.onerror = finish;
+    try {
+      window.speechSynthesis.resume();
+      window.speechSynthesis.speak(utterance);
+    } catch (error) {
+      console.error('Speech synthesis could not start.', error);
+      finish();
+    }
+  });
+
+  const selectCachedOfflineInterviewEngine = async (): Promise<{
+    engineName: OfflineInterviewEngine;
+    engine: MLCEngine | null;
+  }> => {
+    const cachedEngine = await initializeCachedWebLLM();
+    if (!cachedEngine) return { engineName: 'fallback', engine: null };
+    offlineWebLLMEngineRef.current = cachedEngine;
+    return { engineName: 'webllm', engine: cachedEngine };
+  };
+
+  const initializeOfflineInterviewState = async (
+    type: OfflineInterviewKind,
+    thesisContext?: { text: string; sourceName?: string },
+  ): Promise<OfflineInterviewActivityState | null> => {
+    const current = activeActivityCheckpointRef.current;
+    if (!current || current.type !== type) return null;
+    const existing = readOfflineInterviewActivityState(current);
+    if (existing?.offlineEngine === 'fallback') return existing;
+
+    const selection = await selectCachedOfflineInterviewEngine();
+    const state = existing
+      ? existing.offlineEngine === 'webllm' && selection.engineName === 'fallback'
+        ? transitionOfflineInterviewToFallback(
+          existing,
+          current.responseCount,
+          'The cached local model was no longer complete or usable when the session resumed.',
+        )
+        : { ...existing, offlineEngine: selection.engineName }
+      : createOfflineInterviewActivityState(
+        type,
+        profile.department,
+        selection.engineName,
+        thesisContext,
+      );
+    const saved = await updateActivityCheckpoint({
+      activityState: state as unknown as Record<string, unknown>,
+      questionPackVersion: getQuestionPackVersion(type),
+      lastError: selection.engineName === 'fallback'
+        ? 'Cached WebLLM was unavailable; deterministic offline questions are active.'
+        : null,
+    });
+    return saved ? state : null;
+  };
+
+  const finalizeOfflineProfessorTurn = async (
+    type: OfflineInterviewKind,
+    professorText: string,
+    responseCount: number,
+  ) => {
+    const current = activeActivityCheckpointRef.current;
+    if (!current || current.type !== type || current.mode !== 'offline') return false;
+    const text = professorText.trim();
+    if (!text) return false;
+    const lastTurn = current.conversationLog.at(-1);
+    const conversation = lastTurn?.sender === 'ai' && lastTurn.text === text
+      ? current.conversationLog
+      : [...current.conversationLog, { sender: 'ai' as const, text }];
+    const saved = await updateActivityCheckpoint({
+      conversationLog: conversation,
+      currentQuestion: text,
+      currentStep: responseCount,
+      responseCount,
+      eyeContactSummary: getCheckpointEyeContactSummary(),
+    });
+    if (!saved) return false;
+
+    if (type === 'thesis') {
+      thesisConversationLogRef.current = conversation;
+      setThesisConversationLog(conversation);
+    } else {
+      conversationLogRef.current = conversation;
+      setConversationLog(conversation);
+    }
+    setChatMessages(conversation.map(turn => ({
+      role: turn.sender === 'ai' ? 'assistant' : 'user',
+      content: turn.text,
+    })));
+    chatMessagesRef.current = conversation.map(turn => ({
+      role: turn.sender === 'ai' ? 'assistant' : 'user',
+      content: turn.text,
+    }));
+    setAiResponseText(text);
+    setIsAiSpeaking(true);
+    isAiSpeakingRef.current = true;
+    await speakOnlineInterviewResponse(text);
+    setIsAiSpeaking(false);
+    isAiSpeakingRef.current = false;
+    setMouthValue(0);
+    if (type === 'upcoming' && responseCount >= OFFLINE_INTERVIEW_RESPONSE_LIMIT) {
+      setIsEnrollmentFinalProfessorTurnReady(true);
+    }
+    return true;
+  };
+
+  const generateOfflineProfessorTurn = async (
+    type: OfflineInterviewKind,
+    responseCount: number,
+  ) => {
+    const current = activeActivityCheckpointRef.current;
+    if (!current || current.type !== type || current.mode !== 'offline') return false;
+    let state = readOfflineInterviewActivityState(current);
+    if (!state) {
+      state = await initializeOfflineInterviewState(type, type === 'thesis' ? {
+        text: thesisAbstractTextRef.current,
+        sourceName: thesisAbstractFile?.name,
+      } : undefined);
+    }
+    if (!state) return false;
+
+    setOnlineInterviewError(null);
+    setCanRetryOnlineResponse(false);
+    setIsAiSpeaking(true);
+    isAiSpeakingRef.current = true;
+    let professorText = '';
+    if (state.offlineEngine === 'webllm' && offlineWebLLMEngineRef.current) {
+      try {
+        professorText = await generateWebLLMProfessorTurn(offlineWebLLMEngineRef.current, {
+          type,
+          department: state.department,
+          conversationLog: activeActivityCheckpointRef.current?.conversationLog || [],
+          responseCount,
+          thesisAbstractContext: state.thesisAbstractContext,
+        });
+      } catch (error) {
+        console.warn('Cached WebLLM failed; continuing with deterministic offline questions.', error);
+        state = transitionOfflineInterviewToFallback(
+          state,
+          responseCount,
+          error instanceof Error ? error.message : 'Local model generation failed.',
+        );
+        offlineWebLLMEngineRef.current = null;
+        await releaseWebLLM().catch(releaseError => {
+          console.warn('Unable to release the failed local engine.', releaseError);
+        });
+        const transitioned = await updateActivityCheckpoint({
+          activityState: state as unknown as Record<string, unknown>,
+          lastError: 'Cached WebLLM failed; deterministic offline questions are now active.',
+        });
+        if (!transitioned) {
+          setIsAiSpeaking(false);
+          isAiSpeakingRef.current = false;
+          return false;
+        }
+      }
+    }
+    if (!professorText) {
+      professorText = getFallbackProfessorTurn(type, state.department, responseCount);
+    }
+    return finalizeOfflineProfessorTurn(type, professorText, responseCount);
+  };
+
+  const submitInterviewAnswer = async (rawText: string) => {
+    const text = rawText.replace(/\s+/g, ' ').trim();
+    if (!text || offlineAnswerSubmissionRef.current) {
+      if (!text) setInterviewMicFeedback('Enter or record an answer before submitting.');
+      return false;
+    }
+    const mode = activeInterviewModeRef.current;
+    const checkpoint = activeActivityCheckpointRef.current;
+    if (!mode || !checkpoint) return false;
+    const type: OfflineInterviewKind = mode === 'thesis' ? 'thesis' : 'upcoming';
+    const sourceConversation = type === 'thesis'
+      ? thesisConversationLogRef.current
+      : conversationLogRef.current;
+    let appended: ReturnType<typeof appendOfflineInterviewAnswer>;
+    try {
+      appended = appendOfflineInterviewAnswer(sourceConversation, text);
+    } catch (error) {
+      setInterviewMicFeedback(error instanceof Error ? error.message : 'Unable to submit this answer.');
+      return false;
+    }
+
+    offlineAnswerSubmissionRef.current = true;
+    if (checkpoint.mode === 'offline') setIsSubmittingOfflineAnswer(true);
+    setInterviewMicFeedback(null);
+    setOnlineInterviewError(null);
+    setCanRetryOnlineResponse(false);
+    const nextAnswer = {
+      step: appended.responseCount,
+      text,
+      createdAt: Date.now(),
+    };
+    const saved = await updateActivityCheckpoint({
+      conversationLog: appended.conversationLog,
+      responseCount: appended.responseCount,
+      currentStep: appended.responseCount,
+      answers: [...checkpoint.answers, nextAnswer],
+      eyeContactSummary: getCheckpointEyeContactSummary(),
+    });
+    if (!saved) {
+      offlineAnswerSubmissionRef.current = false;
+      setIsSubmittingOfflineAnswer(false);
+      return false;
+    }
+
+    if (type === 'thesis') {
+      thesisConversationLogRef.current = appended.conversationLog;
+      setThesisConversationLog(appended.conversationLog);
+    } else {
+      conversationLogRef.current = appended.conversationLog;
+      setConversationLog(appended.conversationLog);
+    }
+    const nextMessages = [
+      ...chatMessagesRef.current,
+      { role: 'user', content: text },
+    ];
+    chatMessagesRef.current = nextMessages;
+    setChatMessages(nextMessages);
+
+    if (checkpoint.mode === 'offline') {
+      const generated = await generateOfflineProfessorTurn(type, appended.responseCount);
+      offlineAnswerSubmissionRef.current = false;
+      setIsSubmittingOfflineAnswer(false);
+      if (generated) setTypedInterviewAnswer('');
+      return generated;
+    }
+
+    const isFinal = appended.responseCount === OFFLINE_INTERVIEW_RESPONSE_LIMIT;
+    sendOnlineInterviewResponse(mode, text, isFinal);
+    offlineAnswerSubmissionRef.current = false;
+    return true;
+  };
+
+  const submitTypedInterviewAnswer = (event: React.FormEvent) => {
+    event.preventDefault();
+    void submitInterviewAnswer(typedInterviewAnswer);
+  };
+
+  const repeatStoredOfflineQuestion = async () => {
+    const currentQuestion = activeActivityCheckpointRef.current?.currentQuestion.trim();
+    if (!currentQuestion) return;
+    setAiResponseText(currentQuestion);
+    setIsAiSpeaking(true);
+    isAiSpeakingRef.current = true;
+    await speakOnlineInterviewResponse(currentQuestion);
+    setIsAiSpeaking(false);
+    isAiSpeakingRef.current = false;
+  };
+
+  const finishOnlineInterviewResponse = async (mode: OnlineInterviewMode) => {
+    const responseText = onlineResponseBufferRef.current.trim();
+    if (!responseText) {
+      setOnlineInterviewError('Professor Maxiel returned an empty response. Please retry.');
+      setCanRetryOnlineResponse(true);
+      setAiResponseText(onlinePreviousAiResponseRef.current);
+      setIsAiSpeaking(false);
+      isAiSpeakingRef.current = false;
+      return;
+    }
+
+    const assistantTurn = { sender: 'ai' as const, text: responseText };
+    let checkpointConversation: Array<{ sender: 'user' | 'ai'; text: string }>;
+    if (mode === 'enrollment') {
+      checkpointConversation = [...conversationLogRef.current, assistantTurn];
+      conversationLogRef.current = checkpointConversation;
+      setConversationLog(checkpointConversation);
+    } else {
+      checkpointConversation = [...thesisConversationLogRef.current, assistantTurn];
+      thesisConversationLogRef.current = checkpointConversation;
+      setThesisConversationLog(checkpointConversation);
+    }
+    updateActivityCheckpoint({
+      conversationLog: checkpointConversation,
+      currentQuestion: responseText,
+      currentStep: checkpointConversation.filter(turn => turn.sender === 'user').length,
+      responseCount: checkpointConversation.filter(turn => turn.sender === 'user').length,
+      eyeContactSummary: getCheckpointEyeContactSummary(),
+    });
+    setChatMessages(previous => {
+      const next = [...previous, { role: 'assistant', content: responseText }];
+      chatMessagesRef.current = next;
+      return next;
+    });
+
+    await speakOnlineInterviewResponse(responseText);
+    setIsAiSpeaking(false);
+    isAiSpeakingRef.current = false;
+    setMouthValue(0);
+
+    const finalTurn = onlineResponseFinalTurnRef.current;
+    onlineResponseBufferRef.current = '';
+    onlineResponseFinalTurnRef.current = false;
+    onlinePendingUserTextRef.current = '';
+    setCanRetryOnlineResponse(false);
+    if (mode === 'enrollment' && finalTurn) {
+      setIsEnrollmentFinalProfessorTurnReady(true);
+    } else if (!finalTurn && !isListeningRef.current) {
+      void toggleListening();
+    }
+  };
+
+  const hydrateOnlineInterviewHistory = (
+    mode: OnlineInterviewMode,
+    messages: OnlineInterviewHistoryMessage[],
+  ) => {
+    const turns = messages
+      .filter(message => message.content.trim())
+      .map(message => ({
+        sender: message.role === 'assistant' ? 'ai' as const : 'user' as const,
+        text: message.content,
+      }));
+    const chatHistory = messages.map(message => ({
+      role: message.role,
+      content: message.content,
+    }));
+    const lastProfessorTurn = [...turns].reverse().find(turn => turn.sender === 'ai');
+    setAiResponseText(lastProfessorTurn?.text || '');
+    setChatMessages(chatHistory);
+    chatMessagesRef.current = chatHistory;
+    if (mode === 'enrollment') {
+      setConversationLog(turns);
+      conversationLogRef.current = turns;
+      const userTurns = turns.filter(turn => turn.sender === 'user').length;
+      setIsEnrollmentFinalProfessorTurnReady(
+        userTurns >= 5 && turns[turns.length - 1]?.sender === 'ai'
+      );
+    } else {
+      setThesisConversationLog(turns);
+      thesisConversationLogRef.current = turns;
+    }
+  };
+
+  const handleOnlineInterviewSocketMessage = (
+    mode: OnlineInterviewMode,
+    event: MessageEvent<string>,
+  ) => {
+    try {
+      const payload = JSON.parse(event.data) as {
+        type?: string;
+        text?: string;
+        message?: string;
+        messages?: OnlineInterviewHistoryMessage[];
+      };
+      if (payload.type === 'history' && Array.isArray(payload.messages)) {
+        hydrateOnlineInterviewHistory(mode, payload.messages);
+        return;
+      }
+      if (payload.type === 'session_ready') {
+        setIsAiSpeaking(false);
+        isAiSpeakingRef.current = false;
+        return;
+      }
+      if (payload.type === 'error') {
+        onlineResponseBufferRef.current = '';
+        setAiResponseText(onlinePreviousAiResponseRef.current);
+        setOnlineInterviewError(payload.message || 'The AI service is temporarily unavailable. Please try again.');
+        setCanRetryOnlineResponse(true);
+        setIsAiSpeaking(false);
+        isAiSpeakingRef.current = false;
+        setMouthValue(0);
+        return;
+      }
+      if (payload.type === 'turn_complete') {
+        void finishOnlineInterviewResponse(mode);
+        return;
+      }
+      if (typeof payload.text === 'string' && payload.text) {
+        onlineResponseBufferRef.current += payload.text;
+        setAiResponseText(onlineResponseBufferRef.current);
+      }
+    } catch (error) {
+      console.error('Invalid interview socket response.', error);
+      setOnlineInterviewError('The interview connection returned an invalid response. Please retry.');
+      setCanRetryOnlineResponse(true);
+      setIsAiSpeaking(false);
+      isAiSpeakingRef.current = false;
+    }
+  };
+
+  const beginOnlineInterviewResponse = (mode: OnlineInterviewMode, finalTurn: boolean) => {
+    onlinePreviousAiResponseRef.current = aiResponseText;
+    onlineResponseBufferRef.current = '';
+    onlineResponseFinalTurnRef.current = finalTurn;
+    setOnlineInterviewError(null);
+    setCanRetryOnlineResponse(false);
+    setAiResponseText('');
+    setIsAiSpeaking(true);
+    isAiSpeakingRef.current = true;
+  };
+
+  const connectOnlineInterview = (
+    mode: OnlineInterviewMode,
+    interviewSessionId: number,
+    action: 'start' | 'retry',
+  ) => new Promise<void>((resolve, reject) => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      reject(new Error('Your session has expired. Please sign in again.'));
+      return;
+    }
+
+    const socketRef = mode === 'enrollment' ? wsRef : thesisWsRef;
+    socketRef.current?.close();
+    const path = mode === 'enrollment'
+      ? `/upcoming-student-interview/${interviewSessionId}/chat`
+      : `/thesis-interview/${interviewSessionId}/chat`;
+    const socket = new WebSocket(getWebSocketUrl(API_URL, path, token));
+    socketRef.current = socket;
+
+    socket.onopen = () => {
+      const payload: {
+        type: 'start' | 'retry';
+        text?: string;
+        final_turn?: boolean;
+        abstract_text?: string;
+      } = { type: action };
+      if (action === 'retry' && onlinePendingUserTextRef.current) {
+        payload.text = onlinePendingUserTextRef.current;
+        payload.final_turn = onlineResponseFinalTurnRef.current;
+      }
+      if (mode === 'thesis' && thesisAbstractTextRef.current) {
+        payload.abstract_text = thesisAbstractTextRef.current;
+      }
+      socket.send(JSON.stringify(payload));
+      resolve();
+    };
+    socket.onmessage = event => handleOnlineInterviewSocketMessage(mode, event);
+    socket.onerror = () => {
+      const message = 'The interview AI connection could not be established. Please retry.';
+      setOnlineInterviewError(message);
+      setCanRetryOnlineResponse(true);
+      setIsAiSpeaking(false);
+      isAiSpeakingRef.current = false;
+      reject(new Error(message));
+    };
+    socket.onclose = () => {
+      if (socketRef.current === socket) socketRef.current = null;
+    };
+  });
+
+  const sendOnlineInterviewResponse = (
+    mode: OnlineInterviewMode,
+    text: string,
+    finalTurn: boolean,
+  ) => {
+    if (activeActivityCheckpointRef.current?.mode === 'offline') {
+      setOnlineInterviewError('This activity is locked offline. Cloud AI will not be used for the remainder of this session.');
+      return;
+    }
+    const socket = mode === 'enrollment' ? wsRef.current : thesisWsRef.current;
+    onlinePendingUserTextRef.current = text;
+    beginOnlineInterviewResponse(mode, finalTurn);
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      setOnlineInterviewError('The interview connection was interrupted. Retry to continue without losing your response.');
+      setCanRetryOnlineResponse(true);
+      setAiResponseText(onlinePreviousAiResponseRef.current);
+      setIsAiSpeaking(false);
+      isAiSpeakingRef.current = false;
+      return;
+    }
+    socket.send(JSON.stringify({ type: 'message', text, final_turn: finalTurn }));
+  };
+
+  const retryOnlineInterviewResponse = () => {
+    if (activeActivityCheckpointRef.current?.mode === 'offline') {
+      setOnlineInterviewError('This activity is locked offline and cannot return to cloud AI mid-session.');
+      return;
+    }
+    const mode = activeInterviewModeRef.current;
+    const interviewSessionId = mode === 'enrollment'
+      ? sessionIdRef.current
+      : thesisSessionIdRef.current;
+    if (!mode || !interviewSessionId) return;
+
+    beginOnlineInterviewResponse(mode, onlineResponseFinalTurnRef.current);
+    const socket = mode === 'enrollment' ? wsRef.current : thesisWsRef.current;
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({
+        type: 'retry',
+        text: onlinePendingUserTextRef.current || undefined,
+        final_turn: onlineResponseFinalTurnRef.current,
+        abstract_text: mode === 'thesis' ? thesisAbstractTextRef.current : undefined,
+      }));
+      return;
+    }
+    void connectOnlineInterview(mode, interviewSessionId, 'retry').catch(error => {
+      setOnlineInterviewError(error instanceof Error ? error.message : 'Unable to reconnect to the interview.');
+    });
+  };
+
+  const startInterviewSession = async () => {
+    setLatestOfflineRecordingUrl(null);
     if (professorAssetStatusRef.current === 'error') {
       retryProfessorAssetLoad();
       return;
@@ -1649,8 +2507,55 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       return;
     }
 
-    let sid: string | number = '';
-    let isOffline = false;
+    if (!connectivity.effectiveOnline) {
+      const department = profile.department.trim().toUpperCase();
+      if (!['CCIT', 'CTE', 'CBAPA'].includes(department)) {
+        setIsStartingInterview(false);
+        alert('Enrollment Interview is available only to CCIT, CTE, and CBAPA students.');
+        return;
+      }
+      activeEnrollmentFinalGenerationRef.current = null;
+      enrollmentFinalGenerationSequenceRef.current += 1;
+      setIsEnrollmentFinalProfessorTurnReady(false);
+      finalizedTranscriptRef.current = '';
+      latestInterimTranscriptRef.current = '';
+      setRecognizedSpeechText('');
+      updateRecognitionReady(false);
+      setInterviewMicFeedback(null);
+      setOnlineInterviewError(null);
+      setTypedInterviewAnswer('');
+      conversationLogRef.current = [];
+      setConversationLog([]);
+      setAiResponseText('');
+      setIsCameraEnabled(false);
+      restoredEyeContactSummaryRef.current = null;
+      sessionIdRef.current = null;
+      setSessionId(null);
+      activeInterviewModeRef.current = 'enrollment';
+      setIsProfessorFirstFrameReady(false);
+      setActiveTab('interview-session');
+      chatMessagesRef.current = [];
+      setChatMessages([]);
+      onlinePendingUserTextRef.current = '';
+      const checkpoint = await beginActivityCheckpoint({
+        type: 'upcoming',
+        mode: 'offline',
+        questionPackVersion: getQuestionPackVersion('upcoming'),
+      });
+      if (!checkpoint) {
+        setIsStartingInterview(false);
+        setActiveTab('dashboard');
+        return;
+      }
+      const state = await initializeOfflineInterviewState('upcoming');
+      if (!state || !await generateOfflineProfessorTurn('upcoming', 0)) {
+        setOnlineInterviewError('The offline interview could not be prepared. Your checkpoint remains safely stored.');
+      }
+      setIsStartingInterview(false);
+      return;
+    }
+
+    let sid: number | null = null;
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_URL}/upcoming-student-interview/start`, {
@@ -1669,18 +2574,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         alert(`Failed to start session: ${errorText}`);
         return;
       }
-    } catch (err: any) {
-      console.warn("Offline: generating local session ID");
-      sid = 'local_' + Date.now();
-      isOffline = true;
+    } catch (error) {
+      console.error('Unable to start Enrollment Interview.', error);
+      alert('The Enrollment Interview could not be started. Check your connection and try again.');
+      return;
     } finally {
       setIsStartingInterview(false);
     }
 
     if (sid) {
-      if (activeEnrollmentFinalGenerationRef.current !== null) {
-        void webLLMEngine?.interruptGenerate();
-      }
       activeEnrollmentFinalGenerationRef.current = null;
       enrollmentFinalGenerationSequenceRef.current += 1;
       setIsEnrollmentFinalProfessorTurnReady(false);
@@ -1689,22 +2591,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       setRecognizedSpeechText('');
       updateRecognitionReady(false);
       setInterviewMicFeedback(null);
+      setOnlineInterviewError(null);
       conversationLogRef.current = [];
       setConversationLog([]);
       setAiResponseText('');
       setIsCameraEnabled(false);
-      sessionIdRef.current = sid as number;
-      setSessionId(sid as number);
+      restoredEyeContactSummaryRef.current = null;
+      setTypedInterviewAnswer('');
+      sessionIdRef.current = sid;
+      setSessionId(sid);
       activeInterviewModeRef.current = 'enrollment';
       setIsProfessorFirstFrameReady(false);
       setActiveTab('interview-session');
 
-      const systemPrompt = "You are Professor Maxiel, an expert interviewer. Your sole purpose is to interview an incoming college freshman. Speak DIRECTLY to the student. Keep the interview to exactly 5 questions total. Ask exactly ONE question at a time. Conclude when finished.";
-      const initialMsgs = [{ role: 'system', content: systemPrompt }];
-      chatMessagesRef.current = initialMsgs;
-      setChatMessages(initialMsgs);
-
-      handleLocalWebLLM("Hello! I am here and ready to begin the interview.", initialMsgs);
+      chatMessagesRef.current = [];
+      setChatMessages([]);
+      onlinePendingUserTextRef.current = '';
+      beginActivityCheckpoint({ type: 'upcoming', serverSessionId: sid });
+      beginOnlineInterviewResponse('enrollment', false);
+      void connectOnlineInterview('enrollment', sid, 'start').catch(error => {
+        setOnlineInterviewError(error instanceof Error ? error.message : 'Unable to connect to the interview AI.');
+        setCanRetryOnlineResponse(true);
+      });
     }
   };
 
@@ -1723,7 +2631,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     setUserAudioData([8, 8, 8]);
   };
 
-  const submitInterviewTranscript = () => {
+  useEffect(() => () => {
+    if (latestOfflineRecordingUrl) URL.revokeObjectURL(latestOfflineRecordingUrl);
+  }, [latestOfflineRecordingUrl]);
+
+  const submitInterviewTranscript = async () => {
     if (!submitTranscriptOnEndRef.current) return;
     submitTranscriptOnEndRef.current = false;
 
@@ -1736,6 +2648,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     const interimTranscript = latestInterimTranscriptRef.current.replace(/\s+/g, ' ').trim();
     const submissionText = finalizedTranscript || interimTranscript;
 
+    const current = activeActivityCheckpointRef.current;
+    if (current?.mode === 'offline' && offlineInterviewRecorderRef.current) {
+      const capture = await offlineInterviewRecorderRef.current.stopRecording();
+      offlineInterviewRecorderRef.current.releaseRecorder();
+      offlineInterviewRecorderRef.current = null;
+      if (capture) {
+        const answerIndex = current.responseCount + 1;
+        const persisted = await persistOfflineAudioCapture({
+          activityType: current.type,
+          turnId: `${current.type}-answer-${answerIndex}`,
+          answerIndex,
+          capture,
+          transcriptText: submissionText || undefined,
+        });
+        if (!persisted) {
+          setIsMicTransitioning(false);
+          releaseInterviewMicrophone();
+          return;
+        }
+        setLatestOfflineRecordingUrl(URL.createObjectURL(capture.blob));
+      }
+    }
+
     releaseInterviewMicrophone();
     updateRecognitionReady(false);
     setIsMicTransitioning(false);
@@ -1744,48 +2679,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     setRecognizedSpeechText('');
 
     if (!submissionText) {
-      setInterviewMicFeedback('No speech was detected. Please try again.');
+      setInterviewMicFeedback(
+        current?.mode === 'offline'
+          ? 'Your audio was saved locally, but no transcript was produced. Type your answer to continue.'
+          : 'No speech was detected. Please try again.',
+      );
       return;
     }
-
-    setInterviewMicFeedback(null);
-
-    const turn = { sender: 'user' as const, text: submissionText };
-    const currentEnrollmentConversation = conversationLogRef.current;
-    const existingEnrollmentUserTurns = currentEnrollmentConversation.filter(
-      message => message.sender === 'user',
-    ).length;
-    const isEnrollmentFinalTurn =
-      activeInterviewModeRef.current === 'enrollment' &&
-      existingEnrollmentUserTurns + 1 === 5;
-
-    if (
-      activeInterviewModeRef.current === 'enrollment' &&
-      existingEnrollmentUserTurns >= 5
-    ) {
-      return;
-    }
-
-    if (activeInterviewModeRef.current === 'thesis') {
-      setThesisConversationLog(prev => [...prev, turn]);
-    } else {
-      const nextConversation = [...currentEnrollmentConversation, turn];
-      conversationLogRef.current = nextConversation;
-      setConversationLog(nextConversation);
-    }
-
-    const currentChatMessages = chatMessagesRef.current;
-    const nextChatMessages = [
-      ...currentChatMessages,
-      { role: 'user', content: submissionText },
-    ];
-    chatMessagesRef.current = nextChatMessages;
-    setChatMessages(nextChatMessages);
-    setTimeout(() => {
-      void handleLocalWebLLM(submissionText, currentChatMessages, {
-        enrollmentFinalTurn: isEnrollmentFinalTurn,
-      });
-    }, 0);
+    onlinePendingUserTextRef.current = '';
+    void submitInterviewAnswer(submissionText);
   };
 
   const stopListening = (submitTranscript = false) => {
@@ -1812,16 +2714,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
           const recognition = recognitionRef.current;
           recognitionStopTimeoutRef.current = setTimeout(() => {
             if (recognitionRef.current === recognition) recognitionRef.current = null;
-            submitInterviewTranscript();
+            void submitInterviewTranscript();
           }, 1500);
         }
       } catch {
         recognitionRef.current = null;
-        if (submitTranscriptOnEndRef.current) submitInterviewTranscript();
+        if (submitTranscriptOnEndRef.current) void submitInterviewTranscript();
         else setIsMicTransitioning(false);
       }
     } else if (submitTranscriptOnEndRef.current) {
-      submitInterviewTranscript();
+      void submitInterviewTranscript();
     } else {
       setIsMicTransitioning(false);
     }
@@ -1830,6 +2732,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   };
 
   const exitInterview = () => {
+    const shouldReleaseOfflineEngine = activeActivityCheckpointRef.current?.type === 'upcoming'
+      && readOfflineInterviewActivityState(activeActivityCheckpointRef.current)?.offlineEngine === 'webllm';
     if (activeEnrollmentFinalGenerationRef.current !== null) {
       void webLLMEngine?.interruptGenerate();
     }
@@ -1838,6 +2742,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     setIsEnrollmentFinalProfessorTurnReady(false);
     if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
     stopListening();
+    offlineInterviewRecorderRef.current?.cancelRecording();
+    offlineInterviewRecorderRef.current = null;
+    setLatestOfflineRecordingUrl(null);
     setIsLeaveModalOpen(false);
     setIsAiSpeaking(false);
     isAiSpeakingRef.current = false;
@@ -1847,12 +2754,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     latestInterimTranscriptRef.current = '';
     setRecognizedSpeechText('');
     setInterviewMicFeedback(null);
+    setTypedInterviewAnswer('');
     setSessionId(null);
     setConversationLog([]);
     conversationLogRef.current = [];
     chatMessagesRef.current = [];
     setInterviewResult(null);
     setIsCameraEnabled(false);
+    restoredEyeContactSummaryRef.current = null;
     sessionIdRef.current = null;
     if (audioPlayerRef.current) {
       audioPlayerRef.current.pause();
@@ -1862,106 +2771,60 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       wsRef.current.close();
       wsRef.current = null;
     }
+    if (activeActivityCheckpointRef.current?.type === 'upcoming') {
+      endActivityCheckpoint('abandoned');
+    }
+    if (shouldReleaseOfflineEngine) {
+      offlineWebLLMEngineRef.current = null;
+      void releaseWebLLM().catch(error => console.warn('Unable to release local interview AI.', error));
+    }
     nextPlayTimeRef.current = 0;
     fetchHistory();
     setActiveTab('dashboard');
   };
 
-  const saveOwnedOfflineSession = async (
-    session: Omit<AccountOfflineSession, 'userId'>,
-  ) => {
-    const userId = authenticatedUserIdRef.current;
-    if (!userId) {
-      throw new Error('Cannot save an offline session without a verified account owner.');
-    }
-    await accountStorage.putOfflineSession({ ...session, userId });
-  };
-
   const finishInterviewSession = async () => {
+    const activeCheckpoint = activeActivityCheckpointRef.current;
+    if (activeCheckpoint?.type === 'upcoming' && activeCheckpoint.mode === 'offline') {
+      if (activeCheckpoint.responseCount !== OFFLINE_INTERVIEW_RESPONSE_LIMIT || !isEnrollmentFinalProfessorTurnReady) return;
+      setIsFinishingInterview(true);
+      const eyeContactSummary = getCheckpointEyeContactSummary();
+      const provisional = evaluateOfflineInterview(
+        'upcoming',
+        activeCheckpoint.conversationLog,
+        eyeContactSummary,
+      );
+      const evaluated = await updateActivityCheckpoint({
+        eyeContactSummary,
+        localEvaluation: provisional.evaluation as unknown as Record<string, unknown>,
+        localScore: null,
+        pendingEvaluation: provisional.pendingEvaluation,
+        evaluationAuthority: 'local_provisional',
+      });
+      const completed = evaluated && await endActivityCheckpoint('completed_local');
+      setIsFinishingInterview(false);
+      if (!completed) {
+        setOnlineInterviewError('The provisional result could not be saved safely. Please retry completion.');
+        return;
+      }
+      offlineWebLLMEngineRef.current = null;
+      await releaseWebLLM().catch(error => console.warn('Unable to release local interview AI.', error));
+      exitInterview();
+      return;
+    }
     if (!sessionId || !isEnrollmentFinalProfessorTurnReady) return;
     if (!authenticatedUserIdRef.current) {
       alert('Your account could not be verified. Please sign in again before saving this interview.');
       return;
     }
     setIsFinishingInterview(true);
-    let evaluation = null;
-
+    setOnlineInterviewError(null);
+    setCanRetryOnlineResponse(false);
     try {
-      if (webLLMEngine) {
-        const department = profile.department.trim().toUpperCase();
-        const gradingSchema = department === 'CTE' ? `{
-  "subject_matter_score": 0,
-  "teaching_aptitude_score": 0,
-  "communication_score": 0,
-  "motivation_score": 0,
-  "academic_preparedness_score": 0,
-  "problem_solving_score": 0,
-  "leadership_score": 0,
-  "feedback_summary": "string"
-}` : department === 'CBAPA' ? `{
-  "business_fundamentals_score": 0,
-  "analytical_score": 0,
-  "communication_score": 0,
-  "entrepreneurial_score": 0,
-  "academic_preparedness_score": 0,
-  "leadership_score": 0,
-  "ethical_score": 0,
-  "feedback_summary": "string"
-}` : `{
-  "technical_score": 0,
-  "problem_solving_score": 0,
-  "coding_score": 0,
-  "communication_score": 0,
-  "soft_skills_score": 0,
-  "feedback_summary": "string"
-}`;
-        const gradingPrompt = `You are a strict grading algorithm. You will evaluate the following transcript of an incoming college freshman interview.
-Score every listed criterion from 0 to 100. Respond in STRICT JSON matching this schema exactly:
-${gradingSchema}
-Transcript:
-${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
-
-        const resp = await webLLMEngine.chat.completions.create({
-          messages: [{ role: 'user', content: gradingPrompt }],
-          response_format: { type: "json_object" }
-        });
-
-        try {
-          evaluation = JSON.parse(resp.choices[0].message.content || "{}");
-        } catch (e) {
-          console.error("Failed to parse local evaluation", e);
-        }
-      }
-
-      evaluation = {
-        ...(evaluation || {}),
+      const cameraMetrics = {
         eye_contact_score: eyeTracker.samples > 0 ? eyeTracker.score : null,
-        score_eye_contact: eyeTracker.samples > 0 ? eyeTracker.score : null,
         eye_contact_samples: eyeTracker.samples,
       };
-      const offlineTotalScore = getEnrollmentEvaluationTotal(evaluation, profile.department);
-      evaluation.total_score = offlineTotalScore;
-
-      if (String(sessionId).startsWith('local_')) {
-        // It's an offline session, save to IndexedDB directly
-        await saveOwnedOfflineSession({
-          localId: String(sessionId),
-          type: 'upcoming',
-          status: 'pending_sync',
-          conversationLog: conversationLog,
-          evaluation: evaluation,
-          timestamp: Date.now()
-        });
-
-        setInterviewResult({ ...evaluation, total_score: offlineTotalScore, passed: offlineTotalScore >= 70 });
-        stopListening();
-        setIsLeaveModalOpen(false);
-        setIsAiSpeaking(false);
-        setIsListening(false);
-        if (audioPlayerRef.current) audioPlayerRef.current.pause();
-        return;
-      }
-
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_URL}/upcoming-student-interview/${sessionId}/complete`, {
         method: 'POST',
@@ -1969,41 +2832,27 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ conversation: conversationLog, evaluation })
+        body: JSON.stringify({ conversation: conversationLog, evaluation: cameraMetrics })
       });
       if (response.ok) {
         const data = await response.json();
         setInterviewResult(data);
+        setOnlineInterviewError(null);
+        endActivityCheckpoint('cloud_completed');
         stopListening();
         setIsLeaveModalOpen(false);
         setIsAiSpeaking(false);
         setIsListening(false);
         if (audioPlayerRef.current) audioPlayerRef.current.pause();
       } else {
-        alert("Failed to grade interview. Please try again.");
+        const detail = await response.json().catch(() => null);
+        setOnlineInterviewError(detail?.detail || 'The interview could not be validated. Please try again.');
       }
-    } catch (e) {
-      console.warn("Offline: saving completed session to cache");
-      // If network fails during complete
-      await saveOwnedOfflineSession({
-        localId: String(sessionId), // Can be real ID if it was created before going offline
-        type: 'upcoming',
-        status: 'pending_sync',
-        conversationLog: conversationLog,
-        evaluation: evaluation,
-        timestamp: Date.now()
-      });
-
-      const offlineTotalScore = getEnrollmentEvaluationTotal(evaluation || {}, profile.department);
-      setInterviewResult({ ...evaluation, total_score: offlineTotalScore, passed: offlineTotalScore >= 70 });
-      stopListening();
-      setIsLeaveModalOpen(false);
-      setIsAiSpeaking(false);
-      setIsListening(false);
-      if (audioPlayerRef.current) audioPlayerRef.current.pause();
+    } catch (error) {
+      console.error('Enrollment validation request failed.', error);
+      setOnlineInterviewError('The interview could not be validated. Check your connection and try again.');
     } finally {
       setIsFinishingInterview(false);
-      // Refresh history to show the new offline session
       fetchHistory();
     }
   };
@@ -2054,8 +2903,57 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
     r?.score_cte_pedagogical_innovation !== undefined ||
     r?.score_cbapa_research_problem !== undefined;
 
+  const readThesisAbstractFile = async (file: File) => {
+    if (file.name.toLowerCase().endsWith('.txt')) return file.text();
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      throw new Error('Only PDF and TXT thesis abstracts are supported.');
+    }
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let fullText = '';
+    const maxPages = Math.min(pdf.numPages, 10);
+    for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map(item => ('str' in item ? item.str : ''))
+        .join(' ');
+      fullText += `${pageText}\n`;
+    }
+    return fullText;
+  };
+
   const uploadThesisAbstractInSession = async (file: File) => {
-    if (!thesisSessionIdRef.current || thesisInSessionUploading) return;
+    if (thesisInSessionUploading) return;
+    const active = activeActivityCheckpointRef.current;
+    if (active?.type === 'thesis' && active.mode === 'offline') {
+      setThesisInSessionUploading(true);
+      setThesisAbstractUpdated(false);
+      try {
+        const abstractText = (await readThesisAbstractFile(file)).trim().slice(0, 5000);
+        const state = readOfflineInterviewActivityState(active);
+        if (!state) throw new Error('The saved offline Thesis session is incomplete.');
+        const nextState: OfflineInterviewActivityState = {
+          ...state,
+          thesisAbstractContext: abstractText,
+          thesisAbstractSourceName: file.name,
+        };
+        thesisAbstractTextRef.current = abstractText;
+        const saved = await updateActivityCheckpoint({
+          activityState: nextState as unknown as Record<string, unknown>,
+        });
+        if (!saved) throw new Error('The updated abstract could not be saved locally.');
+        setThesisAbstractFile(file);
+        setThesisAbstractUpdated(true);
+        setTimeout(() => setThesisAbstractUpdated(false), 3000);
+      } catch (error) {
+        setOnlineInterviewError(error instanceof Error ? error.message : 'The abstract could not be read locally.');
+      } finally {
+        setThesisInSessionUploading(false);
+      }
+      return;
+    }
+    if (!thesisSessionIdRef.current) return;
     setThesisInSessionUploading(true);
     setThesisAbstractUpdated(false);
     try {
@@ -2079,11 +2977,7 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
   };
 
   const startThesisSession = async () => {
-    const unavailableMessage = getWebLLMUnavailableMessage();
-    if (unavailableMessage) {
-      alert(unavailableMessage);
-      return;
-    }
+    setLatestOfflineRecordingUrl(null);
     unlockBrowserSpeech();
     setThesisStartError(null);
 
@@ -2097,9 +2991,68 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
       return;
     }
 
+    if (!thesisAbstractFile) {
+      setThesisStartError('Upload a PDF or TXT thesis abstract before starting the defense.');
+      return;
+    }
+
     setThesisIsStarting(true);
-    let sid: string | number = '';
-    let isOffline = false;
+    setThesisAbstractUploading(true);
+    let abstractText = '';
+    try {
+      abstractText = (await readThesisAbstractFile(thesisAbstractFile)).trim().slice(0, 5000);
+      if (!abstractText) throw new Error('The selected abstract did not contain readable text.');
+    } catch (error) {
+      console.error('Abstract parsing failed:', error);
+      setThesisStartError(error instanceof Error ? error.message : 'Failed to read the selected abstract file.');
+      setThesisAbstractUploading(false);
+      setThesisIsStarting(false);
+      return;
+    }
+    setThesisAbstractUploading(false);
+
+    if (!connectivity.effectiveOnline) {
+      setIsCameraEnabled(false);
+      restoredEyeContactSummaryRef.current = null;
+      thesisSessionIdRef.current = null;
+      setThesisSessionId(null);
+      thesisConversationLogRef.current = [];
+      setThesisConversationLog([]);
+      setOnlineInterviewError(null);
+      setThesisResult(null);
+      setThesisElapsedSeconds(0);
+      setTypedInterviewAnswer('');
+      setAiResponseText('');
+      activeInterviewModeRef.current = 'thesis';
+      setActiveTab('thesis-session');
+      if (thesisTimerRef.current) clearInterval(thesisTimerRef.current);
+      thesisTimerRef.current = setInterval(() => setThesisElapsedSeconds(previous => previous + 1), 1000);
+      thesisAbstractTextRef.current = abstractText;
+      chatMessagesRef.current = [];
+      setChatMessages([]);
+      onlinePendingUserTextRef.current = '';
+      const checkpoint = await beginActivityCheckpoint({
+        type: 'thesis',
+        mode: 'offline',
+        questionPackVersion: getQuestionPackVersion('thesis'),
+      });
+      if (!checkpoint) {
+        setThesisIsStarting(false);
+        setActiveTab('dashboard');
+        return;
+      }
+      const state = await initializeOfflineInterviewState('thesis', {
+        text: abstractText,
+        sourceName: thesisAbstractFile.name,
+      });
+      if (!state || !await generateOfflineProfessorTurn('thesis', 0)) {
+        setOnlineInterviewError('The offline thesis defense could not be prepared. Your checkpoint remains safely stored.');
+      }
+      setThesisIsStarting(false);
+      return;
+    }
+
+    let sid: number | null = null;
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_URL}/thesis-interview/start`, {
@@ -2120,49 +3073,22 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
       }
       const data = await response.json();
       sid = data.id;
-    } catch (err: any) {
-      console.warn("Offline: generating local thesis session ID");
-      sid = 'local_' + Date.now();
-      isOffline = true;
+    } catch (error) {
+      console.error('Unable to start Thesis Interview.', error);
+      setThesisStartError('The thesis defense could not be started. Check your connection and try again.');
+      setThesisIsStarting(false);
+      return;
     }
 
     if (sid) {
       setIsCameraEnabled(false);
-      thesisSessionIdRef.current = sid as number;
-      setThesisSessionId(sid as number);
-
-      let abstractText = "";
-      if (thesisAbstractFile) {
-        setThesisAbstractUploading(true);
-        try {
-          if (thesisAbstractFile.name.endsWith('.txt')) {
-            abstractText = await thesisAbstractFile.text();
-          } else if (thesisAbstractFile.name.endsWith('.pdf')) {
-            const arrayBuffer = await thesisAbstractFile.arrayBuffer();
-            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-            let fullText = "";
-            // Only parse first 10 pages to save time/memory
-            const maxPages = Math.min(pdf.numPages, 10);
-            for (let i = 1; i <= maxPages; i++) {
-              const page = await pdf.getPage(i);
-              const textContent = await page.getTextContent();
-              const pageText = textContent.items.map((item: any) => item.str).join(' ');
-              fullText += pageText + "\n";
-            }
-            abstractText = fullText;
-          }
-        } catch (e) {
-          console.error('Abstract parsing failed:', e);
-          setThesisStartError("Failed to read abstract file offline.");
-          setThesisAbstractUploading(false);
-          setThesisIsStarting(false);
-          return;
-        } finally {
-          setThesisAbstractUploading(false);
-        }
-      }
+      restoredEyeContactSummaryRef.current = null;
+      thesisSessionIdRef.current = sid;
+      setThesisSessionId(sid);
 
       setThesisConversationLog([]);
+      thesisConversationLogRef.current = [];
+      setOnlineInterviewError(null);
       setThesisResult(null);
       setThesisElapsedSeconds(0);
       activeInterviewModeRef.current = 'thesis';
@@ -2170,18 +3096,27 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
       if (thesisTimerRef.current) clearInterval(thesisTimerRef.current);
       thesisTimerRef.current = setInterval(() => setThesisElapsedSeconds(prev => prev + 1), 1000);
 
-      // WebLLM Setup
-      const systemPrompt = `You are Professor Maxiel, an expert panelist for a thesis defense at ${dep}. Probe the student's research abstract. Speak DIRECTLY to the student. Keep the interview to exactly 5 questions total. Ask exactly ONE question at a time. Conclude gracefully when finished.\n\nStudent's Abstract/Proposal context:\n${abstractText ? abstractText.substring(0, 5000) : 'None provided.'}`; // Truncate to 5000 chars to avoid token limits
-      const initialMsgs = [{ role: 'system', content: systemPrompt }];
-      chatMessagesRef.current = initialMsgs;
-      setChatMessages(initialMsgs);
-
-      handleLocalWebLLM("Hello! I am here and ready to begin the thesis defense.", initialMsgs);
+      thesisAbstractTextRef.current = abstractText.substring(0, 5000);
+      setTypedInterviewAnswer('');
+      chatMessagesRef.current = [];
+      setChatMessages([]);
+      onlinePendingUserTextRef.current = '';
+      beginActivityCheckpoint({ type: 'thesis', serverSessionId: sid });
+      beginOnlineInterviewResponse('thesis', false);
+      void connectOnlineInterview('thesis', sid, 'start').catch(error => {
+        setOnlineInterviewError(error instanceof Error ? error.message : 'Unable to connect to the thesis AI.');
+        setCanRetryOnlineResponse(true);
+      });
       setThesisIsStarting(false);
     }
   };
 
   const exitThesisSession = () => {
+    offlineInterviewRecorderRef.current?.cancelRecording();
+    offlineInterviewRecorderRef.current = null;
+    setLatestOfflineRecordingUrl(null);
+    const shouldReleaseOfflineEngine = activeActivityCheckpointRef.current?.type === 'thesis'
+      && readOfflineInterviewActivityState(activeActivityCheckpointRef.current)?.offlineEngine === 'webllm';
     if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
     stopListening();
     if (thesisTimerRef.current) { clearInterval(thesisTimerRef.current); thesisTimerRef.current = null; }
@@ -2194,113 +3129,83 @@ ${conversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
     setThesisConversationLog([]);
     setThesisResult(null);
     setIsCameraEnabled(false);
+    restoredEyeContactSummaryRef.current = null;
+    setTypedInterviewAnswer('');
     setThesisAbstractFile(null);
     setThesisElapsedSeconds(0);
     setAiResponseText('');
+    setOnlineInterviewError(null);
+    setCanRetryOnlineResponse(false);
+    thesisAbstractTextRef.current = '';
+    onlinePendingUserTextRef.current = '';
     activeInterviewModeRef.current = null;
     if (thesisWsRef.current) { thesisWsRef.current.close(); thesisWsRef.current = null; }
     if (audioPlayerRef.current) { audioPlayerRef.current.pause(); audioPlayerRef.current.src = ''; }
+    if (activeActivityCheckpointRef.current?.type === 'thesis') {
+      endActivityCheckpoint('abandoned');
+    }
+    if (shouldReleaseOfflineEngine) {
+      offlineWebLLMEngineRef.current = null;
+      void releaseWebLLM().catch(error => console.warn('Unable to release local thesis AI.', error));
+    }
     nextPlayTimeRef.current = 0;
     fetchThesisHistory();
     setActiveTab('dashboard');
   };
 
   const finishThesisSession = async () => {
+    const activeCheckpoint = activeActivityCheckpointRef.current;
+    if (activeCheckpoint?.type === 'thesis' && activeCheckpoint.mode === 'offline') {
+      if (activeCheckpoint.responseCount !== OFFLINE_INTERVIEW_RESPONSE_LIMIT) return;
+      setThesisIsFinishing(true);
+      const eyeContactSummary = getCheckpointEyeContactSummary();
+      const provisional = evaluateOfflineInterview(
+        'thesis',
+        activeCheckpoint.conversationLog,
+        eyeContactSummary,
+      );
+      const evaluated = await updateActivityCheckpoint({
+        eyeContactSummary,
+        localEvaluation: provisional.evaluation as unknown as Record<string, unknown>,
+        localScore: null,
+        pendingEvaluation: provisional.pendingEvaluation,
+        evaluationAuthority: 'local_provisional',
+      });
+      const completed = evaluated && await endActivityCheckpoint('completed_local');
+      setThesisIsFinishing(false);
+      if (!completed) {
+        setOnlineInterviewError('The provisional thesis result could not be saved safely. Please retry completion.');
+        return;
+      }
+      offlineWebLLMEngineRef.current = null;
+      await releaseWebLLM().catch(error => console.warn('Unable to release local thesis AI.', error));
+      exitThesisSession();
+      return;
+    }
     if (!thesisSessionIdRef.current) return;
     if (!authenticatedUserIdRef.current) {
       alert('Your account could not be verified. Please sign in again before saving this thesis session.');
       return;
     }
     setThesisIsFinishing(true);
-    let evaluation = null;
-
+    setOnlineInterviewError(null);
+    setCanRetryOnlineResponse(false);
     try {
-      if (webLLMEngine) {
-        const department = profile.department.trim().toUpperCase();
-        const gradingSchema = department === 'CTE' ? `{
-  "pedagogical_innovation_score": 0,
-  "action_research_score": 0,
-  "learning_outcomes_score": 0,
-  "literature_alignment_score": 0,
-  "teaching_demo_score": 0,
-  "scalability_policy_score": 0,
-  "feedback_summary": "string"
-}` : department === 'CBAPA' ? `{
-  "research_problem_score": 0,
-  "methodology_analysis_score": 0,
-  "practical_roi_score": 0,
-  "literature_theoretical_score": 0,
-  "professional_delivery_score": 0,
-  "feedback_summary": "string"
-}` : `{
-  "technical_innovation_score": 0,
-  "system_implementation_score": 0,
-  "experimental_validation_score": 0,
-  "literature_review_score": 0,
-  "demo_quality_score": 0,
-  "feedback_summary": "string"
-}`;
-        const gradingPrompt = `You are a strict grading algorithm. Evaluate the transcript of this thesis defense.
-Score every listed criterion from 0 to 100. Respond in STRICT JSON matching this schema exactly:
-${gradingSchema}
-Transcript:
-${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\n')}`;
-
-        const resp = await webLLMEngine.chat.completions.create({
-          messages: [{ role: 'user', content: gradingPrompt }],
-          response_format: { type: "json_object" }
-        });
-
-        try {
-          evaluation = JSON.parse(resp.choices[0].message.content || "{}");
-          if (evaluation.technical_innovation_score) {
-            evaluation.score_ccit_technical_innovation = evaluation.technical_innovation_score;
-          }
-        } catch (e) {
-          console.error("Failed to parse local thesis evaluation", e);
-        }
-      }
-
-      evaluation = {
-        ...(evaluation || {}),
+      const cameraMetrics = {
         eye_contact_score: eyeTracker.samples > 0 ? eyeTracker.score : null,
-        score_eye_contact: eyeTracker.samples > 0 ? eyeTracker.score : null,
         eye_contact_samples: eyeTracker.samples,
       };
-      const offlineTotalScore = getThesisEvaluationTotal(evaluation, profile.department);
-      evaluation.total_score = offlineTotalScore;
-
-      if (String(thesisSessionIdRef.current).startsWith('local_')) {
-        // Offline mode
-        await saveOwnedOfflineSession({
-          localId: String(thesisSessionIdRef.current),
-          type: 'thesis',
-          status: 'pending_sync',
-          conversationLog: thesisConversationLog,
-          evaluation: evaluation,
-          timestamp: Date.now()
-        });
-
-        setThesisResult({ ...evaluation, total_score: offlineTotalScore, passed: offlineTotalScore >= 70 });
-        stopListening();
-        setThesisIsLeaveModalOpen(false);
-        setIsAiSpeaking(false);
-        isAiSpeakingRef.current = false;
-        setIsListening(false);
-        if (thesisTimerRef.current) { clearInterval(thesisTimerRef.current); thesisTimerRef.current = null; }
-        if (audioPlayerRef.current) audioPlayerRef.current.pause();
-        return;
-      }
-
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_URL}/thesis-interview/${thesisSessionIdRef.current}/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ conversation: thesisConversationLog, evaluation })
+        body: JSON.stringify({ conversation: thesisConversationLog, evaluation: cameraMetrics })
       });
       if (response.ok) {
         const data = await response.json();
         setThesisResult(data);
+        setOnlineInterviewError(null);
+        endActivityCheckpoint('cloud_completed');
         stopListening();
         setThesisIsLeaveModalOpen(false);
         setIsAiSpeaking(false);
@@ -2309,42 +3214,15 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
         if (thesisTimerRef.current) { clearInterval(thesisTimerRef.current); thesisTimerRef.current = null; }
         if (audioPlayerRef.current) audioPlayerRef.current.pause();
       } else {
-        alert('Failed to grade thesis defense. Please try again.');
+        const detail = await response.json().catch(() => null);
+        setOnlineInterviewError(detail?.detail || 'The thesis defense could not be graded. Please try again.');
       }
-    } catch (e) {
-      console.warn("Offline: saving completed thesis session to cache");
-      await saveOwnedOfflineSession({
-        localId: String(thesisSessionIdRef.current),
-        type: 'thesis',
-        status: 'pending_sync',
-        conversationLog: thesisConversationLog,
-        evaluation: evaluation,
-        timestamp: Date.now()
-      });
-
-      const offlineTotalScore = getThesisEvaluationTotal(evaluation || {}, profile.department);
-      setThesisResult({ ...evaluation, total_score: offlineTotalScore, passed: offlineTotalScore >= 70 });
-      stopListening();
-      setThesisIsLeaveModalOpen(false);
-      setIsAiSpeaking(false);
-      isAiSpeakingRef.current = false;
-      setIsListening(false);
-      if (thesisTimerRef.current) { clearInterval(thesisTimerRef.current); thesisTimerRef.current = null; }
-      if (audioPlayerRef.current) audioPlayerRef.current.pause();
+    } catch (error) {
+      console.error('Thesis validation request failed.', error);
+      setOnlineInterviewError('The thesis defense could not be graded. Check your connection and try again.');
     } finally {
       setThesisIsFinishing(false);
       fetchThesisHistory();
-    }
-  };
-
-  const sendToGemini = async (text: string) => {
-    setAiResponseText('');
-    setIsAiSpeaking(true);
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ text, end_of_turn: true }));
-    } else {
-      setAiResponseText('Connection error. WebSocket dropped.');
-      setIsAiSpeaking(false);
     }
   };
 
@@ -2358,7 +3236,11 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
       const hasRecognizedSpeech = Boolean(
         finalizedTranscriptRef.current.trim() || latestInterimTranscriptRef.current.trim(),
       );
-      stopListening(isRecognitionReadyRef.current || hasRecognizedSpeech);
+      stopListening(
+        activeActivityCheckpointRef.current?.mode === 'offline'
+        || isRecognitionReadyRef.current
+        || hasRecognizedSpeech,
+      );
     } else {
       setRecognizedSpeechText('');
       finalizedTranscriptRef.current = '';
@@ -2380,6 +3262,20 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         userMediaStreamRef.current = stream;
 
+        if (activeActivityCheckpointRef.current?.mode === 'offline') {
+          offlineInterviewRecorderRef.current = createOfflineAudioRecorder({
+            stream,
+            onLimitReached: reason => setInterviewMicFeedback(
+              reason === 'duration'
+                ? 'The five-minute recording limit was reached. Stop the mic to save it.'
+                : 'The 25 MB recording limit was reached. Stop the mic to save it.',
+            ),
+          });
+          if (!await offlineInterviewRecorderRef.current.startRecording()) {
+            throw new Error('Local audio recording is unavailable in this browser.');
+          }
+        }
+
         // Native 16000Hz sampling purely for cosmetic visualization context
         const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
         userAudioContextRef.current = ctx;
@@ -2398,6 +3294,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (SpeechRecognition) {
           let recognitionRetryCount = 0;
+          let fatalRecognition = false;
 
           const scheduleRecognitionRestart = (delay = 250) => {
             if (!isListeningRef.current || recognitionRestartTimeoutRef.current) return;
@@ -2408,7 +3305,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
           };
 
           function startRecognition() {
-            if (!isListeningRef.current) return;
+            if (!isListeningRef.current || fatalRecognition) return;
 
             const recognition = new SpeechRecognition();
             recognition.continuous = true;
@@ -2481,12 +3378,20 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
               }
 
               console.error("STT Error", e);
-              setInterviewMicFeedback('Speech recognition stopped. Please try again.');
-              stopListening(false);
+              if (activeActivityCheckpointRef.current?.mode === 'offline') {
+                fatalRecognition = true;
+                setInterviewMicFeedback('Speech recognition stopped, but local audio is still recording. Stop the mic, then type your answer if needed.');
+                if (recognitionRef.current === recognition) recognitionRef.current = null;
+                try { recognition.abort(); } catch { /* The browser may already have ended it. */ }
+              } else {
+                setInterviewMicFeedback('Speech recognition stopped. Please try again.');
+                stopListening(false);
+              }
             };
             recognition.onend = () => {
               if (recognitionRef.current === recognition) recognitionRef.current = null;
               updateRecognitionReady(false);
+              if (fatalRecognition && activeActivityCheckpointRef.current?.mode === 'offline') return;
               if (isListeningRef.current) {
                 scheduleRecognitionRestart(250);
               } else if (submitTranscriptOnEndRef.current) {
@@ -2512,9 +3417,13 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
           restartInterviewRecognitionRef.current = startRecognition;
           startRecognition();
         } else {
-          console.warn("Speech Recognition not supported in this browser.");
-          setInterviewMicFeedback('Speech recognition is not supported in this browser.');
-          stopListening(false);
+          if (activeActivityCheckpointRef.current?.mode === 'offline') {
+            setInterviewMicFeedback('Speech recognition is unavailable offline. Audio will still be saved; type your answer to continue.');
+          } else {
+            console.warn("Speech Recognition not supported in this browser.");
+            setInterviewMicFeedback('Speech recognition is not supported in this browser.');
+            stopListening(false);
+          }
         }
       } catch (err) {
         console.error("Could not capture local audio for streaming:", err);
@@ -2523,7 +3432,195 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
         updateRecognitionReady(false);
         setIsMicTransitioning(false);
         releaseInterviewMicrophone();
-        setInterviewMicFeedback('Microphone access failed. Check permission and try again.');
+        offlineInterviewRecorderRef.current?.cancelRecording();
+        offlineInterviewRecorderRef.current = null;
+        setInterviewMicFeedback(getMicrophoneErrorMessage(err));
+      }
+    }
+  };
+
+  const continueCurrentActivityOffline = async () => {
+    const current = activeActivityCheckpointRef.current;
+    if (!current) return;
+    if (current.mode === 'offline') {
+      setShowConnectionLossPrompt(false);
+      return;
+    }
+
+    const offlineCheckpoint = mergeActivityCheckpoint(current, {
+      mode: 'offline',
+      status: 'in_progress',
+      questionPackVersion: current.questionPackVersion || getQuestionPackVersion(current.type),
+      currentQuestion: onlineResponseBufferRef.current.trim()
+        || aiResponseText.trim()
+        || current.currentQuestion,
+      lastError: connectivity.connectionState === 'offline'
+        ? 'Device network unavailable.'
+        : 'Career Edge backend unavailable.',
+      eyeContactSummary: current.type === 'upcoming' || current.type === 'thesis'
+        ? getCheckpointEyeContactSummary()
+        : current.eyeContactSummary,
+    });
+    const checkpointSaved = await persistActivityCheckpoint(offlineCheckpoint);
+    if (!checkpointSaved) return;
+
+    activeActivityCheckpointRef.current = offlineCheckpoint;
+    setActiveActivityCheckpoint(offlineCheckpoint);
+    setShowConnectionLossPrompt(false);
+
+    if (
+      (offlineCheckpoint.type === 'upcoming' || offlineCheckpoint.type === 'thesis')
+      && isListeningRef.current
+      && userMediaStreamRef.current
+      && !offlineInterviewRecorderRef.current
+    ) {
+      offlineInterviewRecorderRef.current = createOfflineAudioRecorder({
+        stream: userMediaStreamRef.current,
+        onLimitReached: reason => setInterviewMicFeedback(
+          reason === 'duration'
+            ? 'The five-minute recording limit was reached. Stop the mic to save it.'
+            : 'The 25 MB recording limit was reached. Stop the mic to save it.',
+        ),
+      });
+      try {
+        const recordingStarted = await offlineInterviewRecorderRef.current.startRecording();
+        if (!recordingStarted) throw new Error('MediaRecorder is unavailable.');
+        setInterviewMicFeedback('Offline mode is active. Your current response is now being recorded locally.');
+      } catch (error) {
+        offlineInterviewRecorderRef.current = null;
+        setInterviewMicFeedback(
+          error instanceof Error
+            ? `${error.message} Your recognized text remains available; you can also type the answer.`
+            : 'Local audio recording could not start. Your recognized text remains available; you can also type the answer.',
+        );
+      }
+    }
+
+    if (offlineCheckpoint.type === 'upcoming') {
+      wsRef.current?.close(1000, 'Activity locked offline.');
+      wsRef.current = null;
+    } else if (offlineCheckpoint.type === 'thesis') {
+      thesisWsRef.current?.close(1000, 'Activity locked offline.');
+      thesisWsRef.current = null;
+    }
+
+    if (offlineCheckpoint.type === 'upcoming' || offlineCheckpoint.type === 'thesis') {
+      const type = offlineCheckpoint.type;
+      const state = await initializeOfflineInterviewState(type, type === 'thesis' ? {
+        text: thesisAbstractTextRef.current,
+        sourceName: thesisAbstractFile?.name,
+      } : undefined);
+      if (!state) {
+        setOnlineInterviewError('Offline mode is locked, but the local interview engine could not be prepared. Retry without leaving this page.');
+        return;
+      }
+      setOnlineInterviewError(
+        state.offlineEngine === 'webllm'
+          ? 'Offline mode is locked. Cached local AI will continue this activity.'
+          : 'Offline mode is locked. Deterministic local questions will continue this activity.',
+      );
+      const latest = activeActivityCheckpointRef.current?.conversationLog.at(-1);
+      if (latest?.sender === 'user') {
+        await generateOfflineProfessorTurn(type, offlineCheckpoint.responseCount);
+      } else if (offlineCheckpoint.currentQuestion) {
+        setAiResponseText(offlineCheckpoint.currentQuestion);
+      }
+    }
+  };
+
+  const retryCurrentConnection = async () => {
+    const reachable = await connectivity.retryConnection();
+    if (reachable) setShowConnectionLossPrompt(false);
+  };
+
+  const leaveActivityAfterConnectionLoss = () => {
+    const type = activeActivityCheckpointRef.current?.type;
+    if (type === 'upcoming') {
+      exitInterview();
+      return;
+    }
+    if (type === 'thesis') {
+      exitThesisSession();
+      return;
+    }
+    endActivityCheckpoint('abandoned');
+    setIsModuleSessionMode(false);
+    setActiveTab('dashboard');
+  };
+
+  const resumeOwnedOfflineActivity = async () => {
+    const resumable = resumableOfflineSession;
+    if (!resumable || resumable.userId !== authenticatedUserIdRef.current) return;
+    if (!hasCurrentQuestionPack(resumable.type, resumable.questionPackVersion)) {
+      setOfflineFoundationError(
+        'This saved offline activity uses an older question version. It has been preserved and cannot be resumed automatically.',
+      );
+      return;
+    }
+    activeActivityCheckpointRef.current = resumable;
+    setActiveActivityCheckpoint(resumable);
+    setIsModuleSessionMode(true);
+    if (resumable.type === 'post_test') setActiveTab('post-test');
+    else if (resumable.type === 'drill') setActiveTab('drills');
+    else if (resumable.type === 'pre_test_intro' || resumable.type === 'pre_test_active_listening') setActiveTab('pre-test');
+    else if (resumable.type === 'upcoming' || resumable.type === 'thesis') {
+      setIsModuleSessionMode(false);
+      const type = resumable.type;
+      const mode: OnlineInterviewMode = type === 'thesis' ? 'thesis' : 'enrollment';
+      const state = readOfflineInterviewActivityState(resumable);
+      if (!state) {
+        setOfflineFoundationError('This saved interview is missing its offline-engine state. It has been preserved and cannot be resumed automatically.');
+        activeActivityCheckpointRef.current = null;
+        setActiveActivityCheckpoint(null);
+        return;
+      }
+      restoredEyeContactSummaryRef.current = resumable.eyeContactSummary;
+      activeInterviewModeRef.current = mode;
+      setTypedInterviewAnswer('');
+      setOnlineInterviewError(null);
+      setCanRetryOnlineResponse(false);
+      setAiResponseText(resumable.currentQuestion);
+      setChatMessages(resumable.conversationLog.map(turn => ({
+        role: turn.sender === 'ai' ? 'assistant' : 'user',
+        content: turn.text,
+      })));
+      chatMessagesRef.current = resumable.conversationLog.map(turn => ({
+        role: turn.sender === 'ai' ? 'assistant' : 'user',
+        content: turn.text,
+      }));
+      if (type === 'thesis') {
+        thesisSessionIdRef.current = resumable.serverSessionId;
+        setThesisSessionId(resumable.serverSessionId);
+        thesisConversationLogRef.current = resumable.conversationLog;
+        setThesisConversationLog(resumable.conversationLog);
+        thesisAbstractTextRef.current = state.thesisAbstractContext || '';
+        setThesisElapsedSeconds(Math.max(0, Math.floor((Date.now() - resumable.startedAt) / 1000)));
+        if (thesisTimerRef.current) clearInterval(thesisTimerRef.current);
+        thesisTimerRef.current = setInterval(() => setThesisElapsedSeconds(previous => previous + 1), 1000);
+        setActiveTab('thesis-session');
+      } else {
+        sessionIdRef.current = resumable.serverSessionId;
+        setSessionId(resumable.serverSessionId);
+        conversationLogRef.current = resumable.conversationLog;
+        setConversationLog(resumable.conversationLog);
+        setIsEnrollmentFinalProfessorTurnReady(
+          resumable.responseCount >= OFFLINE_INTERVIEW_RESPONSE_LIMIT
+          && resumable.conversationLog.at(-1)?.sender === 'ai',
+        );
+        setIsProfessorFirstFrameReady(false);
+        setActiveTab('interview-session');
+      }
+      const initializedState = await initializeOfflineInterviewState(type, type === 'thesis' ? {
+        text: state.thesisAbstractContext || '',
+        sourceName: state.thesisAbstractSourceName,
+      } : undefined);
+      if (!initializedState) {
+        setOnlineInterviewError('The offline interview engine could not be restored. Your checkpoint remains saved.');
+        return;
+      }
+      const latest = activeActivityCheckpointRef.current?.conversationLog.at(-1);
+      if (latest?.sender === 'user') {
+        await generateOfflineProfessorTurn(type, resumable.responseCount);
       }
     }
   };
@@ -2540,7 +3637,9 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
 
   const enrollmentResponseCount = conversationLog.filter(message => message.sender === 'user').length;
   const enrollmentInstruction = isFinishingInterview
-    ? 'Validating your responses and preparing your interview result...'
+    ? activeActivityCheckpoint?.mode === 'offline'
+      ? 'Saving your provisional interview result locally...'
+      : 'Validating your responses and preparing your interview result...'
     : enrollmentResponseCount >= 5 && isEnrollmentFinalProfessorTurnReady
       ? 'All five responses are recorded. Click “Validate Responses” in the transcript panel to receive your result.'
       : enrollmentResponseCount >= 5
@@ -2557,6 +3656,68 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                 ? 'Listen carefully to Professor Maxiel. When the question ends, click the microphone to start your response.'
                 : 'Click the microphone to start answering. After speaking, click it again to stop and submit your response.';
 
+  const renderOfflineInterviewInput = (type: OfflineInterviewKind) => {
+    const checkpoint = activeActivityCheckpoint;
+    if (!checkpoint || checkpoint.type !== type || checkpoint.mode !== 'offline') return null;
+    const answersComplete = checkpoint.responseCount >= OFFLINE_INTERVIEW_RESPONSE_LIMIT;
+    const isThesis = type === 'thesis';
+    return (
+      <div className={`mb-3 rounded-lg border p-3 ${isThesis ? 'border-slate-700 bg-slate-900' : 'border-[var(--interview-border)] bg-[var(--interview-card)]'}`}>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <span className="program-accent-on-dark text-[10px] font-bold uppercase tracking-wider">
+            Offline · {readOfflineInterviewActivityState(checkpoint)?.offlineEngine === 'webllm' ? 'Cached Local AI' : 'Fallback Questions'}
+          </span>
+          <button
+            type="button"
+            onClick={() => void repeatStoredOfflineQuestion()}
+            disabled={!checkpoint.currentQuestion || isAiSpeaking}
+            className={`text-[10px] font-bold underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${isThesis ? 'text-slate-400' : 'text-[var(--interview-text-secondary)]'}`}
+          >
+            Repeat question
+          </button>
+        </div>
+        {isThesis && checkpoint.currentQuestion && (
+          <p className="mb-2 text-xs leading-relaxed text-slate-100">
+            {checkpoint.currentQuestion}
+          </p>
+        )}
+        <form onSubmit={submitTypedInterviewAnswer} className="flex gap-2">
+          <input
+            type="text"
+            value={typedInterviewAnswer}
+            onChange={event => setTypedInterviewAnswer(event.target.value)}
+            disabled={answersComplete || isSubmittingOfflineAnswer || isAiSpeaking}
+            placeholder={answersComplete ? 'All five responses are recorded' : 'Type an answer if microphone input is unavailable'}
+            aria-label="Typed offline interview answer"
+            className={`min-w-0 flex-1 rounded-lg border px-3 py-2 text-xs outline-none focus:border-[var(--program-accent-on-dark)] disabled:opacity-60 ${isThesis ? 'border-slate-700 bg-slate-800 text-slate-100 placeholder:text-slate-500' : 'border-[var(--interview-border)] bg-[var(--interview-elevated)] text-[var(--interview-text-primary)] placeholder:text-[var(--interview-text-muted)]'}`}
+          />
+          <button
+            type="submit"
+            disabled={!typedInterviewAnswer.trim() || answersComplete || isSubmittingOfflineAnswer || isAiSpeaking}
+            className="program-accent-interview-active flex h-9 w-9 shrink-0 items-center justify-center rounded-lg disabled:cursor-not-allowed disabled:opacity-50"
+            title="Submit typed answer"
+            aria-label="Submit typed answer"
+          >
+            <Send className="h-4 w-4" />
+          </button>
+        </form>
+        {latestOfflineRecordingUrl && (
+          <audio
+            className="mt-2 h-8 w-full"
+            controls
+            preload="metadata"
+            src={latestOfflineRecordingUrl}
+            aria-label="Review your most recent offline recording"
+          />
+        )}
+      </div>
+    );
+  };
+
+  const syncingSessions = syncQueueSessions.filter(session => session.status === 'syncing');
+  const failedSyncSession = syncQueueSessions.find(session => session.status === 'sync_failed');
+  const queuedSyncSessions = syncQueueSessions.filter(session => session.status === 'pending_sync');
+
   return (
     <>
       <ProfessorAssetErrorBoundary
@@ -2567,41 +3728,91 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
           <ProfessorModelPreloader onReady={handleProfessorAssetReady} />
         </React.Suspense>
       </ProfessorAssetErrorBoundary>
-      {isLlmLoading && (
-        <div
-          className="fixed inset-0 z-[9999] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center text-white"
-          style={programAccentStyle}
-        >
-          <div className="program-accent-spinner w-16 h-16 border-4 rounded-full animate-spin mb-6"></div>
-          <h2 className="program-accent-on-dark text-3xl font-black mb-2">Downloading AI Brain...</h2>
-          <p className="text-slate-300 max-w-md text-lg leading-relaxed mb-4">Please wait while the WebLLM model is loaded into your browser memory. This happens ONLY the first time you run the app!</p>
-          <div className="bg-slate-900 border border-slate-700 px-6 py-4 rounded-2xl w-full max-w-md">
-            <p className="program-accent-on-dark font-mono text-sm mb-2">{llmStatus}</p>
-            <div className="w-full bg-slate-800 rounded-full h-3 overflow-hidden">
-              <div className="program-accent-fill h-full transition-all duration-300" style={{ width: `${llmProgress}%` }}></div>
-            </div>
-          </div>
+      {connectivity.connectionState !== 'online' && (
+        <div className="fixed right-4 top-4 z-[9997] rounded-lg border border-amber-400/40 bg-slate-950/95 px-4 py-3 text-xs text-amber-100 shadow-xl">
+          <p className="font-bold">
+            {connectivity.connectionState === 'offline'
+              ? 'Device offline'
+              : connectivity.connectionState === 'degraded'
+                ? 'Career Edge cloud unavailable'
+                : 'Checking cloud connection…'}
+          </p>
+          <p className="mt-1 text-slate-300">Cloud activities require both network and backend availability.</p>
         </div>
       )}
-      {hasLlmError && ['interview-type', 'university-setup', 'new-interview', 'interview-session', 'thesis-setup', 'thesis-session'].includes(activeTab) && (
-        <div
-          className="fixed inset-0 z-[9999] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center text-white"
-          style={programAccentStyle}
-        >
-          <div className="w-full max-w-lg rounded-2xl border border-rose-500/30 bg-slate-900 p-6 shadow-2xl">
-            <h2 className="text-3xl font-black mb-3 text-rose-300">WebLLM Could Not Start</h2>
-            <p className="text-slate-300 leading-relaxed mb-4">
-              The interview AI runs locally in your browser with WebGPU. Use Chrome or Edge with hardware acceleration enabled, then try again.
+      {connectionRestoredNotice && activeActivityCheckpoint?.mode === 'offline' && (
+        <div className="fixed right-4 top-24 z-[9997] max-w-sm rounded-lg border border-emerald-400/40 bg-slate-950/95 px-4 py-3 text-xs text-emerald-100 shadow-xl">
+          <p>Connection restored. This activity remains offline and will be eligible for sync after local completion.</p>
+          <button type="button" onClick={() => setConnectionRestoredNotice(false)} className="mt-2 font-bold underline">Dismiss</button>
+        </div>
+      )}
+      {offlineFoundationError && (
+        <div className="fixed bottom-4 right-4 z-[9997] max-w-sm rounded-lg border border-rose-400/40 bg-slate-950/95 px-4 py-3 text-xs text-rose-100 shadow-xl">
+          {offlineFoundationError}
+        </div>
+      )}
+      {!activeActivityCheckpoint && resumableOfflineSession && activeTab === 'dashboard' && (
+        <div className="fixed bottom-4 left-1/2 z-[9996] flex -translate-x-1/2 items-center gap-3 rounded-lg border border-amber-400/30 bg-slate-950/95 px-4 py-3 text-xs text-amber-100 shadow-xl">
+          <span>An unfinished offline {resumableOfflineSession.type.replace(/_/g, ' ')} activity is safely stored for this account.</span>
+          {['pre_test_intro', 'pre_test_active_listening', 'post_test', 'drill'].includes(resumableOfflineSession.type) && (
+            <button type="button" onClick={resumeOwnedOfflineActivity} className="rounded-md border border-amber-300/50 px-3 py-1.5 font-bold hover:bg-amber-300/10">Resume</button>
+          )}
+        </div>
+      )}
+      {!activeActivityCheckpoint && pendingSyncCount > 0 && activeTab === 'dashboard' && (
+        <div className="fixed bottom-4 right-4 z-[9996] max-w-sm rounded-lg border border-sky-400/30 bg-slate-950/95 px-4 py-3 text-xs text-sky-100 shadow-xl">
+          <p className="font-bold">
+            {syncingSessions.length > 0
+              ? `Syncing ${syncingSessions.length} saved ${syncingSessions.length === 1 ? 'activity' : 'activities'}...`
+              : failedSyncSession
+                ? 'Sync Failed'
+                : `${queuedSyncSessions.length} ${queuedSyncSessions.length === 1 ? 'activity' : 'activities'} Pending Sync`}
+          </p>
+          {failedSyncSession ? (
+            <>
+              <p className="mt-1 text-slate-300">{failedSyncSession.lastError || 'Your saved activity remains safely stored on this device.'}</p>
+              <button
+                type="button"
+                onClick={() => void retryFailedSync(failedSyncSession)}
+                disabled={!connectivity.effectiveOnline || syncingSessions.length > 0}
+                className="mt-2 rounded-md border border-sky-300/50 px-3 py-1.5 font-bold hover:bg-sky-300/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Retry Sync
+              </button>
+            </>
+          ) : (
+            <p className="mt-1 text-slate-300">
+              {syncingSessions.length > 0
+                ? 'Your local copy will be retained after authoritative synchronization.'
+                : 'Synchronization will begin when the Career Edge cloud is available.'}
             </p>
-            <div className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-left">
-              <p className="font-mono text-sm text-rose-200 break-words">{llmError || llmStatus}</p>
+          )}
+        </div>
+      )}
+      {!activeActivityCheckpoint && pendingSyncCount === 0 && lastSyncNotice && activeTab === 'dashboard' && (
+        <div className="fixed bottom-4 right-4 z-[9996] flex items-center gap-3 rounded-lg border border-emerald-400/30 bg-slate-950/95 px-4 py-3 text-xs text-emerald-100 shadow-xl">
+          <span className="font-bold">{lastSyncNotice}</span>
+          <button type="button" onClick={() => setLastSyncNotice(null)} className="underline">Dismiss</button>
+        </div>
+      )}
+      {showConnectionLossPrompt && activeActivityCheckpoint?.mode === 'online' && (
+        <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 text-white shadow-2xl">
+            <h2 className="text-xl font-bold">Connection lost</h2>
+            <p className="mt-2 text-sm leading-relaxed text-slate-300">
+              Your current question, transcript, response count, and camera summary are being preserved. Choose how to continue.
+            </p>
+            <div className="mt-5 grid gap-2">
+              <button type="button" onClick={() => void continueCurrentActivityOffline()} className="program-accent-button rounded-xl px-4 py-3 text-sm font-bold">
+                Continue Offline
+              </button>
+              <button type="button" onClick={() => void retryCurrentConnection()} className="rounded-xl border border-slate-600 px-4 py-3 text-sm font-bold hover:bg-slate-800">
+                Retry Connection
+              </button>
+              <button type="button" onClick={leaveActivityAfterConnectionLoss} className="rounded-xl px-4 py-3 text-sm font-bold text-rose-300 hover:bg-rose-500/10">
+                Leave Activity
+              </button>
             </div>
-            <button
-              onClick={retryWebLLM}
-              className="program-accent-button mt-5 rounded-xl px-5 py-3 font-bold transition-colors"
-            >
-              Retry WebLLM
-            </button>
           </div>
         </div>
       )}
@@ -2858,11 +4069,48 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
               </div>
             )}
 
-            {activeTab === 'pre-test' && <PreTestPage apiUrl={API_URL} onSessionModeChange={setIsModuleSessionMode} />}
+            {activeTab === 'pre-test' && (
+              <PreTestPage
+                apiUrl={API_URL}
+                onSessionModeChange={setIsModuleSessionMode}
+                effectiveOnline={connectivity.effectiveOnline}
+                sessionMode={activeActivityCheckpoint?.type === 'pre_test_intro' || activeActivityCheckpoint?.type === 'pre_test_active_listening' ? activeActivityCheckpoint.mode : 'online'}
+                resumeSession={activeActivityCheckpoint?.type === 'pre_test_intro' || activeActivityCheckpoint?.type === 'pre_test_active_listening' ? activeActivityCheckpoint : null}
+                onActivityStart={beginActivityCheckpoint}
+                onActivityCheckpoint={updateActivityCheckpoint}
+                onActivityEnd={endActivityCheckpoint}
+                onOfflineAudioCaptured={persistOfflineAudioCapture}
+              />
+            )}
 
-            {activeTab === 'drills' && <DrillsPage apiUrl={API_URL} onSessionModeChange={setIsModuleSessionMode} />}
+            {activeTab === 'drills' && (
+              <DrillsPage
+                apiUrl={API_URL}
+                onSessionModeChange={setIsModuleSessionMode}
+                effectiveOnline={connectivity.effectiveOnline}
+                sessionMode={getActiveActivityMode('drill')}
+                resumeSession={activeActivityCheckpoint?.type === 'drill' ? activeActivityCheckpoint : null}
+                onActivityStart={beginActivityCheckpoint}
+                onActivityCheckpoint={updateActivityCheckpoint}
+                onActivityEnd={endActivityCheckpoint}
+                onOfflineAudioCaptured={persistOfflineAudioCapture}
+              />
+            )}
 
-            {activeTab === 'post-test' && <PostTestPage apiUrl={API_URL} onSessionModeChange={setIsModuleSessionMode} />}
+            {activeTab === 'post-test' && (
+              <PostTestPage
+                apiUrl={API_URL}
+                onSessionModeChange={setIsModuleSessionMode}
+                effectiveOnline={connectivity.effectiveOnline}
+                sessionMode={getActiveActivityMode('post_test')}
+                resumeSession={activeActivityCheckpoint?.type === 'post_test' ? activeActivityCheckpoint : null}
+                userDepartment={profile.department}
+                onActivityStart={beginActivityCheckpoint}
+                onActivityCheckpoint={updateActivityCheckpoint}
+                onActivityEnd={endActivityCheckpoint}
+                onOfflineAudioCaptured={persistOfflineAudioCapture}
+              />
+            )}
 
             {activeTab === 'interview-type' && (
               <div className="relative h-full">
@@ -3185,7 +4433,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
                         <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-slate-200">
                           <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unavailable' ? 'Tracking unavailable' : 'Loading tracker'}</span>
-                          <span className="text-purple-300">{eyeTracker.samples > 0 ? `${eyeTracker.score}%` : '—'}</span>
+                          <span className="text-purple-300">{getCheckpointEyeContactSummary().samples > 0 ? `${Math.round(getCheckpointEyeContactSummary().score || 0)}%` : '—'}</span>
                         </div>
                       </div>
                     )}
@@ -3235,6 +4483,21 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     ) : (
                       <div className="flex flex-col h-full">
                         <h3 className="text-sm font-bold text-[#f8fafc] border-b border-[#64748b]/60 pb-3 mb-4 shrink-0 uppercase tracking-widest text-center">Your Responses</h3>
+                        {onlineInterviewError && (
+                          <div className="mb-3 rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-200">
+                            <p>{onlineInterviewError}</p>
+                            {canRetryOnlineResponse && (
+                              <button
+                                type="button"
+                                onClick={retryOnlineInterviewResponse}
+                                className="mt-2 font-bold text-rose-100 underline underline-offset-2"
+                              >
+                                Retry AI response
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {renderOfflineInterviewInput('thesis')}
                         <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-4 pr-1 scroll-smooth">
                           {(() => {
                             const userLogs = thesisConversationLog.filter(l => l.sender === 'user');
@@ -3263,10 +4526,14 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                               return (
                                 <button
                                   onClick={finishThesisSession}
-                                  disabled={thesisIsFinishing}
-                                  className={`w-full py-3 ${thesisIsFinishing ? 'bg-slate-500 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-500'} text-white rounded-xl font-bold transition-all shadow-lg shadow-purple-500/20 text-sm tracking-wide animate-fade-in`}
+                                  disabled={thesisIsFinishing || isAiSpeaking || canRetryOnlineResponse}
+                                  className={`w-full py-3 ${thesisIsFinishing || isAiSpeaking || canRetryOnlineResponse ? 'bg-slate-500 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-500'} text-white rounded-xl font-bold transition-all shadow-lg shadow-purple-500/20 text-sm tracking-wide animate-fade-in`}
                                 >
-                                  {thesisIsFinishing ? 'Grading...' : 'Complete Defense'}
+                                  {thesisIsFinishing
+                                    ? activeActivityCheckpoint?.mode === 'offline' ? 'Saving Locally...' : 'Grading...'
+                                    : isAiSpeaking
+                                      ? 'Professor is responding...'
+                                      : activeActivityCheckpoint?.mode === 'offline' ? 'Complete Offline Defense' : 'Complete Defense'}
                                 </button>
                               );
                             }
@@ -3334,7 +4601,8 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                     <button
                       type="button"
                       onClick={toggleListening}
-                      className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800 shadow-slate-900/40'} text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl`}
+                      disabled={isSubmittingOfflineAnswer || thesisConversationLog.filter(turn => turn.sender === 'user').length >= OFFLINE_INTERVIEW_RESPONSE_LIMIT}
+                      className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800 shadow-slate-900/40'} text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl disabled:cursor-not-allowed disabled:opacity-50`}
                       title={isListening ? 'Stop recording and submit answer' : 'Start recording'}
                       aria-label={isListening ? 'Stop recording and submit answer' : 'Start recording'}
                     >
@@ -3438,7 +4706,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                         <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
                         <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-[var(--interview-text-secondary)]">
                           <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unavailable' ? 'Tracking unavailable' : 'Loading tracker'}</span>
-                          <span className="program-accent-on-dark">{eyeTracker.samples > 0 ? `${eyeTracker.score}%` : '—'}</span>
+                          <span className="program-accent-on-dark">{getCheckpointEyeContactSummary().samples > 0 ? `${Math.round(getCheckpointEyeContactSummary().score || 0)}%` : '—'}</span>
                         </div>
                       </div>
                     )}
@@ -3535,6 +4803,23 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       <div className="flex flex-col h-full">
                         <h3 className="mb-3 shrink-0 border-b border-[var(--interview-border)] pb-3 text-left text-xs font-bold uppercase tracking-[0.16em] text-[var(--interview-text-primary)]">Interview Transcript</h3>
 
+                        {onlineInterviewError && (
+                          <div className="mb-3 rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-200">
+                            <p>{onlineInterviewError}</p>
+                            {canRetryOnlineResponse && (
+                              <button
+                                type="button"
+                                onClick={retryOnlineInterviewResponse}
+                                className="mt-2 font-bold text-rose-100 underline underline-offset-2"
+                              >
+                                Retry AI response
+                              </button>
+                            )}
+                          </div>
+                        )}
+
+                        {renderOfflineInterviewInput('upcoming')}
+
                         <div className="custom-scrollbar flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1 scroll-smooth">
                           {(aiResponseText || isAiSpeaking) && (
                             <div className="program-accent-dark-border rounded-lg border bg-[var(--interview-elevated)] p-3 text-[var(--interview-text-primary)]">
@@ -3586,14 +4871,18 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                               return (
                                 <div className="space-y-2 animate-fade-in">
                                   <p className="text-center text-xs leading-relaxed text-[var(--interview-text-secondary)]">
-                                    Five answers are ready. Validate them to calculate your score and feedback.
+                                    {activeActivityCheckpoint?.mode === 'offline'
+                                      ? 'Five answers are ready. Complete locally to save a provisional result for future validation.'
+                                      : 'Five answers are ready. Validate them to calculate your score and feedback.'}
                                   </p>
                                   <button
                                     onClick={finishInterviewSession}
                                     disabled={isFinishingInterview}
                                     className={`w-full rounded-xl py-3 text-sm font-bold tracking-wide transition-all ${isFinishingInterview ? 'cursor-not-allowed bg-[var(--interview-disabled)] text-[var(--interview-text-secondary)]' : 'program-accent-interview-active'}`}
                                   >
-                                    {isFinishingInterview ? 'Validating Responses...' : 'Validate Responses'}
+                                    {isFinishingInterview
+                                      ? activeActivityCheckpoint?.mode === 'offline' ? 'Saving Locally...' : 'Validating Responses...'
+                                      : activeActivityCheckpoint?.mode === 'offline' ? 'Complete Offline Interview' : 'Validate Responses'}
                                   </button>
                                 </div>
                               );
@@ -3674,7 +4963,7 @@ ${thesisConversationLog.map(m => m.sender.toUpperCase() + ": " + m.text).join('\
                       <button
                         type="button"
                         onClick={toggleListening}
-                        disabled={isMicTransitioning || enrollmentResponseCount >= 5}
+                        disabled={isMicTransitioning || isSubmittingOfflineAnswer || enrollmentResponseCount >= 5}
                         className={`relative ${
                           isRecognitionReady
                             ? 'program-accent-interview-active program-accent-border'

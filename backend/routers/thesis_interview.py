@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisco
 from sqlalchemy.orm import Session
 
 from database import get_db
-from core.ai import close_ai_unavailable
+from core.ai import get_ai_unavailable_message
 from core.deps import get_current_user, get_current_user_ws
 from core.scoring import bounded_integer_score, bounded_score
 from core.aws import get_abstract_text_from_s3, delete_abstract_from_s3
@@ -15,9 +15,48 @@ from models.user import User
 from models.thesis_interview import ThesisInterviewSession, ThesisInterviewMessage
 from schemas.thesis_interview import ThesisInterviewSessionResponse, ThesisInterviewSessionWithMessagesResponse, ThesisCompleteInterviewRequest
 from services.ai_provider import get_ai_provider
+from services.interview_ai import collect_ai_response, parse_evaluation_response, transcript_text
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+THESIS_FINAL_TURN_INSTRUCTION = (
+    "The student has submitted their fifth and final response. Do not ask another "
+    "question. Give one brief constructive closing statement and tell the student "
+    "they can complete the defense."
+)
+
+
+def get_thesis_evaluation_score_keys(department: str) -> list[str]:
+    dep = department.upper() if department else ""
+    if dep == "CTE":
+        return [
+            "pedagogical_innovation_score", "action_research_score",
+            "learning_outcomes_score", "literature_alignment_score",
+            "teaching_demo_score", "scalability_policy_score",
+        ]
+    if dep == "CBAPA":
+        return [
+            "research_problem_score", "methodology_analysis_score", "practical_roi_score",
+            "literature_theoretical_score", "professional_delivery_score",
+        ]
+    return [
+        "technical_innovation_score", "system_implementation_score",
+        "experimental_validation_score", "literature_review_score", "demo_quality_score",
+    ]
+
+
+def get_stored_chat_messages(db: Session, session_id: int) -> list[dict[str, str]]:
+    history = db.query(ThesisInterviewMessage).filter(
+        ThesisInterviewMessage.session_id == session_id
+    ).order_by(ThesisInterviewMessage.timestamp.asc()).all()
+    return [
+        {
+            "role": "assistant" if message.role in {"ai", "assistant"} else "user",
+            "content": message.content,
+        }
+        for message in history
+    ]
 
 
 
@@ -126,54 +165,95 @@ async def interview_chat_ws(
 
     await websocket.accept()
 
-    abstract_text = None
-    if session.abstract_s3_key:
-        abstract_text = get_abstract_text_from_s3(session.abstract_s3_key)
-
-    system_prompt = get_thesis_system_prompt(current_user.department, abstract_text)
-    
-    messages = [{"role": "system", "content": system_prompt}]
-    
     try:
-        ai_provider = get_ai_provider()
         while True:
             msg = await websocket.receive()
             if "text" in msg:
                 try:
                     data = json.loads(msg["text"])
-                    if data.get("text"):
-                        user_text = data["text"]
-                        messages.append({"role": "user", "content": user_text})
-                        
-                        full_response = ""
-                        sentence_buffer = ""
-                        
-                        async for content in ai_provider.stream_chat(messages):
-                            full_response += content
-                            sentence_buffer += content
+                    message_type = data.get("type", "message")
+                    stored_messages = get_stored_chat_messages(db, session.id)
+                    if message_type == "start" and stored_messages:
+                        await websocket.send_json({"type": "history", "messages": stored_messages})
+                        if stored_messages[-1]["role"] == "assistant":
+                            await websocket.send_json({"type": "session_ready"})
+                            continue
+                    browser_abstract = str(data.get("abstract_text", "")).strip()[:5000]
+                    abstract_text = browser_abstract or None
+                    if abstract_text is None and session.abstract_s3_key:
+                        abstract_text = get_abstract_text_from_s3(session.abstract_s3_key)
+                    system_prompt = get_thesis_system_prompt(current_user.department, abstract_text)
+                    is_initial_turn = message_type in {"start", "retry"} and not stored_messages
+                    is_retry = message_type == "retry" or (
+                        message_type == "start" and bool(stored_messages)
+                    )
 
-                            await websocket.send_json({"text": content})
-
-                            delimiters = ['. ', '! ', '? ', '.\n', '!\n', '?\n', ': ', '; ', ', ', '\n']
-                            for punctuation in delimiters:
-                                if punctuation in sentence_buffer:
-                                    parts = sentence_buffer.split(punctuation)
-                                    sentence_buffer = punctuation.join(parts[1:])
-                                    break
-                            
-                        messages.append({"role": "assistant", "content": full_response})
-                        
-                        # Signal turn complete
+                    retry_text = str(data.get("text", "")).strip()
+                    if (
+                        is_retry and stored_messages and
+                        stored_messages[-1]["role"] == "assistant" and not retry_text
+                    ):
+                        await websocket.send_json({"text": stored_messages[-1]["content"]})
                         await websocket.send_json({"type": "turn_complete"})
-                        
+                        continue
+
+                    if is_initial_turn:
+                        provider_messages = [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": "Begin the thesis defense now."},
+                        ]
+                    elif is_retry and stored_messages and stored_messages[-1]["role"] == "user":
+                        effective_prompt = system_prompt
+                        if sum(message["role"] == "user" for message in stored_messages) >= 5:
+                            effective_prompt = f"{system_prompt}\n\n{THESIS_FINAL_TURN_INSTRUCTION}"
+                        provider_messages = [{"role": "system", "content": effective_prompt}, *stored_messages]
+                    elif message_type in {"message", "retry"} and str(data.get("text", "")).strip():
+                        user_text = str(data["text"]).strip()
+                        db.add(ThesisInterviewMessage(
+                            session_id=session.id, role="user", content=user_text
+                        ))
+                        db.commit()
+                        stored_messages.append({"role": "user", "content": user_text})
+                        effective_prompt = system_prompt
+                        if data.get("final_turn") is True:
+                            effective_prompt = f"{system_prompt}\n\n{THESIS_FINAL_TURN_INSTRUCTION}"
+                        provider_messages = [{"role": "system", "content": effective_prompt}, *stored_messages]
+                    else:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "No thesis response was provided.",
+                            "retryable": True,
+                        })
+                        continue
+
+                    full_response = ""
+                    ai_provider = get_ai_provider()
+                    async for content in ai_provider.stream_chat(
+                        provider_messages, workload="thesis_interview"
+                    ):
+                        full_response += content
+                        await websocket.send_json({"text": content})
+
+                    full_response = full_response.strip()
+                    if not full_response:
+                        raise ValueError("Empty AI response")
+                    db.add(ThesisInterviewMessage(
+                        session_id=session.id, role="ai", content=full_response
+                    ))
+                    db.commit()
+                    await websocket.send_json({"type": "turn_complete"})
                 except Exception as error:
                     logger.warning(
                         "Thesis AI stream failed (session_id=%s, error=%s)",
                         session.id,
                         type(error).__name__,
                     )
-                    await close_ai_unavailable(websocket)
-                    return
+                    db.rollback()
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": get_ai_unavailable_message(),
+                        "retryable": True,
+                    })
             elif "bytes" in msg:
                  pass
     except WebSocketDisconnect:
@@ -233,7 +313,7 @@ Criteria & Weights:
 """
 
 @router.post("/{session_id}/complete", response_model=ThesisInterviewSessionResponse)
-def complete_interview(session_id: int, request: ThesisCompleteInterviewRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def complete_interview(session_id: int, request: ThesisCompleteInterviewRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
         raise HTTPException(status_code=403, detail="Forbidden: This simulation is only available to CCIT, CTE, and CBAPA students.")
 
@@ -246,34 +326,47 @@ def complete_interview(session_id: int, request: ThesisCompleteInterviewRequest,
         
     # Build Transcript
     history = db.query(ThesisInterviewMessage).filter(ThesisInterviewMessage.session_id == session.id).order_by(ThesisInterviewMessage.timestamp.asc()).all()
-    if history:
-        pass
-    elif request.conversation:
+    if not history and request.conversation:
         for item in request.conversation:
             new_msg = ThesisInterviewMessage(session_id=session.id, role=item.sender, content=item.text)
             db.add(new_msg)
         db.commit()
-    else:
+        history = db.query(ThesisInterviewMessage).filter(
+            ThesisInterviewMessage.session_id == session.id
+        ).order_by(ThesisInterviewMessage.timestamp.asc()).all()
+    if not history:
         raise HTTPException(status_code=400, detail="Cannot grade an empty thesis defense.")
-    
-    if not request.evaluation:
-        raise HTTPException(status_code=400, detail="Missing frontend evaluation data.")
-        
+
     try:
-        if session.abstract_s3_key:
-            delete_abstract_from_s3(session.abstract_s3_key)
-            session.abstract_s3_key = None
-            
-        evaluation = request.evaluation
+        provider = get_ai_provider()
+        transcript = transcript_text(history)
+        response = await collect_ai_response(
+            provider,
+            [
+                {"role": "system", "content": get_thesis_evaluation_system_prompt(current_user.department)},
+                {
+                    "role": "user",
+                    "content": (
+                        "Evaluate this completed thesis-defense transcript. Return only the "
+                        f"required JSON object.\n\n{transcript}"
+                    ),
+                },
+            ],
+            workload="thesis_evaluation",
+        )
+        evaluation = parse_evaluation_response(
+            response, get_thesis_evaluation_score_keys(current_user.department)
+        )
+        client_metrics = request.evaluation or {}
         def score(key: str) -> float:
             return bounded_score(evaluation, key, minimum=0, maximum=100, default=0)
 
         session.eye_contact_samples = bounded_integer_score(
-            evaluation, "eye_contact_samples", minimum=0, maximum=10_000_000, default=0
+            client_metrics, "eye_contact_samples", minimum=0, maximum=10_000_000, default=0
         )
-        eye_contact_score = evaluation.get("eye_contact_score")
+        eye_contact_score = client_metrics.get("eye_contact_score")
         session.score_eye_contact = (
-            score("eye_contact_score")
+            bounded_score(client_metrics, "eye_contact_score", minimum=0, maximum=100, default=0)
             if session.eye_contact_samples > 0 and eye_contact_score is not None
             else None
         )
@@ -332,12 +425,24 @@ def complete_interview(session_id: int, request: ThesisCompleteInterviewRequest,
         
         session.status = "completed"
         session.end_time = datetime.datetime.utcnow()
+        if session.abstract_s3_key:
+            delete_abstract_from_s3(session.abstract_s3_key)
+            session.abstract_s3_key = None
         db.commit()
         db.refresh(session)
         
         return session
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate evaluation: {e}")
+    except Exception as error:
+        db.rollback()
+        logger.warning(
+            "Thesis evaluation failed (session_id=%s, error=%s)",
+            session.id,
+            type(error).__name__,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="The AI service is temporarily unavailable. Please try validation again.",
+        ) from error
 
 @router.get("/{session_id}", response_model=ThesisInterviewSessionWithMessagesResponse)
 def get_interview(session_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
