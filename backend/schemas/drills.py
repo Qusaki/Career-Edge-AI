@@ -1,5 +1,5 @@
 # pyrefly: ignore [missing-import]
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Union
 from datetime import datetime
 
@@ -18,6 +18,8 @@ class DrillSessionResponse(BaseModel):
     score: Optional[float] = None
     passed: Optional[bool] = None
     feedback_summary: Optional[str] = None
+    score_eye_contact: Optional[float] = None
+    eye_contact_samples: Optional[int] = None
     canonical_prompt: Optional[DrillPrompt] = None
     evaluation_data: Optional[str] = None
 
@@ -33,6 +35,8 @@ class DrillCompleteRequest(BaseModel):
     passed: Optional[bool] = None
     feedback_summary: Optional[str] = None
     evaluation_data: Optional[dict] = None
+    eye_contact_score: Optional[float] = Field(default=None, ge=0, le=100)
+    eye_contact_samples: Optional[int] = Field(default=None, ge=0, le=1_000_000)
 
 class NegotiationTurnRequest(BaseModel):
     user_message: str

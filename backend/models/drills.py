@@ -19,6 +19,8 @@ class DrillSession(Base):
     score = Column(Float, nullable=True)
     passed = Column(Boolean, nullable=True)
     feedback_summary = Column(String, nullable=True)
+    score_eye_contact = Column(Float, nullable=True)
+    eye_contact_samples = Column(Integer, nullable=True)
     canonical_prompt = Column(JSON, nullable=True)
     
     # Store any flexible JSON evaluation data as string

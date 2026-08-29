@@ -2,9 +2,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Dumbbell, LoaderCircle, Mic, MicOff, RefreshCw, Sparkles, CheckCircle2 } from 'lucide-react';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
+import { CameraTrackingNotice } from './CameraTrackingNotice';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
+import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
 import { createClientSessionId } from '../offline/sessionFoundation';
+import { combineEyeContactSummaries, type EyeContactSummary } from '../offline/eyeContact';
 import { evaluateDrill, getOfflineNegotiationTurn } from '../offline/localEvaluation';
 import { DRILLS_VERSION, getOfflineDrillPrompt, hasCurrentQuestionPack, NEGOTIATION_OPENING_PROMPT } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
@@ -19,6 +22,8 @@ type DrillSession = {
   score?: number | null;
   passed?: boolean | null;
   feedback_summary?: string | null;
+  score_eye_contact?: number | null;
+  eye_contact_samples?: number | null;
   canonical_prompt?: Record<string, string | number | string[]> | null;
   evaluation_data?: string | null;
 };
@@ -155,6 +160,7 @@ export function DrillsPage({
   const exerciseGenerationRef = useRef(0);
   const resumedSessionRef = useRef<string | null>(null);
   const sessionModeRef = useRef(sessionMode);
+  const offlineEyeContactBaselineRef = useRef<EyeContactSummary | null>(null);
   const {
     isListening,
     isFinalizing,
@@ -166,6 +172,16 @@ export function DrillsPage({
     resetTranscript: resetSpeechTranscript,
     enableOfflineRecording,
   } = useSpeechInput();
+  const eyeTracker = useEyeContactTracker(Boolean(activeSession));
+  const getCheckpointEyeContactSummary = (): EyeContactSummary => {
+    const liveWindow: EyeContactSummary = {
+      score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+      samples: eyeTracker.samples,
+    };
+    return sessionMode === 'offline'
+      ? combineEyeContactSummaries(offlineEyeContactBaselineRef.current, liveWindow)
+      : liveWindow;
+  };
 
   useEffect(() => {
     if (sessionMode !== 'offline' || !isListening || !activeSession) return;
@@ -201,6 +217,9 @@ export function DrillsPage({
       sender: message.sender === 'ai' ? 'bot' as const : 'user' as const,
       text: message.text,
     }));
+    offlineEyeContactBaselineRef.current = resumeSession.eyeContactSummary
+      ? { ...resumeSession.eyeContactSummary }
+      : null;
     setActiveSession({
       id: resumeSession.clientSessionId,
       drill_level: drill.drillLevel,
@@ -286,6 +305,7 @@ export function DrillsPage({
     setNegotiationTurn(0);
     setCurrentOffer(35000);
     setNegotiationGameOver(false);
+    offlineEyeContactBaselineRef.current = null;
     cancelListening();
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     try {
@@ -413,6 +433,7 @@ export function DrillsPage({
     setCurrentOffer(35000);
     setNegotiationGameOver(false);
     setIsVoiceSpeaking(false);
+    offlineEyeContactBaselineRef.current = null;
     setNotice('Drill exited. Mark it complete later to finish it properly.');
     void onActivityEnd('abandoned');
     onSessionModeChange(false);
@@ -435,6 +456,7 @@ export function DrillsPage({
       answers: userMessages
         .filter(message => message.sender === 'user')
         .map((message, index) => ({ step: index + 1, text: message.text, createdAt: Date.now() })),
+      eyeContactSummary: getCheckpointEyeContactSummary(),
       activityState: {
         drillType: activeSession?.drill_type,
         drillLevel: activeSession?.drill_level,
@@ -489,6 +511,7 @@ export function DrillsPage({
         currentQuestion: data.response,
         responseCount: nextMessages.filter(message => message.sender === 'user').length,
         currentStep: nextTurn,
+        eyeContactSummary: getCheckpointEyeContactSummary(),
         activityState: {
           drillType: activeSession?.drill_type,
           drillLevel: activeSession?.drill_level,
@@ -525,6 +548,7 @@ export function DrillsPage({
           currentStep: 1,
           responseCount: nextResponse ? 1 : 0,
           answers: nextResponse ? [{ step: 1, text: nextResponse, createdAt: Date.now() }] : [],
+          eyeContactSummary: getCheckpointEyeContactSummary(),
           activityState: {
             drillType: activeSession?.drill_type,
             drillLevel: activeSession?.drill_level,
@@ -572,6 +596,7 @@ export function DrillsPage({
       currentStep: 1,
       responseCount: 1,
       answers: [{ step: 1, text, createdAt: Date.now() }],
+      eyeContactSummary: getCheckpointEyeContactSummary(),
       activityState: {
         drillType: activeSession?.drill_type,
         drillLevel: activeSession?.drill_level,
@@ -605,6 +630,7 @@ export function DrillsPage({
           localScore: result.localScore,
           evaluationAuthority: 'local_provisional',
           pendingEvaluation: null,
+          eyeContactSummary: getCheckpointEyeContactSummary(),
           activityState: {
             drillType: activeSession.drill_type,
             drillLevel: activeSession.drill_level,
@@ -626,6 +652,7 @@ export function DrillsPage({
         setNegotiationTurn(0);
         setCurrentOffer(35000);
         setNegotiationGameOver(false);
+        offlineEyeContactBaselineRef.current = null;
         setNotice('Drill completed locally and is pending sync.');
         onSessionModeChange(false);
       } catch (err) {
@@ -642,6 +669,7 @@ export function DrillsPage({
     setError(null);
     setNotice(null);
     try {
+      const eyeContactSummary = getCheckpointEyeContactSummary();
       const response = await fetch(`${apiUrl}/drills/${activeSession.id}/complete`, {
         method: 'POST',
         headers: {
@@ -649,6 +677,8 @@ export function DrillsPage({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          eye_contact_score: eyeContactSummary.samples > 0 ? eyeContactSummary.score : null,
+          eye_contact_samples: eyeContactSummary.samples,
           evaluation_data: {
             spoken_response: spokenResponse || undefined,
             negotiation_messages: negotiationMessages.length > 0 ? negotiationMessages : undefined,
@@ -674,6 +704,7 @@ export function DrillsPage({
       setNegotiationTurn(0);
       setCurrentOffer(35000);
       setNegotiationGameOver(false);
+      offlineEyeContactBaselineRef.current = null;
       onSessionModeChange(false);
       await loadSessions();
     } catch (err) {
@@ -707,15 +738,18 @@ export function DrillsPage({
           </div>
 
           <section className="flex-1 rounded-lg border border-line bg-card p-5">
-            <div className="mb-4">
-              <div className="program-accent-surface mb-3 flex h-11 w-11 items-center justify-center rounded-lg">
-                <Sparkles className="h-6 w-6" />
+            <div className="mb-4 flex flex-col items-start gap-4 sm:flex-row sm:justify-between">
+              <div className="min-w-0">
+                <div className="program-accent-surface mb-3 flex h-11 w-11 items-center justify-center rounded-lg">
+                  <Sparkles className="h-6 w-6" />
+                </div>
+                <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Drill Session</p>
+                <h1 className="text-3xl font-bold tracking-tight text-ink">Current Drill</h1>
+                <p className="text-program-accent mt-1 text-sm font-bold uppercase tracking-wider">
+                  {activeSession.drill_level} · {activeSession.drill_type.replace(/_/g, ' ')}
+                </p>
               </div>
-              <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Drill Session</p>
-              <h1 className="text-3xl font-bold tracking-tight text-ink">Current Drill</h1>
-              <p className="text-program-accent mt-1 text-sm font-bold uppercase tracking-wider">
-                {activeSession.drill_level} · {activeSession.drill_type.replace(/_/g, ' ')}
-              </p>
+              <CameraTrackingNotice {...eyeTracker} />
             </div>
 
             {(error || notice) && (

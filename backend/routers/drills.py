@@ -28,6 +28,17 @@ def apply_drill_score(session: DrillSession, evaluation_data: dict) -> None:
     })
 
 
+def apply_drill_eye_contact(session: DrillSession, request: DrillCompleteRequest) -> None:
+    samples = request.eye_contact_samples or 0
+    if samples > 0 and request.eye_contact_score is not None:
+        session.score_eye_contact = request.eye_contact_score
+        session.eye_contact_samples = samples
+        return
+
+    session.score_eye_contact = None
+    session.eye_contact_samples = 0
+
+
 def backfill_drill_score(session: DrillSession) -> bool:
     if session.status != "completed" or session.score is not None or not session.evaluation_data:
         return False
@@ -337,6 +348,8 @@ def complete_drill_session(session_id: int, request: DrillCompleteRequest, db: S
         apply_drill_score(session, evaluation_data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+    apply_drill_eye_contact(session, request)
 
     try:
             

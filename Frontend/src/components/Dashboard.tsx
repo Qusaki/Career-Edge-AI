@@ -592,7 +592,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     },
     {
       label: 'Eye Contact',
-      description: 'Camera-based eye direction and head movement measured during Enrollment, Thesis, Pre-Test, and Post-Test activities. Drills are excluded.',
+      description: 'Camera-based eye direction and head movement measured during Enrollment, Thesis, Pre-Test, Post-Test, and Drill activities.',
       field: 'score_eye_contact',
     },
     {
@@ -644,7 +644,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         const cameraRecords = [
           ...completedEnrollment,
           ...completedThesis,
-          ...completedModules.filter(item => item._source !== 'drills'),
+          ...completedModules,
         ].filter(item =>
           (item.eye_contact_samples || 0) > 0 && item.score_eye_contact != null
         );

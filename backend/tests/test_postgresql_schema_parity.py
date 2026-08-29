@@ -9,7 +9,7 @@ from alembic.migration import MigrationContext
 from sqlalchemy.engine import make_url
 
 
-EXPECTED_REVISION = "b4e7d9c2a6f1"
+EXPECTED_REVISION = "d6c8e1f4a2b7"
 EXPECTED_TABLES = {
     "custom_skills_messages",
     "custom_skills_sessions",
@@ -52,6 +52,10 @@ OBSOLETE_THESIS_COLUMNS = {
     "score_soft_skills",
 }
 EYE_CONTACT_COLUMNS = {
+    "drill_sessions": {
+        "score_eye_contact": "float",
+        "eye_contact_samples": "integer",
+    },
     "upcoming_student_interview_sessions": {
         "score_eye_contact": "float",
         "eye_contact_samples": "integer",

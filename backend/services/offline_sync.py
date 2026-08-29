@@ -315,6 +315,7 @@ def persist_authoritative_result(
         session.passed = evaluation["passed"]
         session.feedback_summary = evaluation["feedback_summary"]
         session.evaluation_data = json.dumps(evaluation, sort_keys=True)
+        _apply_eye_contact(session, payload)
     else:
         _apply_interview_scores(session, payload, user, evaluation)
         _apply_eye_contact(session, payload)

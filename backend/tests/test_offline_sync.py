@@ -302,6 +302,64 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["authoritative_result"]["score"], 76.67)
 
+    def test_drill_sync_applies_eye_contact_summary(self):
+        payload = {
+            "client_session_id": "drill-camera-client",
+            "activity_type": "drill",
+            "question_pack_version": "drills-v1",
+            "answers": [{"step": 1, "text": "one two three four five six seven eight"}],
+            "conversation_log": [],
+            "activity_state": {"drillType": "fast_word", "drillLevel": "easy"},
+            "eye_contact_summary": {"score": 80, "samples": 20},
+        }
+
+        response = self.client.post("/offline-sync", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()["authoritative_result"]
+        self.assertEqual(result["score_eye_contact"], 80)
+        self.assertEqual(result["eye_contact_samples"], 20)
+        with self.Session() as db:
+            stored = db.get(DrillSession, response.json()["server_session_id"])
+            self.assertEqual(stored.score_eye_contact, 80)
+            self.assertEqual(stored.eye_contact_samples, 20)
+
+    def test_drill_sync_preserves_valid_zero_percent_eye_contact(self):
+        payload = {
+            "client_session_id": "drill-zero-camera-client",
+            "activity_type": "drill",
+            "question_pack_version": "drills-v1",
+            "answers": [{"step": 1, "text": "one two three four five six seven eight"}],
+            "conversation_log": [],
+            "activity_state": {"drillType": "fast_word", "drillLevel": "easy"},
+            "eye_contact_summary": {"score": 0, "samples": 20},
+        }
+
+        response = self.client.post("/offline-sync", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()["authoritative_result"]
+        self.assertEqual(result["score_eye_contact"], 0)
+        self.assertEqual(result["eye_contact_samples"], 20)
+
+    def test_drill_sync_without_samples_produces_no_measurement(self):
+        payload = {
+            "client_session_id": "drill-no-camera-client",
+            "activity_type": "drill",
+            "question_pack_version": "drills-v1",
+            "answers": [{"step": 1, "text": "one two three four five six seven eight"}],
+            "conversation_log": [],
+            "activity_state": {"drillType": "fast_word", "drillLevel": "easy"},
+            "eye_contact_summary": {"score": None, "samples": 0},
+        }
+
+        response = self.client.post("/offline-sync", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()["authoritative_result"]
+        self.assertIsNone(result["score_eye_contact"])
+        self.assertEqual(result["eye_contact_samples"], 0)
+
     def test_post_test_is_recomputed_from_canonical_five_question_contract(self):
         questions = get_post_test_questions("CCIT")
         payload = {
