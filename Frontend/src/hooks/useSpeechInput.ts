@@ -9,6 +9,129 @@ import type { OfflineActivityType } from '../db';
 
 type TranscriptHandler = (transcript: string) => void;
 type ErrorHandler = (message: string) => void;
+
+type SpeechRecognitionAlternativeLike = {
+  transcript: string;
+  confidence?: number;
+};
+
+export type SpeechRecognitionResultLike = {
+  readonly isFinal: boolean;
+  readonly length: number;
+  readonly [index: number]: SpeechRecognitionAlternativeLike | undefined;
+};
+
+export type SpeechRecognitionResultListLike = {
+  readonly length: number;
+  readonly [index: number]: SpeechRecognitionResultLike | undefined;
+};
+
+export type SpeechRecognitionResultEventLike = {
+  readonly resultIndex: number;
+  readonly results: SpeechRecognitionResultListLike;
+};
+
+type BrowserSpeechRecognitionErrorEvent = {
+  readonly error: string;
+  readonly message?: string;
+};
+
+type BrowserSpeechRecognition = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  maxAlternatives: number;
+  onstart: (() => void) | null;
+  onresult: ((event: SpeechRecognitionResultEventLike) => void) | null;
+  onerror: ((event: BrowserSpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+
+type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
+
+declare global {
+  interface Window {
+    SpeechRecognition?: BrowserSpeechRecognitionConstructor;
+    webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor;
+  }
+}
+
+export type SpeechTranscriptState = {
+  finalTranscript: string;
+  interimTranscript: string;
+  liveTranscript: string;
+};
+
+const EMPTY_TRANSCRIPT_STATE: SpeechTranscriptState = {
+  finalTranscript: '',
+  interimTranscript: '',
+  liveTranscript: '',
+};
+
+export const normalizeSpeechWhitespace = (value: string) => value.replace(/\s+/g, ' ').trim();
+
+export const mergeSpeechFragments = (...fragments: string[]) => normalizeSpeechWhitespace(
+  fragments.map(normalizeSpeechWhitespace).filter(Boolean).join(' '),
+);
+
+export class SpeechTranscriptAccumulator {
+  private finalParts: string[] = [];
+  private interimTranscript = '';
+  private committedResultIndexes = new Set<number>();
+  private deliveryClaimed = false;
+
+  resetWindow() {
+    this.finalParts = [];
+    this.interimTranscript = '';
+    this.committedResultIndexes.clear();
+    this.deliveryClaimed = false;
+  }
+
+  beginRecognitionAttempt() {
+    this.interimTranscript = '';
+    this.committedResultIndexes.clear();
+  }
+
+  applyResults(event: SpeechRecognitionResultEventLike) {
+    const firstChangedIndex = Math.max(0, event.resultIndex);
+    for (let index = firstChangedIndex; index < event.results.length; index += 1) {
+      const result = event.results[index];
+      if (!result?.isFinal || this.committedResultIndexes.has(index)) continue;
+      const text = normalizeSpeechWhitespace(result[0]?.transcript ?? '');
+      if (text) this.finalParts.push(text);
+      this.committedResultIndexes.add(index);
+    }
+
+    const currentInterimParts: string[] = [];
+    for (let index = 0; index < event.results.length; index += 1) {
+      const result = event.results[index];
+      if (!result || result.isFinal) continue;
+      const text = normalizeSpeechWhitespace(result[0]?.transcript ?? '');
+      if (text) currentInterimParts.push(text);
+    }
+    this.interimTranscript = mergeSpeechFragments(...currentInterimParts);
+    return this.snapshot();
+  }
+
+  snapshot(): SpeechTranscriptState {
+    const finalTranscript = mergeSpeechFragments(...this.finalParts);
+    return {
+      finalTranscript,
+      interimTranscript: this.interimTranscript,
+      liveTranscript: mergeSpeechFragments(finalTranscript, this.interimTranscript),
+    };
+  }
+
+  claimCanonicalTranscript() {
+    if (this.deliveryClaimed) return null;
+    this.deliveryClaimed = true;
+    return this.snapshot().finalTranscript;
+  }
+}
+
 export interface OfflineSpeechAudioOptions {
   enabled: boolean;
   activityType: OfflineActivityType;
@@ -21,45 +144,43 @@ export interface OfflineSpeechAudioOptions {
     capture: OfflineAudioCapture;
     transcriptText?: string;
   }) => Promise<boolean>;
+  onAudioCaptured?: (capture: OfflineAudioCapture) => void;
 }
+
+export type SpeechInputStreamHandlers = {
+  onStreamReady?: (stream: MediaStream) => void;
+  onStreamReleased?: () => void;
+};
+
 type RecognitionSession = {
   onTranscript: TranscriptHandler;
   onError?: ErrorHandler;
-  finalParts: string[];
-  interimTranscript: string;
-  delivered: boolean;
+  accumulator: SpeechTranscriptAccumulator;
   retryCount: number;
   fatalError: boolean;
+  cancelled: boolean;
   offlineAudio?: OfflineSpeechAudioOptions;
 };
 
 const getSpeechRecognition = () => {
   if (typeof window === 'undefined') return null;
-  return (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition || null;
+  return window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null;
 };
 
 const getSpeechSupportMessage = () => {
-  if (typeof window === 'undefined') {
-    return 'Speech recognition is only available in the browser.';
-  }
-
+  if (typeof window === 'undefined') return 'Speech recognition is only available in the browser.';
   if (!window.isSecureContext) {
     return 'Microphone access requires HTTPS or localhost. Open this app with https:// or http://localhost, then try again.';
   }
-
   if (!navigator.mediaDevices?.getUserMedia) {
     return 'This browser cannot access the microphone from this page. Use Chrome or Edge on HTTPS or localhost.';
   }
-
-  if (!getSpeechRecognition()) {
-    return 'Speech recognition is not supported in this browser. Please use Chrome or Edge.';
-  }
-
+  if (!getSpeechRecognition()) return 'Speech recognition is not supported in this browser. Please use Chrome or Edge.';
   return null;
 };
 
-const getSpeechErrorMessage = (event: any) => {
-  switch (event?.error) {
+const getSpeechErrorMessage = (event: BrowserSpeechRecognitionErrorEvent) => {
+  switch (event.error) {
     case 'not-allowed':
     case 'service-not-allowed':
       return 'Microphone access was blocked. Allow microphone permission for this site, then try again.';
@@ -73,8 +194,9 @@ const getSpeechErrorMessage = (event: any) => {
 };
 
 export function useSpeechInput() {
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
+  const streamHandlersRef = useRef<SpeechInputStreamHandlers | null>(null);
   const offlineRecorderRef = useRef<OfflineAudioRecorderController | null>(null);
   const listeningRef = useRef(false);
   const startingRef = useRef(false);
@@ -84,7 +206,11 @@ export function useSpeechInput() {
   const startRecognitionRef = useRef<(() => void) | null>(null);
   const requestGenerationRef = useRef(0);
   const [isListening, setIsListening] = useState(false);
+  const [isFinalizing, setIsFinalizing] = useState(false);
+  const [isRecognitionReady, setIsRecognitionReady] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
+  const [hasUnfinalizedTranscript, setHasUnfinalizedTranscript] = useState(false);
+  const [transcriptState, setTranscriptState] = useState<SpeechTranscriptState>(EMPTY_TRANSCRIPT_STATE);
 
   const clearRestart = useCallback(() => {
     if (!restartTimeoutRef.current) return;
@@ -95,6 +221,14 @@ export function useSpeechInput() {
   const releaseMicrophone = useCallback(() => {
     microphoneStreamRef.current?.getTracks().forEach(track => track.stop());
     microphoneStreamRef.current = null;
+    streamHandlersRef.current?.onStreamReleased?.();
+    streamHandlersRef.current = null;
+  }, []);
+
+  const resetTranscript = useCallback(() => {
+    sessionRef.current?.accumulator.resetWindow();
+    setTranscriptState(EMPTY_TRANSCRIPT_STATE);
+    setHasUnfinalizedTranscript(false);
   }, []);
 
   const deliverTranscript = useCallback(async () => {
@@ -103,20 +237,17 @@ export function useSpeechInput() {
       stopTimeoutRef.current = null;
     }
     const session = sessionRef.current;
-    if (!session) return;
-    if (session.delivered) {
-      sessionRef.current = null;
-      return;
-    }
+    if (!session || session.cancelled) return;
+    const canonicalTranscript = session.accumulator.claimCanonicalTranscript();
+    if (canonicalTranscript === null) return;
 
-    session.delivered = true;
-    const transcript = [...session.finalParts, session.interimTranscript]
-      .filter(Boolean)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
+    const snapshot = session.accumulator.snapshot();
+    setTranscriptState(snapshot);
+    setHasUnfinalizedTranscript(!canonicalTranscript && Boolean(snapshot.interimTranscript));
     sessionRef.current = null;
+    setIsListening(false);
+    setIsRecognitionReady(false);
+
     if (session.offlineAudio) {
       const capture = await offlineRecorderRef.current?.stopRecording() ?? null;
       if (capture) {
@@ -125,44 +256,54 @@ export function useSpeechInput() {
           turnId: session.offlineAudio.turnId,
           answerIndex: session.offlineAudio.answerIndex,
           capture,
-          transcriptText: transcript || undefined,
+          transcriptText: canonicalTranscript || undefined,
         });
         if (!persisted) {
           session.onError?.('The recording could not be saved locally. Your answer was not advanced; retry or use the typed answer.');
+          offlineRecorderRef.current?.releaseRecorder();
+          offlineRecorderRef.current = null;
           releaseMicrophone();
+          setIsFinalizing(false);
           return;
         }
+        session.offlineAudio.onAudioCaptured?.(capture);
       }
     }
     offlineRecorderRef.current?.releaseRecorder();
     offlineRecorderRef.current = null;
     releaseMicrophone();
-    if (transcript) session.onTranscript(transcript);
-    else if (session.offlineAudio) session.onError?.('Your audio was saved locally, but no transcript was produced. Type your answer to continue.');
+    setIsFinalizing(false);
+
+    if (canonicalTranscript) session.onTranscript(canonicalTranscript);
+    else if (snapshot.interimTranscript) {
+      session.onError?.("We couldn't finalize that speech. Review it below, then try speaking again or use the typed answer.");
+    } else if (session.offlineAudio) {
+      session.onError?.('Your audio was saved locally, but no transcript was produced. Type your answer to continue.');
+    } else session.onError?.('No speech was detected. Please try again.');
   }, [releaseMicrophone]);
 
   const stopListening = useCallback(() => {
+    if (!listeningRef.current && !startingRef.current) return;
     listeningRef.current = false;
+    startingRef.current = false;
     clearRestart();
-
+    setIsListening(false);
+    setIsRecognitionReady(false);
+    setIsFinalizing(true);
     const recognition = recognitionRef.current;
     if (!recognition) {
-      setIsListening(false);
       void deliverTranscript();
       return;
     }
-
     try {
-      // stop() asks the browser to flush its last result before onend.
       recognition.stop();
       stopTimeoutRef.current = setTimeout(() => {
         if (recognitionRef.current === recognition) recognitionRef.current = null;
-        setIsListening(false);
+        try { recognition.abort(); } catch { /* The browser may already have ended it. */ }
         void deliverTranscript();
       }, 1500);
     } catch {
       recognitionRef.current = null;
-      setIsListening(false);
       void deliverTranscript();
     }
   }, [clearRestart, deliverTranscript]);
@@ -172,39 +313,31 @@ export function useSpeechInput() {
     listeningRef.current = false;
     startingRef.current = false;
     clearRestart();
-    if (stopTimeoutRef.current) {
-      clearTimeout(stopTimeoutRef.current);
-      stopTimeoutRef.current = null;
-    }
+    if (stopTimeoutRef.current) clearTimeout(stopTimeoutRef.current);
+    stopTimeoutRef.current = null;
+    if (sessionRef.current) sessionRef.current.cancelled = true;
     sessionRef.current = null;
     offlineRecorderRef.current?.cancelRecording();
     offlineRecorderRef.current = null;
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
-    try {
-      recognition?.abort();
-    } catch {
-      // Chrome can throw when recognition already ended.
-    }
+    try { recognition?.abort(); } catch { /* Chrome can throw when recognition already ended. */ }
     releaseMicrophone();
     setIsListening(false);
+    setIsFinalizing(false);
+    setIsRecognitionReady(false);
+    setTranscriptState(EMPTY_TRANSCRIPT_STATE);
+    setHasUnfinalizedTranscript(false);
   }, [clearRestart, releaseMicrophone]);
 
   useEffect(() => {
     setIsSupported(!getSpeechSupportMessage());
-
     const resumeAfterVisibilityChange = () => {
-      if (
-        document.visibilityState === 'visible' &&
-        listeningRef.current &&
-        !recognitionRef.current &&
-        !restartTimeoutRef.current
-      ) {
+      if (document.visibilityState === 'visible' && listeningRef.current && !recognitionRef.current && !restartTimeoutRef.current) {
         startRecognitionRef.current?.();
       }
     };
     document.addEventListener('visibilitychange', resumeAfterVisibilityChange);
-
     return () => {
       requestGenerationRef.current += 1;
       document.removeEventListener('visibilitychange', resumeAfterVisibilityChange);
@@ -213,14 +346,11 @@ export function useSpeechInput() {
       clearRestart();
       if (stopTimeoutRef.current) clearTimeout(stopTimeoutRef.current);
       stopTimeoutRef.current = null;
+      if (sessionRef.current) sessionRef.current.cancelled = true;
       sessionRef.current = null;
       offlineRecorderRef.current?.cancelRecording();
       offlineRecorderRef.current = null;
-      try {
-        recognitionRef.current?.abort();
-      } catch {
-        // Chrome can throw when recognition already ended.
-      }
+      try { recognitionRef.current?.abort(); } catch { /* Chrome can throw when recognition already ended. */ }
       recognitionRef.current = null;
       releaseMicrophone();
     };
@@ -230,6 +360,7 @@ export function useSpeechInput() {
     onTranscript: TranscriptHandler,
     onError?: ErrorHandler,
     offlineAudio?: OfflineSpeechAudioOptions,
+    streamHandlers?: SpeechInputStreamHandlers,
   ) => {
     const supportMessage = getSpeechSupportMessage();
     if (supportMessage && !offlineAudio?.enabled) {
@@ -241,12 +372,12 @@ export function useSpeechInput() {
       onError?.('This browser cannot record audio locally. Use the typed answer instead.');
       return false;
     }
-
-    // A second click is handled by stopListening through the UI. Do not replace
-    // an active session and lose the transcript already collected.
-    if (listeningRef.current || startingRef.current) return true;
+    if (listeningRef.current || startingRef.current || isFinalizing) return false;
 
     clearRestart();
+    setTranscriptState(EMPTY_TRANSCRIPT_STATE);
+    setHasUnfinalizedTranscript(false);
+    setIsRecognitionReady(false);
     const SpeechRecognition = getSpeechRecognition();
     const requestGeneration = requestGenerationRef.current + 1;
     requestGenerationRef.current = requestGeneration;
@@ -254,11 +385,7 @@ export function useSpeechInput() {
     let microphoneStream: MediaStream;
     try {
       microphoneStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
     } catch (error) {
       if (requestGenerationRef.current !== requestGeneration) return false;
@@ -270,21 +397,23 @@ export function useSpeechInput() {
       microphoneStream.getTracks().forEach(track => track.stop());
       return false;
     }
-    microphoneStreamRef.current = microphoneStream;
-    startingRef.current = false;
 
+    const accumulator = new SpeechTranscriptAccumulator();
     sessionRef.current = {
       onTranscript,
       onError,
-      finalParts: [],
-      interimTranscript: '',
-      delivered: false,
+      accumulator,
       retryCount: 0,
       fatalError: false,
+      cancelled: false,
       offlineAudio: offlineAudio?.enabled ? offlineAudio : undefined,
     };
+    microphoneStreamRef.current = microphoneStream;
+    streamHandlersRef.current = streamHandlers ?? null;
+    startingRef.current = false;
     listeningRef.current = true;
     setIsListening(true);
+    streamHandlers?.onStreamReady?.(microphoneStream);
 
     if (offlineAudio?.enabled) {
       offlineRecorderRef.current = createOfflineAudioRecorder({
@@ -323,79 +452,61 @@ export function useSpeechInput() {
 
     const startRecognition = () => {
       const session = sessionRef.current;
-      if (!listeningRef.current || !session || session.fatalError) return;
-
+      if (!listeningRef.current || !session || session.fatalError || session.cancelled || !SpeechRecognition) return;
+      session.accumulator.beginRecognitionAttempt();
+      setTranscriptState(session.accumulator.snapshot());
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = 'en-US';
       recognition.maxAlternatives = 1;
-
       recognition.onstart = () => {
-        if (listeningRef.current) setIsListening(true);
+        if (recognitionRef.current === recognition && listeningRef.current) setIsRecognitionReady(true);
       };
-
-      recognition.onresult = (event: any) => {
+      recognition.onresult = event => {
+        if (session.cancelled) return;
         session.retryCount = 0;
-        let currentInterim = '';
-        for (let index = event.resultIndex ?? 0; index < event.results.length; index += 1) {
-          const text = (event.results[index][0]?.transcript || '').trim();
-          if (!text) continue;
-          if (event.results[index].isFinal) session.finalParts.push(text);
-          else currentInterim = [currentInterim, text].filter(Boolean).join(' ');
-        }
-        session.interimTranscript = currentInterim;
+        setTranscriptState(session.accumulator.applyResults(event));
       };
-
-      recognition.onerror = (event: any) => {
-        // Mobile and desktop browsers may stop their speech service after silence,
-        // a temporary network interruption, or an internal recognition timeout.
-        // These conditions must not turn off a user-controlled recording session.
-        if (event?.error === 'no-speech' || event?.error === 'aborted' || event?.error === 'network') {
+      recognition.onerror = event => {
+        setIsRecognitionReady(false);
+        if (event.error === 'no-speech' || event.error === 'aborted' || event.error === 'network') {
           if (recognitionRef.current === recognition) recognitionRef.current = null;
           session.retryCount += 1;
-          try {
-            recognition.abort();
-          } catch {
-            // The browser may already have ended this recognizer.
-          }
-          const delay = event?.error === 'network'
+          try { recognition.abort(); } catch { /* The browser may already have ended this recognizer. */ }
+          const delay = event.error === 'network'
             ? Math.min(4000, 500 * (2 ** Math.min(session.retryCount, 3)))
             : 250;
           scheduleRestart(delay);
           return;
         }
-
         session.fatalError = true;
         session.onError?.(getSpeechErrorMessage(event));
         if (!session.offlineAudio) {
-          session.delivered = true;
+          session.cancelled = true;
+          sessionRef.current = null;
           listeningRef.current = false;
           setIsListening(false);
+          setIsFinalizing(false);
           releaseMicrophone();
         }
       };
-
       recognition.onend = () => {
         if (recognitionRef.current === recognition) recognitionRef.current = null;
-
+        setIsRecognitionReady(false);
+        if (session.cancelled) return;
         if (listeningRef.current && !session.fatalError) {
           scheduleRestart(250);
           return;
         }
-
         if (session.offlineAudio && session.fatalError && listeningRef.current) return;
-        setIsListening(false);
         void deliverTranscript();
       };
-
       recognitionRef.current = recognition;
       try {
         recognition.start();
       } catch {
         recognitionRef.current = null;
-        // A recognizer can remain temporarily busy after onend, especially on
-        // mobile browsers. Keep retrying until the user explicitly presses Stop.
         session.retryCount += 1;
         scheduleRestart(Math.min(2000, 300 * session.retryCount));
       }
@@ -405,7 +516,7 @@ export function useSpeechInput() {
     if (SpeechRecognition) startRecognition();
     else onError?.('Speech recognition is unavailable offline. Audio will still be saved; type your answer to continue.');
     return true;
-  }, [clearRestart, deliverTranscript, releaseMicrophone]);
+  }, [clearRestart, deliverTranscript, isFinalizing, releaseMicrophone]);
 
   const enableOfflineRecording = useCallback(async (offlineAudio: OfflineSpeechAudioOptions) => {
     const session = sessionRef.current;
@@ -434,5 +545,17 @@ export function useSpeechInput() {
     }
   }, []);
 
-  return { isListening, isSupported, startListening, stopListening, cancelListening, enableOfflineRecording };
+  return {
+    ...transcriptState,
+    isListening,
+    isFinalizing,
+    isRecognitionReady,
+    isSupported,
+    hasUnfinalizedTranscript,
+    startListening,
+    stopListening,
+    cancelListening,
+    resetTranscript,
+    enableOfflineRecording,
+  };
 }

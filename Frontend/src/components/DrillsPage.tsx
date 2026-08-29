@@ -8,6 +8,7 @@ import { createClientSessionId } from '../offline/sessionFoundation';
 import { evaluateDrill, getOfflineNegotiationTurn } from '../offline/localEvaluation';
 import { DRILLS_VERSION, getOfflineDrillPrompt, hasCurrentQuestionPack, NEGOTIATION_OPENING_PROMPT } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
+import { SpeechFocusOverlay } from './SpeechFocusOverlay';
 
 type DrillSession = {
   id: number | string;
@@ -155,7 +156,17 @@ export function DrillsPage({
   const exerciseGenerationRef = useRef(0);
   const resumedSessionRef = useRef<string | null>(null);
   const sessionModeRef = useRef(sessionMode);
-  const { isListening, startListening, stopListening, cancelListening, enableOfflineRecording } = useSpeechInput();
+  const {
+    isListening,
+    isFinalizing,
+    hasUnfinalizedTranscript,
+    liveTranscript,
+    startListening,
+    stopListening,
+    cancelListening,
+    resetTranscript: resetSpeechTranscript,
+    enableOfflineRecording,
+  } = useSpeechInput();
 
   useEffect(() => {
     if (sessionMode !== 'offline' || !isListening || !activeSession) return;
@@ -218,6 +229,7 @@ export function DrillsPage({
   const speakText = useCallback((text: string) => {
     if (!('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
+    setIsVoiceSpeaking(true);
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'en-US';
     utterance.rate = CLEAR_AI_SPEECH_RATE;
@@ -226,7 +238,11 @@ export function DrillsPage({
     utterance.onstart = () => setIsVoiceSpeaking(true);
     utterance.onend = () => setIsVoiceSpeaking(false);
     utterance.onerror = () => setIsVoiceSpeaking(false);
-    window.speechSynthesis.speak(utterance);
+    try {
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      setIsVoiceSpeaking(false);
+    }
   }, []);
 
   const loadSessions = useCallback(async () => {
@@ -434,6 +450,7 @@ export function DrillsPage({
       setNegotiationLoading(false);
       return;
     }
+    resetSpeechTranscript();
     setNegotiationReply('');
     setNegotiationMessages(userMessages);
 
@@ -497,6 +514,10 @@ export function DrillsPage({
   };
 
   const recordDrillResponse = () => {
+    if (isVoiceSpeaking || window.speechSynthesis?.speaking || window.speechSynthesis?.pending) {
+      setError('Wait for the audio prompt to finish before starting the microphone.');
+      return;
+    }
     setError(null);
     startListening(async transcript => {
         const nextResponse = [spokenResponse, transcript].filter(Boolean).join(' ').trim();
@@ -515,7 +536,10 @@ export function DrillsPage({
             negotiationGameOver,
           },
         });
-        if (saved) setSpokenResponse(nextResponse);
+        if (saved) {
+          setSpokenResponse(nextResponse);
+          resetSpeechTranscript();
+        }
     }, setError, sessionMode === 'offline' && activeSession ? {
       enabled: true,
       activityType: 'drill',
@@ -526,6 +550,10 @@ export function DrillsPage({
   };
 
   const recordNegotiationReply = () => {
+    if (isVoiceSpeaking || window.speechSynthesis?.speaking || window.speechSynthesis?.pending) {
+      setError('Wait for the employer audio to finish before starting the microphone.');
+      return;
+    }
     setError(null);
     const answerIndex = negotiationMessages.filter(message => message.sender === 'user').length + 1;
     startListening(transcript => void sendNegotiationReply(transcript), setError, sessionMode === 'offline' && activeSession ? {
@@ -660,6 +688,7 @@ export function DrillsPage({
   if (activeSession) {
     return (
       <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
+        <SpeechFocusOverlay isOpen={isListening} liveTranscript={liveTranscript} onStop={stopListening} />
         <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
           <div className="mb-5 flex items-center justify-between gap-3">
             <button
@@ -725,13 +754,22 @@ export function DrillsPage({
                   )}
                 </div>
 
+                {(isListening || isFinalizing || hasUnfinalizedTranscript) && (
+                  <div className="mt-3 rounded-lg border border-line bg-card p-3 text-sm leading-relaxed text-ink" aria-live="polite">
+                    <p className="text-program-accent mb-1 text-xs font-bold uppercase tracking-wider">
+                      {isFinalizing ? 'Finalizing...' : isListening ? 'Listening...' : 'Unfinalized speech'}
+                    </p>
+                    {liveTranscript || <span className="text-muted">Start speaking when you are ready.</span>}
+                  </div>
+                )}
+
                 <div className="mt-4 flex justify-center">
                   <button
                     onClick={isListening ? stopListening : recordNegotiationReply}
-                    disabled={negotiationLoading || negotiationGameOver}
+                    disabled={negotiationLoading || negotiationGameOver || isVoiceSpeaking || isFinalizing}
                     className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
-                    {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                    {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : negotiationGameOver ? 'Negotiation Ended' : 'Speak Reply'}
                   </button>
                 </div>
@@ -751,12 +789,21 @@ export function DrillsPage({
                   <p className="text-program-accent mb-2 font-bold">Your spoken response</p>
                   {spokenResponse || <span className="text-muted">Press the mic and answer the drill out loud.</span>}
                 </div>
+                {(isListening || isFinalizing || hasUnfinalizedTranscript) && (
+                  <div className="mt-3 rounded-lg border border-line bg-card p-3 text-sm leading-relaxed text-ink" aria-live="polite">
+                    <p className="text-program-accent mb-1 text-xs font-bold uppercase tracking-wider">
+                      {isFinalizing ? 'Finalizing...' : isListening ? 'Listening...' : 'Unfinalized speech'}
+                    </p>
+                    {liveTranscript || <span className="text-muted">Start speaking when you are ready.</span>}
+                  </div>
+                )}
                 <div className="mt-4 flex justify-center">
                   <button
                     onClick={isListening ? stopListening : recordDrillResponse}
+                    disabled={isVoiceSpeaking || isFinalizing}
                     className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
-                    {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                    {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : 'Speak Answer'}
                   </button>
                 </div>

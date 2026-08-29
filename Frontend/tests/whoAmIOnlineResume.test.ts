@@ -37,8 +37,8 @@ test('online resume hydrates the canonical transcript into completion-ready stat
 
 test('accepted response persistence and speech delivery both guard duplicate finalization', () => {
   assert.match(preTestSource, /if \(introPersistenceInFlightRef\.current\) return;[\s\S]*?introPersistenceInFlightRef\.current = true/);
-  assert.match(speechSource, /if \(session\.delivered\)/);
-  assert.match(speechSource, /session\.delivered = true/);
+  assert.match(speechSource, /if \(this\.deliveryClaimed\) return null/);
+  assert.match(speechSource, /this\.deliveryClaimed = true/);
 });
 
 test('completion remains explicit and sends the hydrated response only once', () => {

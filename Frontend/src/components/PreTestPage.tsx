@@ -18,6 +18,7 @@ import {
 } from '../offline/questionPacks';
 import { evaluateActiveListening, evaluateWhoAmI } from '../offline/localEvaluation';
 import { normalizeApiError } from '../utils/httpError';
+import { SpeechFocusOverlay } from './SpeechFocusOverlay';
 
 type Session = {
   id: number | string;
@@ -163,7 +164,17 @@ export function PreTestPage({
   const introPersistenceInFlightRef = useRef(false);
   const [isSubmittingAnswer, setIsSubmittingAnswer] = useState(false);
   const [isPersistingIntro, setIsPersistingIntro] = useState(false);
-  const { isListening, startListening, stopListening, cancelListening, enableOfflineRecording } = useSpeechInput();
+  const {
+    isListening,
+    isFinalizing,
+    hasUnfinalizedTranscript,
+    liveTranscript,
+    startListening,
+    stopListening,
+    cancelListening,
+    resetTranscript: resetSpeechTranscript,
+    enableOfflineRecording,
+  } = useSpeechInput();
   const eyeTracker = useEyeContactTracker(Boolean(activeExercise && activeSession));
   const getCheckpointEyeContactSummary = (): EyeContactSummary => {
     const liveWindow: EyeContactSummary = {
@@ -307,6 +318,7 @@ export function PreTestPage({
   const speakText = useCallback((text: string) => {
     if (!('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
+    setIsVoiceSpeaking(true);
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'en-US';
     utterance.rate = CLEAR_AI_SPEECH_RATE;
@@ -315,7 +327,11 @@ export function PreTestPage({
     utterance.onstart = () => setIsVoiceSpeaking(true);
     utterance.onend = () => setIsVoiceSpeaking(false);
     utterance.onerror = () => setIsVoiceSpeaking(false);
-    window.speechSynthesis.speak(utterance);
+    try {
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      setIsVoiceSpeaking(false);
+    }
   }, []);
 
   function connectActiveListeningChat(session: Session, retryCount = 0) {
@@ -692,6 +708,7 @@ export function PreTestPage({
           : null,
       });
       if (!saved) return;
+      resetSpeechTranscript();
       messagesRef.current = nextMessages;
       setMessages(nextMessages);
       setReply('');
@@ -718,6 +735,10 @@ export function PreTestPage({
 
   const recordIntro = () => {
     if (!activeExercise || !activeSession) return;
+    if (isVoiceSpeaking || window.speechSynthesis?.speaking || window.speechSynthesis?.pending) {
+      setError('Wait for the audio prompt to finish before starting the microphone.');
+      return;
+    }
     setError(null);
     startListening(async transcript => {
       const nextTranscript = [introTranscriptRef.current, transcript].filter(Boolean).join(' ').trim();
@@ -747,6 +768,7 @@ export function PreTestPage({
           const canonicalTranscript = persistedSession.transcript?.trim() || nextTranscript;
           introTranscriptRef.current = canonicalTranscript;
           setIntroTranscript(canonicalTranscript);
+          resetSpeechTranscript();
           await onActivityCheckpoint({
             currentStep: 1,
             responseCount: 1,
@@ -775,6 +797,7 @@ export function PreTestPage({
       if (saved) {
         introTranscriptRef.current = nextTranscript;
         setIntroTranscript(nextTranscript);
+        resetSpeechTranscript();
       }
     }, setError, sessionMode === 'offline' && activeSession ? {
       enabled: true,
@@ -788,15 +811,20 @@ export function PreTestPage({
   const saveTypedIntro = async () => {
     const text = introTranscript.trim();
     if (!text) return;
-    await onActivityCheckpoint({
+    const saved = await onActivityCheckpoint({
       currentStep: 1,
       responseCount: 1,
       answers: [{ step: 1, text, createdAt: Date.now() }],
       eyeContactSummary: getCheckpointEyeContactSummary(),
     });
+    if (saved) resetSpeechTranscript();
   };
 
   const recordAndSendReply = () => {
+    if (isVoiceSpeaking || isAiResponding || window.speechSynthesis?.speaking || window.speechSynthesis?.pending) {
+      setError('Wait for the audio interviewer to finish before starting the microphone.');
+      return;
+    }
     setError(null);
     const answerIndex = messagesRef.current.filter(message => message.sender === 'user').length + 1;
     startListening(transcript => void sendReply(transcript), setError, sessionMode === 'offline' && activeSession ? {
@@ -921,6 +949,7 @@ export function PreTestPage({
   if (activeExercise && activeSession) {
     return (
       <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
+        <SpeechFocusOverlay isOpen={isListening} liveTranscript={liveTranscript} onStop={stopListening} />
         <CameraTrackingNotice {...eyeTracker} />
         <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
           <div className="mb-5 flex items-center justify-between gap-3">
@@ -987,6 +1016,14 @@ export function PreTestPage({
                     />
                   ) : introTranscript || <span className="text-muted">Press the mic and speak your self-introduction.</span>}
                 </div>
+                {(isListening || isFinalizing || hasUnfinalizedTranscript) && (
+                  <div className="mt-3 rounded-lg border border-line bg-card p-3 text-sm leading-relaxed text-ink" aria-live="polite">
+                    <p className="text-program-accent mb-1 text-xs font-bold uppercase tracking-wider">
+                      {isFinalizing ? 'Finalizing...' : isListening ? 'Listening...' : 'Unfinalized speech'}
+                    </p>
+                    {liveTranscript || <span className="text-muted">Start speaking when you are ready.</span>}
+                  </div>
+                )}
                 {sessionMode === 'offline' && (
                   <div className="mt-3 flex justify-end">
                     <button type="button" onClick={() => void saveTypedIntro()} disabled={!introTranscript.trim()} className="rounded-lg border border-line px-4 py-2 text-sm font-semibold disabled:opacity-50">Save Typed Answer</button>
@@ -995,10 +1032,10 @@ export function PreTestPage({
                 <div className="mt-4 flex justify-center">
                   <button
                     onClick={isListening ? stopListening : recordIntro}
-                    disabled={isPersistingIntro}
+                    disabled={isPersistingIntro || isFinalizing || isVoiceSpeaking}
                     className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
-                    {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                    {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : 'Speak Answer'}
                   </button>
                 </div>
@@ -1048,13 +1085,22 @@ export function PreTestPage({
                   ))}
                 </div>
 
+                {(isListening || isFinalizing || hasUnfinalizedTranscript) && (
+                  <div className="mt-3 rounded-lg border border-line bg-card p-3 text-sm leading-relaxed text-ink" aria-live="polite">
+                    <p className="text-program-accent mb-1 text-xs font-bold uppercase tracking-wider">
+                      {isFinalizing ? 'Finalizing...' : isListening ? 'Listening...' : 'Unfinalized speech'}
+                    </p>
+                    {liveTranscript || <span className="text-muted">Start speaking when you are ready.</span>}
+                  </div>
+                )}
+
                 <div className="mt-3 flex justify-center">
                   <button
                     onClick={isListening ? stopListening : recordAndSendReply}
                     disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking || isSubmittingAnswer}
                     className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
-                    {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                    {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : 'Speak Answer'}
                   </button>
                 </div>

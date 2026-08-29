@@ -176,8 +176,9 @@ test('all existing voice activities opt into shared audio persistence only while
     assert.match(source, /persistAudio: onOfflineAudioCaptured/);
   }
   const dashboard = readFileSync(new URL('../src/components/Dashboard.tsx', import.meta.url), 'utf8');
-  assert.match(dashboard, /activeActivityCheckpointRef\.current\?\.mode === 'offline'/);
-  assert.match(dashboard, /createOfflineAudioRecorder/);
+  assert.match(dashboard, /useSpeechInput\(\)/);
+  assert.match(dashboard, /current\.mode === 'offline' \? \{/);
+  assert.match(dashboard, /persistAudio: persistOfflineAudioCapture/);
   assert.match(dashboard, /URL\.createObjectURL/);
   assert.match(dashboard, /URL\.revokeObjectURL/);
 });

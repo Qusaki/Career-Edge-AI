@@ -6,7 +6,9 @@ import { clearProfessorModelCache, ProfessorModel, ProfessorModelPreloader } fro
 import { PreTestPage } from './PreTestPage';
 import { DrillsPage } from './DrillsPage';
 import { PostTestPage } from './PostTestPage';
+import { SpeechFocusOverlay } from './SpeechFocusOverlay';
 import { useWebLLM } from '../hooks/useWebLLM';
+import { useSpeechInput } from '../hooks/useSpeechInput';
 import type { MLCEngine } from '@mlc-ai/web-llm';
 import { useConnectivity } from '../hooks/useConnectivity';
 import {
@@ -36,12 +38,9 @@ import {
   type OfflineActivityType,
 } from '../db';
 import {
-  createOfflineAudioRecorder,
-  getMicrophoneErrorMessage,
   hasStorageCapacity,
   OFFLINE_AUDIO_STORAGE_HEADROOM_BYTES,
   toOfflineAudioRecord,
-  type OfflineAudioRecorderController,
 } from '../offline/offlineAudioRecorder';
 import {
   createActivityCheckpoint,
@@ -1309,14 +1308,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   };
 
   // Speech Recognition & TTS States
-  const [isListening, setIsListening] = useState(false);
-  const [recognizedSpeechText, setRecognizedSpeechText] = useState('');
   const [aiResponseText, setAiResponseText] = useState('');
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [conversationLog, setConversationLog] = useState<{ sender: 'user' | 'ai', text: string }[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [isEnrollmentFinalProfessorTurnReady, setIsEnrollmentFinalProfessorTurnReady] = useState(false);
-  const [isRecognitionReady, setIsRecognitionReady] = useState(false);
   const [interviewMicFeedback, setInterviewMicFeedback] = useState<string | null>(null);
   const [latestOfflineRecordingUrl, setLatestOfflineRecordingUrl] = useState<string | null>(null);
   const [onlineInterviewError, setOnlineInterviewError] = useState<string | null>(null);
@@ -1324,7 +1320,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const [typedInterviewAnswer, setTypedInterviewAnswer] = useState('');
   const [isSubmittingOfflineAnswer, setIsSubmittingOfflineAnswer] = useState(false);
 
-  const recognitionRef = React.useRef<any>(null);
   const audioQueueRef = React.useRef<string[]>([]);
   const isPlayingRef = React.useRef(false);
   const isAiSpeakingRef = React.useRef(false);
@@ -1395,50 +1390,34 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     audioPlayerRef.current = new Audio();
   }, []);
 
-  const finalizedTranscriptRef = React.useRef('');
-  const latestInterimTranscriptRef = React.useRef('');
   const isListeningRef = React.useRef(false);
-  const isRecognitionReadyRef = React.useRef(false);
-  const submitTranscriptOnEndRef = React.useRef(false);
-  const recognitionRestartTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const recognitionStopTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const restartInterviewRecognitionRef = React.useRef<(() => void) | null>(null);
   const userAudioContextRef = React.useRef<AudioContext | null>(null);
   const userAnalyserRef = React.useRef<AnalyserNode | null>(null);
   const userMediaStreamRef = React.useRef<MediaStream | null>(null);
-  const offlineInterviewRecorderRef = React.useRef<OfflineAudioRecorderController | null>(null);
   const userAnimationRef = React.useRef<number>(0);
   const [userAudioData, setUserAudioData] = useState<number[]>(new Array(3).fill(8));
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
-  const [isMicTransitioning, setIsMicTransitioning] = useState(false);
 
-  const updateRecognitionReady = (isReady: boolean) => {
-    isRecognitionReadyRef.current = isReady;
-    setIsRecognitionReady(isReady);
-  };
-
-  const processorRef = React.useRef<ScriptProcessorNode | null>(null);
+  const {
+    isListening,
+    isFinalizing: isMicTransitioning,
+    isRecognitionReady,
+    hasUnfinalizedTranscript,
+    liveTranscript,
+    startListening: startSpeechInput,
+    stopListening: stopSpeechInput,
+    cancelListening: cancelSpeechInput,
+    resetTranscript: resetSpeechTranscript,
+    enableOfflineRecording: enableOfflineSpeechRecording,
+  } = useSpeechInput();
 
   useEffect(() => {
-    const resumeInterviewMic = () => {
-      if (
-        document.visibilityState === 'visible' &&
-        isListeningRef.current &&
-        !recognitionRef.current &&
-        !recognitionRestartTimeoutRef.current
-      ) {
-        restartInterviewRecognitionRef.current?.();
-      }
-    };
-    document.addEventListener('visibilitychange', resumeInterviewMic);
-    return () => document.removeEventListener('visibilitychange', resumeInterviewMic);
-  }, []);
-
-
+    isListeningRef.current = isListening;
+  }, [isListening]);
 
   const updateUserAudioData = () => {
-    if (userAnalyserRef.current && isListeningRef.current) {
+    if (userAnalyserRef.current && userMediaStreamRef.current) {
       const dataArray = new Uint8Array(userAnalyserRef.current.frequencyBinCount);
       userAnalyserRef.current.getByteFrequencyData(dataArray);
 
@@ -1746,6 +1725,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
           const fallbackTimeoutMs = getClearSpeechTimeoutMs(text);
           const fallbackTimer = window.setTimeout(() => {
             console.warn("Speech synthesis timed out before onend fired.");
+            if (window.speechSynthesis.speaking || window.speechSynthesis.pending) window.speechSynthesis.cancel();
             finish();
           }, fallbackTimeoutMs);
 
@@ -1763,6 +1743,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
           };
 
           try {
+            setIsAiSpeaking(true);
+            isAiSpeakingRef.current = true;
             window.speechSynthesis.resume();
             window.speechSynthesis.speak(utterance);
           } catch (error) {
@@ -1979,6 +1961,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       resolve();
       return;
     }
+    setIsAiSpeaking(true);
+    isAiSpeakingRef.current = true;
 
     const utterance = new SpeechSynthesisUtterance(text.replace(/[*_#]/g, '').trim());
     utterance.lang = 'en-US';
@@ -1998,7 +1982,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       window.clearTimeout(fallbackTimer);
       resolve();
     };
-    const fallbackTimer = window.setTimeout(finish, getClearSpeechTimeoutMs(text));
+    const fallbackTimer = window.setTimeout(() => {
+      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) window.speechSynthesis.cancel();
+      finish();
+    }, getClearSpeechTimeoutMs(text));
     utterance.onend = finish;
     utterance.onerror = finish;
     try {
@@ -2204,6 +2191,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       setIsSubmittingOfflineAnswer(false);
       return false;
     }
+    resetSpeechTranscript();
 
     if (type === 'thesis') {
       thesisConversationLogRef.current = appended.conversationLog;
@@ -2517,10 +2505,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       activeEnrollmentFinalGenerationRef.current = null;
       enrollmentFinalGenerationSequenceRef.current += 1;
       setIsEnrollmentFinalProfessorTurnReady(false);
-      finalizedTranscriptRef.current = '';
-      latestInterimTranscriptRef.current = '';
-      setRecognizedSpeechText('');
-      updateRecognitionReady(false);
+      resetSpeechTranscript();
       setInterviewMicFeedback(null);
       setOnlineInterviewError(null);
       setTypedInterviewAnswer('');
@@ -2586,10 +2571,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       activeEnrollmentFinalGenerationRef.current = null;
       enrollmentFinalGenerationSequenceRef.current += 1;
       setIsEnrollmentFinalProfessorTurnReady(false);
-      finalizedTranscriptRef.current = '';
-      latestInterimTranscriptRef.current = '';
-      setRecognizedSpeechText('');
-      updateRecognitionReady(false);
+      resetSpeechTranscript();
       setInterviewMicFeedback(null);
       setOnlineInterviewError(null);
       conversationLogRef.current = [];
@@ -2617,10 +2599,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   };
 
   const releaseInterviewMicrophone = () => {
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-      processorRef.current = null;
-    }
     userMediaStreamRef.current?.getTracks().forEach(track => track.stop());
     userMediaStreamRef.current = null;
     if (userAudioContextRef.current) {
@@ -2635,102 +2613,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     if (latestOfflineRecordingUrl) URL.revokeObjectURL(latestOfflineRecordingUrl);
   }, [latestOfflineRecordingUrl]);
 
-  const submitInterviewTranscript = async () => {
-    if (!submitTranscriptOnEndRef.current) return;
-    submitTranscriptOnEndRef.current = false;
-
-    if (recognitionStopTimeoutRef.current) {
-      clearTimeout(recognitionStopTimeoutRef.current);
-      recognitionStopTimeoutRef.current = null;
-    }
-
-    const finalizedTranscript = finalizedTranscriptRef.current.replace(/\s+/g, ' ').trim();
-    const interimTranscript = latestInterimTranscriptRef.current.replace(/\s+/g, ' ').trim();
-    const submissionText = finalizedTranscript || interimTranscript;
-
-    const current = activeActivityCheckpointRef.current;
-    if (current?.mode === 'offline' && offlineInterviewRecorderRef.current) {
-      const capture = await offlineInterviewRecorderRef.current.stopRecording();
-      offlineInterviewRecorderRef.current.releaseRecorder();
-      offlineInterviewRecorderRef.current = null;
-      if (capture) {
-        const answerIndex = current.responseCount + 1;
-        const persisted = await persistOfflineAudioCapture({
-          activityType: current.type,
-          turnId: `${current.type}-answer-${answerIndex}`,
-          answerIndex,
-          capture,
-          transcriptText: submissionText || undefined,
-        });
-        if (!persisted) {
-          setIsMicTransitioning(false);
-          releaseInterviewMicrophone();
-          return;
-        }
-        setLatestOfflineRecordingUrl(URL.createObjectURL(capture.blob));
-      }
-    }
-
-    releaseInterviewMicrophone();
-    updateRecognitionReady(false);
-    setIsMicTransitioning(false);
-    finalizedTranscriptRef.current = '';
-    latestInterimTranscriptRef.current = '';
-    setRecognizedSpeechText('');
-
-    if (!submissionText) {
-      setInterviewMicFeedback(
-        current?.mode === 'offline'
-          ? 'Your audio was saved locally, but no transcript was produced. Type your answer to continue.'
-          : 'No speech was detected. Please try again.',
-      );
-      return;
-    }
-    onlinePendingUserTextRef.current = '';
-    void submitInterviewAnswer(submissionText);
-  };
-
-  const stopListening = (submitTranscript = false) => {
-    setIsListening(false);
-    isListeningRef.current = false;
-    updateRecognitionReady(false);
-    submitTranscriptOnEndRef.current = submitTranscript;
-    setIsMicTransitioning(submitTranscript);
-
-    if (recognitionRestartTimeoutRef.current) {
-      clearTimeout(recognitionRestartTimeoutRef.current);
-      recognitionRestartTimeoutRef.current = null;
-    }
-    if (recognitionStopTimeoutRef.current) {
-      clearTimeout(recognitionStopTimeoutRef.current);
-      recognitionStopTimeoutRef.current = null;
-    }
-
-    if (recognitionRef.current) {
-      try {
-        // Let SpeechRecognition flush its last phrase before onend submits it.
-        recognitionRef.current.stop();
-        if (submitTranscript) {
-          const recognition = recognitionRef.current;
-          recognitionStopTimeoutRef.current = setTimeout(() => {
-            if (recognitionRef.current === recognition) recognitionRef.current = null;
-            void submitInterviewTranscript();
-          }, 1500);
-        }
-      } catch {
-        recognitionRef.current = null;
-        if (submitTranscriptOnEndRef.current) void submitInterviewTranscript();
-        else setIsMicTransitioning(false);
-      }
-    } else if (submitTranscriptOnEndRef.current) {
-      void submitInterviewTranscript();
-    } else {
-      setIsMicTransitioning(false);
-    }
-
-    if (!submitTranscript) releaseInterviewMicrophone();
-  };
-
   const exitInterview = () => {
     const shouldReleaseOfflineEngine = activeActivityCheckpointRef.current?.type === 'upcoming'
       && readOfflineInterviewActivityState(activeActivityCheckpointRef.current)?.offlineEngine === 'webllm';
@@ -2741,18 +2623,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     enrollmentFinalGenerationSequenceRef.current += 1;
     setIsEnrollmentFinalProfessorTurnReady(false);
     if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
-    stopListening();
-    offlineInterviewRecorderRef.current?.cancelRecording();
-    offlineInterviewRecorderRef.current = null;
+    cancelSpeechInput();
     setLatestOfflineRecordingUrl(null);
     setIsLeaveModalOpen(false);
     setIsAiSpeaking(false);
     isAiSpeakingRef.current = false;
-    setIsListening(false);
-    updateRecognitionReady(false);
-    finalizedTranscriptRef.current = '';
-    latestInterimTranscriptRef.current = '';
-    setRecognizedSpeechText('');
+    resetSpeechTranscript();
     setInterviewMicFeedback(null);
     setTypedInterviewAnswer('');
     setSessionId(null);
@@ -2839,10 +2715,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         setInterviewResult(data);
         setOnlineInterviewError(null);
         endActivityCheckpoint('cloud_completed');
-        stopListening();
+        cancelSpeechInput();
         setIsLeaveModalOpen(false);
         setIsAiSpeaking(false);
-        setIsListening(false);
         if (audioPlayerRef.current) audioPlayerRef.current.pause();
       } else {
         const detail = await response.json().catch(() => null);
@@ -3112,18 +2987,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   };
 
   const exitThesisSession = () => {
-    offlineInterviewRecorderRef.current?.cancelRecording();
-    offlineInterviewRecorderRef.current = null;
     setLatestOfflineRecordingUrl(null);
     const shouldReleaseOfflineEngine = activeActivityCheckpointRef.current?.type === 'thesis'
       && readOfflineInterviewActivityState(activeActivityCheckpointRef.current)?.offlineEngine === 'webllm';
     if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
-    stopListening();
+    cancelSpeechInput();
     if (thesisTimerRef.current) { clearInterval(thesisTimerRef.current); thesisTimerRef.current = null; }
     setThesisIsLeaveModalOpen(false);
     setIsAiSpeaking(false);
     isAiSpeakingRef.current = false;
-    setIsListening(false);
     setThesisSessionId(null);
     thesisSessionIdRef.current = null;
     setThesisConversationLog([]);
@@ -3206,11 +3078,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         setThesisResult(data);
         setOnlineInterviewError(null);
         endActivityCheckpoint('cloud_completed');
-        stopListening();
+        cancelSpeechInput();
         setThesisIsLeaveModalOpen(false);
         setIsAiSpeaking(false);
         isAiSpeakingRef.current = false;
-        setIsListening(false);
         if (thesisTimerRef.current) { clearInterval(thesisTimerRef.current); thesisTimerRef.current = null; }
         if (audioPlayerRef.current) audioPlayerRef.current.pause();
       } else {
@@ -3226,217 +3097,67 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     }
   };
 
-  // Keep the mic on continuously for the duration of the interview
-  // Removed the auto-stop and auto-restart client-side silence logic 
-  // to allow Gemini's server-side Voice Activity Detection to operate.
+  const showOfflineRecordingPreview = (capture: { blob: Blob }) => {
+    setLatestOfflineRecordingUrl(previousUrl => {
+      if (previousUrl) URL.revokeObjectURL(previousUrl);
+      return URL.createObjectURL(capture.blob);
+    });
+  };
+
+  const attachInterviewWaveform = (stream: MediaStream) => {
+    userMediaStreamRef.current = stream;
+    const context = new AudioContext();
+    userAudioContextRef.current = context;
+    userAnalyserRef.current = context.createAnalyser();
+    userAnalyserRef.current.fftSize = 64;
+    context.createMediaStreamSource(stream).connect(userAnalyserRef.current);
+    const startWaveform = () => updateUserAudioData();
+    if (context.state === 'suspended') void context.resume().then(startWaveform);
+    else startWaveform();
+  };
 
   const toggleListening = async () => {
     if (isMicTransitioning) return;
     if (isListeningRef.current) {
-      const hasRecognizedSpeech = Boolean(
-        finalizedTranscriptRef.current.trim() || latestInterimTranscriptRef.current.trim(),
-      );
-      stopListening(
-        activeActivityCheckpointRef.current?.mode === 'offline'
-        || isRecognitionReadyRef.current
-        || hasRecognizedSpeech,
-      );
-    } else {
-      setRecognizedSpeechText('');
-      finalizedTranscriptRef.current = '';
-      latestInterimTranscriptRef.current = '';
-      updateRecognitionReady(false);
-      setInterviewMicFeedback(null);
-
-      isPlayingRef.current = false;
-      setIsAiSpeaking(false);
-      cancelAnimationFrame(animationRef.current);
-      setAudioData(new Array(15).fill(20));
-      if (audioPlayerRef.current) audioPlayerRef.current.pause();
-      audioQueueRef.current = [];
-
-      setIsListening(true);
-      isListeningRef.current = true;
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        userMediaStreamRef.current = stream;
-
-        if (activeActivityCheckpointRef.current?.mode === 'offline') {
-          offlineInterviewRecorderRef.current = createOfflineAudioRecorder({
-            stream,
-            onLimitReached: reason => setInterviewMicFeedback(
-              reason === 'duration'
-                ? 'The five-minute recording limit was reached. Stop the mic to save it.'
-                : 'The 25 MB recording limit was reached. Stop the mic to save it.',
-            ),
-          });
-          if (!await offlineInterviewRecorderRef.current.startRecording()) {
-            throw new Error('Local audio recording is unavailable in this browser.');
-          }
-        }
-
-        // Native 16000Hz sampling purely for cosmetic visualization context
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        userAudioContextRef.current = ctx;
-        if (ctx.state === 'suspended') {
-          await ctx.resume();
-        }
-
-        userAnalyserRef.current = ctx.createAnalyser();
-        userAnalyserRef.current.fftSize = 64;
-
-        const source = ctx.createMediaStreamSource(stream);
-        source.connect(userAnalyserRef.current);
-
-        updateUserAudioData();
-
-        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        if (SpeechRecognition) {
-          let recognitionRetryCount = 0;
-          let fatalRecognition = false;
-
-          const scheduleRecognitionRestart = (delay = 250) => {
-            if (!isListeningRef.current || recognitionRestartTimeoutRef.current) return;
-            recognitionRestartTimeoutRef.current = setTimeout(() => {
-              recognitionRestartTimeoutRef.current = null;
-              startRecognition();
-            }, delay);
-          };
-
-          function startRecognition() {
-            if (!isListeningRef.current || fatalRecognition) return;
-
-            const recognition = new SpeechRecognition();
-            recognition.continuous = true;
-            recognition.interimResults = true;
-            recognition.lang = 'en-US';
-
-            recognition.onstart = () => {
-              if (recognitionRef.current !== recognition || !isListeningRef.current) {
-                try {
-                  recognition.stop();
-                } catch {
-                  // The recognition instance may already be stopping.
-                }
-                return;
-              }
-              updateRecognitionReady(true);
-              setInterviewMicFeedback(null);
-            };
-
-            recognition.onresult = (e: any) => {
-              if (isAiSpeakingRef.current) return;
-              recognitionRetryCount = 0;
-              let finalizedSegment = '';
-              let interimCandidate = '';
-              for (let i = e.resultIndex; i < e.results.length; i++) {
-                const resultText = e.results[i][0].transcript;
-                if (e.results[i].isFinal) {
-                  finalizedSegment += resultText;
-                } else {
-                  interimCandidate += resultText;
-                }
-              }
-
-              const normalizedFinalizedSegment = finalizedSegment.replace(/\s+/g, ' ').trim();
-              if (normalizedFinalizedSegment) {
-                finalizedTranscriptRef.current = [
-                  finalizedTranscriptRef.current,
-                  normalizedFinalizedSegment,
-                ]
-                  .filter(Boolean)
-                  .join(' ');
-              }
-
-              latestInterimTranscriptRef.current = interimCandidate.replace(/\s+/g, ' ').trim();
-              setRecognizedSpeechText(
-                finalizedTranscriptRef.current || latestInterimTranscriptRef.current,
-              );
-            };
-
-            recognition.onerror = (e: any) => {
-              updateRecognitionReady(false);
-              if (e?.error === 'no-speech' || e?.error === 'aborted' || e?.error === 'network') {
-                if (recognitionRef.current === recognition) recognitionRef.current = null;
-                recognitionRetryCount += 1;
-                try {
-                  recognition.abort();
-                } catch {
-                  // The browser may already have ended this recognizer.
-                }
-                const delay = e?.error === 'network'
-                  ? Math.min(4000, 500 * (2 ** Math.min(recognitionRetryCount, 3)))
-                  : 250;
-                setInterviewMicFeedback(
-                  e?.error === 'network'
-                    ? 'Speech recognition was interrupted. Reconnecting...'
-                    : 'No speech was detected yet. Please try speaking again.',
-                );
-                scheduleRecognitionRestart(delay);
-                return;
-              }
-
-              console.error("STT Error", e);
-              if (activeActivityCheckpointRef.current?.mode === 'offline') {
-                fatalRecognition = true;
-                setInterviewMicFeedback('Speech recognition stopped, but local audio is still recording. Stop the mic, then type your answer if needed.');
-                if (recognitionRef.current === recognition) recognitionRef.current = null;
-                try { recognition.abort(); } catch { /* The browser may already have ended it. */ }
-              } else {
-                setInterviewMicFeedback('Speech recognition stopped. Please try again.');
-                stopListening(false);
-              }
-            };
-            recognition.onend = () => {
-              if (recognitionRef.current === recognition) recognitionRef.current = null;
-              updateRecognitionReady(false);
-              if (fatalRecognition && activeActivityCheckpointRef.current?.mode === 'offline') return;
-              if (isListeningRef.current) {
-                scheduleRecognitionRestart(250);
-              } else if (submitTranscriptOnEndRef.current) {
-                submitInterviewTranscript();
-              } else {
-                setIsMicTransitioning(false);
-              }
-            };
-
-            recognitionRef.current = recognition;
-            try {
-              recognition.start();
-            } catch (error) {
-              if (recognitionRef.current === recognition) recognitionRef.current = null;
-              updateRecognitionReady(false);
-              setInterviewMicFeedback('Starting speech recognition. Please wait...');
-              console.warn("Speech recognition is temporarily busy; retrying.", error);
-              recognitionRetryCount += 1;
-              scheduleRecognitionRestart(Math.min(2000, 300 * recognitionRetryCount));
-            }
-          }
-
-          restartInterviewRecognitionRef.current = startRecognition;
-          startRecognition();
-        } else {
-          if (activeActivityCheckpointRef.current?.mode === 'offline') {
-            setInterviewMicFeedback('Speech recognition is unavailable offline. Audio will still be saved; type your answer to continue.');
-          } else {
-            console.warn("Speech Recognition not supported in this browser.");
-            setInterviewMicFeedback('Speech recognition is not supported in this browser.');
-            stopListening(false);
-          }
-        }
-      } catch (err) {
-        console.error("Could not capture local audio for streaming:", err);
-        setIsListening(false);
-        isListeningRef.current = false;
-        updateRecognitionReady(false);
-        setIsMicTransitioning(false);
-        releaseInterviewMicrophone();
-        offlineInterviewRecorderRef.current?.cancelRecording();
-        offlineInterviewRecorderRef.current = null;
-        setInterviewMicFeedback(getMicrophoneErrorMessage(err));
-      }
+      isListeningRef.current = false;
+      stopSpeechInput();
+      return;
     }
+    if (isAiSpeakingRef.current || window.speechSynthesis?.speaking || window.speechSynthesis?.pending) {
+      setInterviewMicFeedback('Wait for Professor Maxiel to finish speaking before starting your answer.');
+      return;
+    }
+
+    const current = activeActivityCheckpointRef.current;
+    if (!current) return;
+    setInterviewMicFeedback(null);
+    isPlayingRef.current = false;
+    cancelAnimationFrame(animationRef.current);
+    setAudioData(new Array(15).fill(20));
+    if (audioPlayerRef.current) audioPlayerRef.current.pause();
+    audioQueueRef.current = [];
+
+    const answerIndex = current.responseCount + 1;
+    const started = await startSpeechInput(
+      transcript => {
+        onlinePendingUserTextRef.current = '';
+        void submitInterviewAnswer(transcript);
+      },
+      setInterviewMicFeedback,
+      current.mode === 'offline' ? {
+        enabled: true,
+        activityType: current.type,
+        turnId: `${current.type}-answer-${answerIndex}`,
+        answerIndex,
+        persistAudio: persistOfflineAudioCapture,
+        onAudioCaptured: showOfflineRecordingPreview,
+      } : undefined,
+      {
+        onStreamReady: attachInterviewWaveform,
+        onStreamReleased: releaseInterviewMicrophone,
+      },
+    );
+    isListeningRef.current = started;
   };
 
   const continueCurrentActivityOffline = async () => {
@@ -3471,23 +3192,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     if (
       (offlineCheckpoint.type === 'upcoming' || offlineCheckpoint.type === 'thesis')
       && isListeningRef.current
-      && userMediaStreamRef.current
-      && !offlineInterviewRecorderRef.current
     ) {
-      offlineInterviewRecorderRef.current = createOfflineAudioRecorder({
-        stream: userMediaStreamRef.current,
-        onLimitReached: reason => setInterviewMicFeedback(
-          reason === 'duration'
-            ? 'The five-minute recording limit was reached. Stop the mic to save it.'
-            : 'The 25 MB recording limit was reached. Stop the mic to save it.',
-        ),
-      });
       try {
-        const recordingStarted = await offlineInterviewRecorderRef.current.startRecording();
+        const answerIndex = offlineCheckpoint.responseCount + 1;
+        const recordingStarted = await enableOfflineSpeechRecording({
+          enabled: true,
+          activityType: offlineCheckpoint.type,
+          turnId: `${offlineCheckpoint.type}-answer-${answerIndex}`,
+          answerIndex,
+          persistAudio: persistOfflineAudioCapture,
+          onAudioCaptured: showOfflineRecordingPreview,
+        });
         if (!recordingStarted) throw new Error('MediaRecorder is unavailable.');
         setInterviewMicFeedback('Offline mode is active. Your current response is now being recorded locally.');
       } catch (error) {
-        offlineInterviewRecorderRef.current = null;
         setInterviewMicFeedback(
           error instanceof Error
             ? `${error.message} Your recognized text remains available; you can also type the answer.`
@@ -3728,6 +3446,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
           <ProfessorModelPreloader onReady={handleProfessorAssetReady} />
         </React.Suspense>
       </ProfessorAssetErrorBoundary>
+      <SpeechFocusOverlay
+        isOpen={activeTab === 'interview-session' && isListening}
+        liveTranscript={liveTranscript}
+        onStop={() => void toggleListening()}
+      />
       {connectivity.connectionState !== 'online' && (
         <div className="fixed right-4 top-4 z-[9997] rounded-lg border border-amber-400/40 bg-slate-950/95 px-4 py-3 text-xs text-amber-100 shadow-xl">
           <p className="font-bold">
@@ -4601,7 +4324,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                     <button
                       type="button"
                       onClick={toggleListening}
-                      disabled={isSubmittingOfflineAnswer || thesisConversationLog.filter(turn => turn.sender === 'user').length >= OFFLINE_INTERVIEW_RESPONSE_LIMIT}
+                      disabled={isMicTransitioning || isAiSpeaking || isSubmittingOfflineAnswer || thesisConversationLog.filter(turn => turn.sender === 'user').length >= OFFLINE_INTERVIEW_RESPONSE_LIMIT}
                       className={`relative ${isListening ? 'bg-emerald-500 shadow-emerald-500/30' : 'bg-slate-800 shadow-slate-900/40'} text-white w-20 h-20 rounded-[2rem] transition-all duration-300 flex items-center justify-center shadow-xl disabled:cursor-not-allowed disabled:opacity-50`}
                       title={isListening ? 'Stop recording and submit answer' : 'Start recording'}
                       aria-label={isListening ? 'Stop recording and submit answer' : 'Start recording'}
@@ -4837,8 +4560,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                             {(() => {
                               // Filter explicitly only for user responses
                               const userLogs = conversationLog.filter((log) => log.sender === 'user');
+                              const showLiveSpeech = isListening || isMicTransitioning || hasUnfinalizedTranscript;
 
-                              if (userLogs.length === 0 && !recognizedSpeechText) {
+                              if (userLogs.length === 0 && !showLiveSpeech) {
                                 return (
                                   <div className="flex flex-1 flex-col items-center justify-center py-8">
                                     <User className="mb-3 h-7 w-7 text-[var(--interview-text-muted)]" />
@@ -4859,6 +4583,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                                       </div>
                                     </div>
                                   ))}
+                                  {showLiveSpeech && (
+                                    <div className="rounded-lg border border-[var(--interview-border)] bg-[var(--interview-card)] p-3 text-[var(--interview-text-primary)]" aria-live="polite">
+                                      <span className="program-accent-on-dark mb-1 block text-[10px] font-bold uppercase tracking-wider">
+                                        {isMicTransitioning ? 'Finalizing...' : isListening ? 'Listening...' : 'Unfinalized speech'}
+                                      </span>
+                                      <p className="text-xs leading-relaxed">
+                                        {liveTranscript || 'Start speaking when you are ready.'}
+                                      </p>
+                                    </div>
+                                  )}
                                 </>
                               );
                             })()}
@@ -4963,7 +4697,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                       <button
                         type="button"
                         onClick={toggleListening}
-                        disabled={isMicTransitioning || isSubmittingOfflineAnswer || enrollmentResponseCount >= 5}
+                        disabled={isMicTransitioning || isAiSpeaking || isSubmittingOfflineAnswer || enrollmentResponseCount >= 5}
                         className={`relative ${
                           isRecognitionReady
                             ? 'program-accent-interview-active program-accent-border'

@@ -19,6 +19,7 @@ import {
   POST_TEST_ANSWER_LIMIT,
   requireExactPostTestAnswerCount,
 } from '../offline/activityRuntime';
+import { SpeechFocusOverlay } from './SpeechFocusOverlay';
 
 type Session = {
   id: number | string;
@@ -120,7 +121,17 @@ export function PostTestPage({
   const offlineEyeContactBaselineRef = useRef<EyeContactSummary | null>(null);
   const answerSubmissionInFlightRef = useRef(false);
   const [isSubmittingAnswer, setIsSubmittingAnswer] = useState(false);
-  const { isListening, startListening, stopListening, cancelListening, enableOfflineRecording } = useSpeechInput();
+  const {
+    isListening,
+    isFinalizing,
+    hasUnfinalizedTranscript,
+    liveTranscript,
+    startListening,
+    stopListening,
+    cancelListening,
+    resetTranscript: resetSpeechTranscript,
+    enableOfflineRecording,
+  } = useSpeechInput();
   const eyeTracker = useEyeContactTracker(Boolean(activeSession));
   const getCheckpointEyeContactSummary = (): EyeContactSummary => {
     const liveWindow: EyeContactSummary = {
@@ -228,6 +239,7 @@ export function PostTestPage({
   const speakText = useCallback((text: string) => {
     if (!('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
+    setIsVoiceSpeaking(true);
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'en-US';
     utterance.rate = CLEAR_AI_SPEECH_RATE;
@@ -236,7 +248,11 @@ export function PostTestPage({
     utterance.onstart = () => setIsVoiceSpeaking(true);
     utterance.onend = () => setIsVoiceSpeaking(false);
     utterance.onerror = () => setIsVoiceSpeaking(false);
-    window.speechSynthesis.speak(utterance);
+    try {
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      setIsVoiceSpeaking(false);
+    }
   }, []);
 
   const cancelSpeech = () => {
@@ -616,6 +632,7 @@ export function PostTestPage({
         eyeContactSummary: getCheckpointEyeContactSummary(),
       });
       if (!saved) return;
+      resetSpeechTranscript();
       messagesRef.current = checkpointMessages;
       setMessages(checkpointMessages);
       setReply('');
@@ -636,6 +653,10 @@ export function PostTestPage({
   };
 
   const recordAndSendReply = () => {
+    if (isVoiceSpeaking || isAiResponding || window.speechSynthesis?.speaking || window.speechSynthesis?.pending) {
+      setError('Wait for the audio interviewer to finish before starting the microphone.');
+      return;
+    }
     setError(null);
     const boundary = getPostTestAnswerBoundary(messagesRef.current);
     if (!boundary.canAcceptAnswer || answerSubmissionInFlightRef.current) {
@@ -763,6 +784,7 @@ export function PostTestPage({
   if (activeSession) {
     return (
       <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
+        <SpeechFocusOverlay isOpen={isListening} liveTranscript={liveTranscript} onStop={stopListening} />
         <CameraTrackingNotice {...eyeTracker} />
         <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
           <div className="mb-5 flex items-center justify-between gap-3">
@@ -863,13 +885,22 @@ export function PostTestPage({
               )}
             </div>
 
+            {(isListening || isFinalizing || hasUnfinalizedTranscript) && (
+              <div className="mx-auto mt-4 w-full max-w-2xl rounded-lg border border-line bg-card p-3 text-left text-sm leading-relaxed text-ink" aria-live="polite">
+                <p className="text-program-accent mb-1 text-xs font-bold uppercase tracking-wider">
+                  {isFinalizing ? 'Finalizing...' : isListening ? 'Listening...' : 'Unfinalized speech'}
+                </p>
+                {liveTranscript || <span className="text-muted">Start speaking when you are ready.</span>}
+              </div>
+            )}
+
             <div className="mt-4 flex justify-center">
               <button
                 onClick={isListening ? stopListening : recordAndSendReply}
-                disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking || isSubmittingAnswer || !answerBoundary.canAcceptAnswer}
+                disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking || isSubmittingAnswer || isFinalizing || !answerBoundary.canAcceptAnswer}
                 className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
               >
-                {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                 {isListening ? 'Stop Recording' : answerBoundary.canAcceptAnswer ? 'Speak Answer' : 'All Answers Recorded'}
               </button>
             </div>
