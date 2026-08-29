@@ -1171,10 +1171,10 @@ export function PreTestPage({
               <div className="mt-4 flex justify-center">
                 <button
                   onClick={isListening ? stopListening : recordIntro}
-                  disabled={isPersistingIntro}
+                  disabled={isPersistingIntro || isFinalizing || isVoiceSpeaking}
                   className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                 >
-                  {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                  {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                   {isListening ? 'Stop Recording' : 'Speak Answer'}
                 </button>
               </div>
@@ -1211,10 +1211,10 @@ export function PreTestPage({
               <div className="mt-4 flex justify-center">
                 <button
                   onClick={isListening ? stopListening : recordAndSendReply}
-                  disabled={isAiResponding || isSubmittingAnswer}
+                  disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking || isSubmittingAnswer || isFinalizing}
                   className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                 >
-                  {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                  {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                   {isListening ? 'Stop Recording' : 'Speak Answer'}
                 </button>
               </div>

@@ -1402,7 +1402,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const {
     isListening,
     isFinalizing: isMicTransitioning,
-    isRecognitionReady,
     hasUnfinalizedTranscript,
     liveTranscript,
     startListening: startSpeechInput,
@@ -3366,13 +3365,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         ? 'Submitting your response. Please wait for Professor Maxiel’s next question.'
         : interviewMicFeedback
           ? interviewMicFeedback
-          : isRecognitionReady
+          : isListening
             ? 'Your microphone is recording. When you finish speaking, click the microphone again to submit your response.'
-            : isListening
-              ? 'Starting your microphone. Please wait...'
-              : isAiSpeaking
-                ? 'Listen carefully to Professor Maxiel. When the question ends, click the microphone to start your response.'
-                : 'Click the microphone to start answering. After speaking, click it again to stop and submit your response.';
+            : isAiSpeaking
+              ? 'Listen carefully to Professor Maxiel. When the question ends, click the microphone to start your response.'
+              : 'Click the microphone to start answering. After speaking, click it again to stop and submit your response.';
 
   const renderOfflineInterviewInput = (type: OfflineInterviewKind) => {
     const checkpoint = activeActivityCheckpoint;
@@ -4699,33 +4696,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                         onClick={toggleListening}
                         disabled={isMicTransitioning || isAiSpeaking || isSubmittingOfflineAnswer || enrollmentResponseCount >= 5}
                         className={`relative ${
-                          isRecognitionReady
+                          isListening
                             ? 'program-accent-interview-active program-accent-border'
                             : isMicTransitioning || enrollmentResponseCount >= 5
                               ? 'cursor-not-allowed border-[var(--interview-border-strong)] bg-[var(--interview-disabled)] text-[var(--interview-text-secondary)]'
                               : 'border-[var(--interview-border-strong)] bg-[var(--interview-elevated)] text-[var(--interview-text-primary)] hover:border-[var(--program-accent-on-dark)] hover:bg-[var(--interview-control-hover)]'
                         } flex h-14 w-14 items-center justify-center rounded-2xl border shadow-lg transition-all duration-300`}
                         title={
-                          isRecognitionReady
+                          isListening
                             ? 'Stop recording and submit answer'
-                            : isListening
-                              ? 'Cancel microphone startup'
+                            : isMicTransitioning
+                              ? 'Submitting answer'
                               : 'Start recording your answer'
                         }
                         aria-label={
-                          isRecognitionReady
+                          isListening
                             ? 'Stop recording and submit answer'
-                            : isListening
-                              ? 'Cancel microphone startup'
-                              : isMicTransitioning
-                                ? 'Submitting answer'
-                                : enrollmentResponseCount >= 5
-                                  ? 'All responses recorded'
-                                  : 'Start microphone recording'
+                            : isMicTransitioning
+                              ? 'Submitting answer'
+                              : enrollmentResponseCount >= 5
+                                ? 'All responses recorded'
+                                : 'Start microphone recording'
                         }
-                        aria-pressed={isRecognitionReady}
+                        aria-pressed={isListening}
                       >
-                        {isRecognitionReady ? (
+                        {isListening ? (
                           <div className="relative z-10 flex h-8 w-full items-center justify-center gap-1">
                             {userAudioData.map((height, i) => (
                               <motion.div
@@ -4750,7 +4745,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                         ) : (
                           <MicOff className="relative z-10 h-[22px] w-[22px]" aria-hidden="true" />
                         )}
-                        {isRecognitionReady && (
+                        {isListening && (
                           <span
                             className="absolute inset-0 rounded-2xl border-2 opacity-0"
                             style={{
@@ -4761,10 +4756,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                         )}
                       </button>
                       <div className="min-h-7 text-center leading-tight">
-                        <span className={`block text-[11px] font-bold ${isRecognitionReady ? 'program-accent-on-dark' : 'text-[var(--interview-text-primary)]'}`}>
-                          {isRecognitionReady ? 'Recording...' : isListening ? 'Starting...' : isMicTransitioning ? 'Submitting...' : enrollmentResponseCount >= 5 ? 'Answers Complete' : 'Start Answer'}
+                        <span className={`block text-[11px] font-bold ${isListening ? 'program-accent-on-dark' : 'text-[var(--interview-text-primary)]'}`}>
+                          {isListening ? 'Recording...' : isMicTransitioning ? 'Submitting...' : enrollmentResponseCount >= 5 ? 'Answers Complete' : 'Start Answer'}
                         </span>
-                        {isRecognitionReady && <span className="mt-0.5 block text-[10px] font-medium text-[var(--interview-text-secondary)]">Click to submit</span>}
+                        {isListening && <span className="mt-0.5 block text-[10px] font-medium text-[var(--interview-text-secondary)]">Click to submit</span>}
                       </div>
                     </div>
 

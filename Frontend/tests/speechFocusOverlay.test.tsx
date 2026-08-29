@@ -11,6 +11,7 @@ const dashboardSource = readSource('components/Dashboard.tsx');
 const preTestSource = readSource('components/PreTestPage.tsx');
 const postTestSource = readSource('components/PostTestPage.tsx');
 const drillsSource = readSource('components/DrillsPage.tsx');
+const speechInputSource = readSource('hooks/useSpeechInput.ts');
 
 const renderOverlay = (isOpen: boolean, liveTranscript = '') => renderToStaticMarkup(
   <SpeechFocusOverlay isOpen={isOpen} liveTranscript={liveTranscript} onStop={() => {}} />,
@@ -59,6 +60,8 @@ test('Enrollment opens the overlay only in its interview session while listening
   assert.match(dashboardSource, /isOpen=\{activeTab === 'interview-session' && isListening\}/);
   assert.match(dashboardSource, /liveTranscript=\{liveTranscript\}/);
   assert.match(dashboardSource, /onStop=\{\(\) => void toggleListening\(\)\}/);
+  assert.match(dashboardSource, /aria-pressed=\{isListening\}/);
+  assert.doesNotMatch(dashboardSource, /isRecognitionReady/);
 });
 
 test('Who Am I and Active Listening share the listening-only overlay', () => {
@@ -82,5 +85,13 @@ test('normal and negotiation Drills share the overlay and retain their TTS guard
 test('active controls use Mic and inactive controls use MicOff on each active exercise surface', () => {
   for (const source of [preTestSource, postTestSource, drillsSource]) {
     assert.match(source, /isListening \? <Mic className="h-5 w-5" \/> : <MicOff className="h-5 w-5" \/>/);
+    assert.doesNotMatch(source, /isListening \? <MicOff className="h-5 w-5" \/> : <Mic className="h-5 w-5" \/>/);
   }
+  assert.match(dashboardSource, /\{isListening \? \([\s\S]*?<Mic className="h-\[18px\] w-\[18px\] shrink-0"[\s\S]*?\) : \([\s\S]*?<MicOff className="relative z-10 h-\[22px\] w-\[22px\]"/);
+});
+
+test('stopping listening closes the overlay before finalization and canonical delivery', () => {
+  assert.match(speechInputSource, /const stopListening = useCallback\(\(\) => \{[\s\S]*?setIsListening\(false\);[\s\S]*?setIsFinalizing\(true\)/);
+  assert.match(speechInputSource, /claimCanonicalTranscript\(\)[\s\S]*?if \(canonicalTranscript\) session\.onTranscript\(canonicalTranscript\)/);
+  assert.doesNotMatch(speechInputSource, /session\.onTranscript\([^\n]*interimTranscript/);
 });
