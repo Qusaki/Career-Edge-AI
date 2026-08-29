@@ -4143,12 +4143,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                       Thesis Defense · Prof. Maxiel
                     </div>
                     {isCameraEnabled && (
-                      <div className="absolute bottom-4 right-4 z-20 w-44 overflow-hidden rounded-xl border border-purple-400/40 bg-slate-950 shadow-xl">
+                      <div className="absolute left-4 right-4 top-14 z-20 overflow-hidden rounded-xl border border-purple-400/40 bg-slate-950 shadow-xl sm:left-auto sm:right-4 sm:top-4 sm:w-40">
                         <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
                         <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-slate-200">
                           <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unavailable' ? 'Tracking unavailable' : 'Loading tracker'}</span>
                           <span className="text-purple-300">{getCheckpointEyeContactSummary().samples > 0 ? `${Math.round(getCheckpointEyeContactSummary().score || 0)}%` : '—'}</span>
                         </div>
+                        {(eyeTracker.status === 'blocked' || eyeTracker.status === 'unavailable') && (
+                          <p className="px-2.5 pb-2 text-[9px] leading-snug text-slate-400">Activity can continue without eye-contact scoring.</p>
+                        )}
                       </div>
                     )}
                   </motion.div>
@@ -4416,12 +4419,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                       </div>
                     )}
                     {isCameraEnabled && (
-                      <div className="program-accent-dark-border absolute bottom-3 right-3 z-20 w-36 overflow-hidden rounded-xl border bg-[var(--interview-card)] shadow-xl sm:bottom-4 sm:right-4 sm:w-44">
+                      <div className="program-accent-dark-border absolute right-3 top-3 z-20 w-36 overflow-hidden rounded-xl border bg-[var(--interview-card)] shadow-xl sm:right-4 sm:top-4 sm:w-40">
                         <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
                         <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-[var(--interview-text-secondary)]">
                           <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unavailable' ? 'Tracking unavailable' : 'Loading tracker'}</span>
                           <span className="program-accent-on-dark">{getCheckpointEyeContactSummary().samples > 0 ? `${Math.round(getCheckpointEyeContactSummary().score || 0)}%` : '—'}</span>
                         </div>
+                        {(eyeTracker.status === 'blocked' || eyeTracker.status === 'unavailable') && (
+                          <p className="px-2.5 pb-2 text-[9px] leading-snug text-[var(--interview-text-muted)]">Activity can continue without eye-contact scoring.</p>
+                        )}
                       </div>
                     )}
                   </motion.div>

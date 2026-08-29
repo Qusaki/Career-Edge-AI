@@ -948,7 +948,6 @@ export function PreTestPage({
   if (activeExercise && activeSession) {
     return (
       <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
-        <CameraTrackingNotice {...eyeTracker} />
         <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
           <div className="mb-5 flex items-center justify-between gap-3">
             <button
@@ -971,14 +970,17 @@ export function PreTestPage({
           </div>
 
           <section className="flex-1 rounded-lg border border-line bg-card p-5">
-            <div className="mb-4">
-              <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Pre-Test Session</p>
-              <h1 className="text-3xl font-bold tracking-tight text-ink">{activeExercise.kind === 'active-listening' ? 'Active Listening' : activeExercise.title}</h1>
-              <p className="mt-1 text-sm text-muted">
-                {activeExercise.kind === 'intro'
-                  ? 'Introduce yourself clearly, completely, and concisely.'
-                  : 'Listen first, then summarize the story or instructions accurately.'}
-              </p>
+            <div className="mb-4 flex flex-col items-start gap-4 sm:flex-row sm:justify-between">
+              <div className="min-w-0">
+                <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Pre-Test Session</p>
+                <h1 className="text-3xl font-bold tracking-tight text-ink">{activeExercise.kind === 'active-listening' ? 'Active Listening' : activeExercise.title}</h1>
+                <p className="mt-1 text-sm text-muted">
+                  {activeExercise.kind === 'intro'
+                    ? 'Introduce yourself clearly, completely, and concisely.'
+                    : 'Listen first, then summarize the story or instructions accurately.'}
+                </p>
+              </div>
+              <CameraTrackingNotice {...eyeTracker} />
             </div>
 
             {(error || notice) && (

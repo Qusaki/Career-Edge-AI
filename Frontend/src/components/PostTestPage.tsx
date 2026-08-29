@@ -783,7 +783,6 @@ export function PostTestPage({
   if (activeSession) {
     return (
       <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
-        <CameraTrackingNotice {...eyeTracker} />
         <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
           <div className="mb-5 flex items-center justify-between gap-3">
             <button
@@ -804,15 +803,18 @@ export function PostTestPage({
           </div>
 
           <section className="flex-1 rounded-lg border border-line bg-card p-5">
-            <div className="mb-4">
-              <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Post-Test Session</p>
-              <div className="flex flex-wrap items-center gap-3">
-                <h1 className="text-3xl font-bold tracking-tight text-ink">Post-Test Interview</h1>
-                <span className="program-accent-surface rounded-full px-3 py-1 text-sm font-bold">
-                  Question {currentQuestionNumber} of 5
-                </span>
+            <div className="mb-4 flex flex-col items-start gap-4 sm:flex-row sm:justify-between">
+              <div className="min-w-0">
+                <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Post-Test Session</p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <h1 className="text-3xl font-bold tracking-tight text-ink">Post-Test Interview</h1>
+                  <span className="program-accent-surface rounded-full px-3 py-1 text-sm font-bold">
+                    Question {currentQuestionNumber} of 5
+                  </span>
+                </div>
+                <p className="mt-1 text-sm text-muted">Answer the audio interviewer one question at a time.</p>
               </div>
-              <p className="mt-1 text-sm text-muted">Answer the audio interviewer one question at a time.</p>
+              <CameraTrackingNotice {...eyeTracker} />
             </div>
 
             {(error || notice) && (
