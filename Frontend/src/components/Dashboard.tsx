@@ -6,7 +6,6 @@ import { clearProfessorModelCache, ProfessorModel, ProfessorModelPreloader } fro
 import { PreTestPage } from './PreTestPage';
 import { DrillsPage } from './DrillsPage';
 import { PostTestPage } from './PostTestPage';
-import { SpeechFocusOverlay } from './SpeechFocusOverlay';
 import { useWebLLM } from '../hooks/useWebLLM';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import type { MLCEngine } from '@mlc-ai/web-llm';
@@ -3443,11 +3442,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
           <ProfessorModelPreloader onReady={handleProfessorAssetReady} />
         </React.Suspense>
       </ProfessorAssetErrorBoundary>
-      <SpeechFocusOverlay
-        isOpen={activeTab === 'interview-session' && isListening}
-        liveTranscript={liveTranscript}
-        onStop={() => void toggleListening()}
-      />
       {connectivity.connectionState !== 'online' && (
         <div className="fixed right-4 top-4 z-[9997] rounded-lg border border-amber-400/40 bg-slate-950/95 px-4 py-3 text-xs text-amber-100 shadow-xl">
           <p className="font-bold">

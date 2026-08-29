@@ -8,7 +8,6 @@ import { createClientSessionId } from '../offline/sessionFoundation';
 import { evaluateDrill, getOfflineNegotiationTurn } from '../offline/localEvaluation';
 import { DRILLS_VERSION, getOfflineDrillPrompt, hasCurrentQuestionPack, NEGOTIATION_OPENING_PROMPT } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
-import { SpeechFocusOverlay } from './SpeechFocusOverlay';
 
 type DrillSession = {
   id: number | string;
@@ -688,7 +687,6 @@ export function DrillsPage({
   if (activeSession) {
     return (
       <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
-        <SpeechFocusOverlay isOpen={isListening} liveTranscript={liveTranscript} onStop={stopListening} />
         <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
           <div className="mb-5 flex items-center justify-between gap-3">
             <button

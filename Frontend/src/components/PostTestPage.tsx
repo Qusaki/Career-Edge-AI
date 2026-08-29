@@ -19,7 +19,6 @@ import {
   POST_TEST_ANSWER_LIMIT,
   requireExactPostTestAnswerCount,
 } from '../offline/activityRuntime';
-import { SpeechFocusOverlay } from './SpeechFocusOverlay';
 
 type Session = {
   id: number | string;
@@ -784,7 +783,6 @@ export function PostTestPage({
   if (activeSession) {
     return (
       <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
-        <SpeechFocusOverlay isOpen={isListening} liveTranscript={liveTranscript} onStop={stopListening} />
         <CameraTrackingNotice {...eyeTracker} />
         <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
           <div className="mb-5 flex items-center justify-between gap-3">
