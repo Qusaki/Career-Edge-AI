@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { Children, isValidElement, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { SpeechFocusOverlay } from '../src/components/SpeechFocusOverlay';
 
@@ -17,43 +18,58 @@ const renderOverlay = (isOpen: boolean, liveTranscript = '') => renderToStaticMa
   <SpeechFocusOverlay isOpen={isOpen} liveTranscript={liveTranscript} onStop={() => {}} />,
 );
 
+const findButton = (node: ReactNode): ReactElement<{ onClick?: () => void }> | null => {
+  if (!isValidElement(node)) return null;
+  if (node.type === 'button') return node as ReactElement<{ onClick?: () => void }>;
+  const children = (node.props as { children?: ReactNode }).children;
+  for (const child of Children.toArray(children)) {
+    const button = findButton(child);
+    if (button) return button;
+  }
+  return null;
+};
+
 test('the speech focus overlay is absent while the microphone is not listening', () => {
   assert.equal(renderOverlay(false), '');
 });
 
-test('the listening surface has clear dialog semantics and a normal microphone icon', () => {
+test('the listening surface uses lightweight group semantics and a normal microphone icon', () => {
   const markup = renderOverlay(true);
-  assert.match(markup, /role="dialog"/);
-  assert.match(markup, /aria-modal="true"/);
+  assert.match(markup, /role="group"/);
+  assert.match(markup, /aria-label="Active microphone"/);
+  assert.doesNotMatch(markup, /role="dialog"|aria-modal="true"/);
   assert.match(markup, /Listening\.\.\./);
   assert.match(markup, /You can speak now/);
   assert.match(markup, /lucide-mic/);
   assert.doesNotMatch(markup, /lucide-mic-off/);
-  assert.match(markup, /aria-label="Stop listening"/);
-  assert.match(markup, /aria-label="Live speech transcript"/);
+  assert.match(markup, /aria-label="Stop microphone"/);
 });
 
-test('live transcript content updates through props without changing the overlay lifecycle', () => {
-  const initialMarkup = renderOverlay(true, 'My name is John');
-  const updatedMarkup = renderOverlay(true, 'My name is John and I am studying');
-  assert.match(initialMarkup, /My name is John/);
-  assert.match(updatedMarkup, /My name is John and I am studying/);
-  assert.equal((initialMarkup.match(/role="dialog"/g) ?? []).length, 1);
-  assert.equal((updatedMarkup.match(/role="dialog"/g) ?? []).length, 1);
+test('the overlay does not duplicate the live transcript from the underlying page', () => {
+  const markup = renderOverlay(true, 'My name is John and I am studying');
+  assert.doesNotMatch(markup, /My name is John and I am studying/);
+  assert.doesNotMatch(markup, /Live speech transcript|Your words will appear here/);
 });
 
-test('the stop control delegates to the existing speech stop callback', () => {
+test('the prominent microphone delegates directly to the existing speech stop callback', () => {
+  let stopCalls = 0;
+  const overlay = SpeechFocusOverlay({ isOpen: true, liveTranscript: '', onStop: () => { stopCalls += 1; } });
+  const button = findButton(overlay);
+  assert.ok(button);
+  button.props.onClick?.();
+  assert.equal(stopCalls, 1);
   assert.match(overlaySource, /onClick=\{onStop\}/);
+  assert.match(overlaySource, /aria-label="Stop microphone"/);
   assert.doesNotMatch(overlaySource, /startListening|SpeechRecognition|fetch\(|axios|onTranscript/);
 });
 
-test('the overlay is responsive, wraps multiline speech, and softly dims the page', () => {
+test('the overlay is a responsive mic-only treatment with a light blur and no card shell', () => {
   assert.match(overlaySource, /fixed inset-0/);
-  assert.match(overlaySource, /backdrop-blur-\[4px\]/);
-  assert.match(overlaySource, /bg-slate-950\/55/);
-  assert.match(overlaySource, /w-full max-w-lg/);
-  assert.match(overlaySource, /max-h-\[calc\(100dvh-2rem\)\]/);
-  assert.match(overlaySource, /whitespace-pre-wrap break-words/);
+  assert.match(overlaySource, /backdrop-blur-sm/);
+  assert.match(overlaySource, /bg-slate-950\/30/);
+  assert.match(overlaySource, /h-20 w-20[\s\S]*?rounded-full bg-emerald-500/);
+  assert.doesNotMatch(overlaySource, /<section|bg-slate-900\/95|max-w-lg|min-h-28|rounded-3xl/);
+  assert.doesNotMatch(overlaySource, /Stop listening|bg-rose-600/);
 });
 
 test('Enrollment opens the overlay only in its interview session while listening', () => {
