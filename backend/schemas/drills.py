@@ -1,7 +1,10 @@
 # pyrefly: ignore [missing-import]
 from pydantic import BaseModel
-from typing import Optional, Any
+from typing import Dict, List, Optional, Union
 from datetime import datetime
+
+DrillPromptValue = Union[str, int, List[str]]
+DrillPrompt = Dict[str, DrillPromptValue]
 
 class DrillSessionResponse(BaseModel):
     id: int
@@ -15,6 +18,7 @@ class DrillSessionResponse(BaseModel):
     score: Optional[float] = None
     passed: Optional[bool] = None
     feedback_summary: Optional[str] = None
+    canonical_prompt: Optional[DrillPrompt] = None
     evaluation_data: Optional[str] = None
 
     class Config:

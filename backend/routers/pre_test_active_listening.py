@@ -99,49 +99,111 @@ async def active_listening_chat_ws(
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Time limit exceeded.")
         return
 
+    stored_history = db.query(PreTestActiveListeningMessage).filter(
+        PreTestActiveListeningMessage.session_id == session.id
+    ).order_by(
+        PreTestActiveListeningMessage.timestamp.asc(),
+        PreTestActiveListeningMessage.id.asc(),
+    ).all()
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages.extend({
+        "role": "assistant" if item.role == "ai" else "user",
+        "content": item.content,
+    } for item in stored_history)
     
     try:
         ai_provider = get_ai_provider()
+
+        async def stream_and_persist_ai_response():
+            full_response = ""
+            async for content in ai_provider.stream_chat(messages):
+                full_response += content
+                await websocket.send_json({"text": content})
+
+            completed_response = full_response.strip()
+            if not completed_response:
+                raise RuntimeError("AI provider returned an empty Active Listening response.")
+
+            ai_message = PreTestActiveListeningMessage(
+                session_id=session.id,
+                role="ai",
+                content=completed_response,
+            )
+            db.add(ai_message)
+            db.commit()
+            db.refresh(ai_message)
+            stored_history.append(ai_message)
+            messages.append({"role": "assistant", "content": completed_response})
+            turn_complete = {"type": "turn_complete"}
+            if ai_message.id is not None:
+                turn_complete["message_id"] = ai_message.id
+            await websocket.send_json(turn_complete)
+
         while True:
             msg = await websocket.receive()
             if "text" in msg:
                 try:
                     data = json.loads(msg["text"])
-                    if data.get("text"):
-                        user_text = data["text"]
-                        
-                        if user_text.strip() == "/start_exercise":
+                    user_text_value = data.get("text")
+                    if isinstance(user_text_value, str) and user_text_value.strip():
+                        user_text = user_text_value.strip()
+
+                        if user_text == "/start_exercise":
+                            if stored_history:
+                                latest_message = stored_history[-1]
+                                if latest_message.role == "user":
+                                    await stream_and_persist_ai_response()
+                                else:
+                                    await websocket.send_json({
+                                        "text": latest_message.content,
+                                        "message_id": latest_message.id,
+                                    })
+                                    await websocket.send_json({
+                                        "type": "turn_complete",
+                                        "message_id": latest_message.id,
+                                    })
+                                continue
+
                             prompt = get_active_listening_prompt(session.id)
+                            prompt_message = PreTestActiveListeningMessage(
+                                session_id=session.id,
+                                role="ai",
+                                content=prompt,
+                            )
+                            db.add(prompt_message)
+                            db.commit()
+                            db.refresh(prompt_message)
+                            stored_history.append(prompt_message)
                             messages.append({"role": "assistant", "content": prompt})
-                            await websocket.send_json({"text": prompt})
-                            await websocket.send_json({"type": "turn_complete"})
+                            await websocket.send_json({"text": prompt, "message_id": prompt_message.id})
+                            await websocket.send_json({
+                                "type": "turn_complete",
+                                "message_id": prompt_message.id,
+                            })
                             continue
-                            
+
+                        db.refresh(session)
+                        if session.status != "active":
+                            await websocket.close(
+                                code=status.WS_1008_POLICY_VIOLATION,
+                                reason=f"Session is already {session.status}.",
+                            )
+                            return
+
+                        user_message = PreTestActiveListeningMessage(
+                            session_id=session.id,
+                            role="user",
+                            content=user_text,
+                        )
+                        db.add(user_message)
+                        db.commit()
+                        db.refresh(user_message)
+                        stored_history.append(user_message)
                         messages.append({"role": "user", "content": user_text})
-                        
-                        full_response = ""
-                        sentence_buffer = ""
-                        
-                        async for content in ai_provider.stream_chat(messages):
-                            full_response += content
-                            sentence_buffer += content
-
-                            await websocket.send_json({"text": content})
-
-                            delimiters = ['. ', '! ', '? ', '.\n', '!\n', '?\n', ': ', '; ', ', ', '\n']
-                            for punctuation in delimiters:
-                                if punctuation in sentence_buffer:
-                                    parts = sentence_buffer.split(punctuation)
-                                    sentence_buffer = punctuation.join(parts[1:])
-                                    break
-                            
-                        messages.append({"role": "assistant", "content": full_response})
-                        
-                        # Signal turn complete
-                        await websocket.send_json({"type": "turn_complete"})
+                        await stream_and_persist_ai_response()
                         
                 except Exception as error:
+                    db.rollback()
                     logger.warning(
                         "Active Listening AI stream failed (session_id=%s, error=%s)",
                         session.id,
@@ -168,7 +230,12 @@ def complete_session(session_id: int, request: PreTestActiveListeningCompleteReq
         return session
         
     # Build Transcript
-    history = db.query(PreTestActiveListeningMessage).filter(PreTestActiveListeningMessage.session_id == session.id).order_by(PreTestActiveListeningMessage.timestamp.asc()).all()
+    history = db.query(PreTestActiveListeningMessage).filter(
+        PreTestActiveListeningMessage.session_id == session.id
+    ).order_by(
+        PreTestActiveListeningMessage.timestamp.asc(),
+        PreTestActiveListeningMessage.id.asc(),
+    ).all()
     if not history and request.conversation:
         for item in request.conversation:
             # Avoid saving the hidden trigger

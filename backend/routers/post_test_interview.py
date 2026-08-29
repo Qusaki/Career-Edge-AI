@@ -224,8 +224,7 @@ async def post_test_chat_ws(
                         await websocket.send_json({"text": completion_message})
                         await websocket.send_json({"type": "turn_complete"})
                         
-                except Exception as e:
-                    print(f"[DEBUG] Post-Test question flow error: {e}")
+                except Exception:
                     try:
                         await websocket.send_json({
                             "type": "error",

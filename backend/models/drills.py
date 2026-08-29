@@ -1,5 +1,5 @@
 # pyrefly: ignore [missing-import]
-from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime
+from sqlalchemy import JSON, Column, Integer, String, Float, Boolean, ForeignKey, DateTime
 from database import Base
 import datetime
 
@@ -19,6 +19,7 @@ class DrillSession(Base):
     score = Column(Float, nullable=True)
     passed = Column(Boolean, nullable=True)
     feedback_summary = Column(String, nullable=True)
+    canonical_prompt = Column(JSON, nullable=True)
     
     # Store any flexible JSON evaluation data as string
     evaluation_data = Column(String, nullable=True)

@@ -7,9 +7,18 @@ import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } f
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
 import { createClientSessionId } from '../offline/sessionFoundation';
+import { combineEyeContactSummaries, type EyeContactSummary } from '../offline/eyeContact';
 import { evaluatePostTest } from '../offline/localEvaluation';
 import { getPostTestQuestions, hasCurrentQuestionPack, POST_TEST_VERSION } from '../offline/questionPacks';
-import { appendOfflinePostTestAnswer } from '../offline/activityRuntime';
+import { normalizeApiError } from '../utils/httpError';
+import {
+  appendOfflinePostTestAnswer,
+  appendPostTestUserAnswer,
+  getPostTestAnswerBoundary,
+  getPostTestQuestionForProgress,
+  POST_TEST_ANSWER_LIMIT,
+  requireExactPostTestAnswerCount,
+} from '../offline/activityRuntime';
 
 type Session = {
   id: number | string;
@@ -24,9 +33,34 @@ type Session = {
   answered_questions?: number;
 };
 
-type ChatMessage = {
+export type ChatMessage = {
   sender: 'user' | 'ai';
   text: string;
+};
+
+export type InitialPostTestReplayResolution = {
+  completedText: string;
+  isHydratedReplay: boolean;
+  shouldAppend: boolean;
+};
+
+export const getInitialPostTestReplayText = (messages: readonly ChatMessage[]): string | null => {
+  const latestMessage = messages[messages.length - 1];
+  if (latestMessage?.sender !== 'ai') return null;
+  return latestMessage.text.trim() || null;
+};
+
+export const resolveInitialPostTestReplay = (
+  expectedText: string | null,
+  streamedText: string,
+): InitialPostTestReplayResolution => {
+  const completedText = streamedText.trim();
+  const isHydratedReplay = expectedText !== null && completedText === expectedText;
+  return {
+    completedText,
+    isHydratedReplay,
+    shouldAppend: completedText.length > 0 && !isHydratedReplay,
+  };
 };
 
 type RealtimeConnectionState = 'idle' | 'connecting' | 'ready' | 'error';
@@ -77,13 +111,26 @@ export function PostTestPage({
   const messagesRef = useRef<ChatMessage[]>([]);
   const aiMessageOpenRef = useRef(false);
   const aiSpeechBufferRef = useRef('');
+  const initialReplayExpectedTextRef = useRef<string | null>(null);
   const firstPromptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionAttemptRef = useRef(0);
   const lifecycleGenerationRef = useRef(0);
   const resumedSessionRef = useRef<string | null>(null);
+  const offlineEyeContactBaselineRef = useRef<EyeContactSummary | null>(null);
+  const answerSubmissionInFlightRef = useRef(false);
+  const [isSubmittingAnswer, setIsSubmittingAnswer] = useState(false);
   const { isListening, startListening, stopListening, cancelListening, enableOfflineRecording } = useSpeechInput();
   const eyeTracker = useEyeContactTracker(Boolean(activeSession));
+  const getCheckpointEyeContactSummary = (): EyeContactSummary => {
+    const liveWindow: EyeContactSummary = {
+      score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+      samples: eyeTracker.samples,
+    };
+    return sessionMode === 'offline'
+      ? combineEyeContactSummaries(offlineEyeContactBaselineRef.current, liveWindow)
+      : liveWindow;
+  };
 
   useEffect(() => {
     if (sessionMode !== 'offline' || !isListening || !activeSession) return;
@@ -107,9 +154,12 @@ export function PostTestPage({
       return;
     }
     const restoredMessages = resumeSession.conversationLog as ChatMessage[];
+    offlineEyeContactBaselineRef.current = resumeSession.eyeContactSummary
+      ? { ...resumeSession.eyeContactSummary }
+      : null;
     const questions = getPostTestQuestions(String(resumeSession.activityState.department || userDepartment));
-    const answerCount = restoredMessages.filter(message => message.sender === 'user').length;
-    const currentQuestion = resumeSession.currentQuestion || questions[Math.min(answerCount, questions.length - 1)];
+    const boundary = getPostTestAnswerBoundary(restoredMessages);
+    const currentQuestion = resumeSession.currentQuestion || getPostTestQuestionForProgress(questions, boundary.answerCount);
     messagesRef.current = restoredMessages;
     setMessages(restoredMessages);
     setLatestAiQuestion(currentQuestion);
@@ -119,7 +169,16 @@ export function PostTestPage({
       status: 'active',
     });
     setConnectionState('ready');
-    setNotice('Your saved offline Post-Test has been restored from its last checkpoint.');
+    if (boundary.hasTooManyAnswers) {
+      setError('This saved Post-Test contains more than five answers. It was preserved and requires manual recovery.');
+      setNotice(null);
+    } else if (boundary.canComplete) {
+      setError(null);
+      setNotice('All five saved Post-Test answers are ready. Complete the interview to queue it for sync.');
+    } else {
+      setError(null);
+      setNotice('Your saved offline Post-Test has been restored from its last checkpoint.');
+    }
     onSessionModeChange(true);
   }, [onSessionModeChange, resumeSession, userDepartment]);
 
@@ -156,7 +215,14 @@ export function PostTestPage({
     wsRef.current = null;
     setConnectionState('ready');
     setIsAiResponding(false);
-    setNotice('This Post-Test remains offline until it is completed or abandoned.');
+    const boundary = getPostTestAnswerBoundary(messagesRef.current);
+    if (boundary.hasTooManyAnswers) {
+      setNotice(null);
+    } else if (boundary.canComplete) {
+      setNotice('All five saved Post-Test answers are ready. Complete the interview to queue it for sync.');
+    } else {
+      setNotice('This Post-Test remains offline until it is completed or abandoned.');
+    }
   }, [activeSession, onActivityCheckpoint, sessionMode, userDepartment]);
 
   const speakText = useCallback((text: string) => {
@@ -247,7 +313,9 @@ export function PostTestPage({
     }
     aiMessageOpenRef.current = false;
     aiSpeechBufferRef.current = '';
-    setLatestAiQuestion('');
+    const initialReplayExpectedText = getInitialPostTestReplayText(messagesRef.current);
+    initialReplayExpectedTextRef.current = initialReplayExpectedText;
+    setLatestAiQuestion(initialReplayExpectedText || '');
     setConnectionState('connecting');
     setError(null);
     setNotice(retryCount > 0 ? 'Reconnecting the audio interviewer…' : 'Connecting the audio interviewer…');
@@ -266,6 +334,7 @@ export function PostTestPage({
         if (!isCurrentAttempt()) return;
         aiMessageOpenRef.current = false;
         aiSpeechBufferRef.current = '';
+        initialReplayExpectedTextRef.current = null;
         setIsAiResponding(false);
         setConnectionState('error');
         setError('The Post-Test audio prompt did not start. Please restart the backend service and try again.');
@@ -277,54 +346,68 @@ export function PostTestPage({
 
     socket.onmessage = event => {
       if (!isCurrentAttempt()) return;
-      const data = JSON.parse(event.data);
-      if (data.type === 'turn_complete') {
+      const data: unknown = JSON.parse(event.data);
+      if (typeof data !== 'object' || data === null || Array.isArray(data)) return;
+      const eventType = 'type' in data && typeof data.type === 'string' ? data.type : '';
+      const responseText = 'text' in data && typeof data.text === 'string' ? data.text : '';
+      if (eventType === 'turn_complete') {
         clearFirstPromptTimeout();
         aiMessageOpenRef.current = false;
         setIsAiResponding(false);
         if (aiSpeechBufferRef.current.trim()) {
-          const completedQuestion = aiSpeechBufferRef.current.trim();
+          const initialReplayExpectedText = initialReplayExpectedTextRef.current;
+          const replayResolution = resolveInitialPostTestReplay(
+            initialReplayExpectedText,
+            aiSpeechBufferRef.current,
+          );
+          initialReplayExpectedTextRef.current = null;
+          const completedQuestion = replayResolution.completedText;
+          if (initialReplayExpectedText !== null && replayResolution.shouldAppend) {
+            const nextMessage: ChatMessage = { sender: 'ai', text: completedQuestion };
+            const nextMessages = [...messagesRef.current, nextMessage];
+            messagesRef.current = nextMessages;
+            setMessages(nextMessages);
+          }
           setLatestAiQuestion(completedQuestion);
           speakText(completedQuestion);
           onActivityCheckpoint({
             conversationLog: messagesRef.current,
             currentQuestion: completedQuestion,
             responseCount: messagesRef.current.filter(message => message.sender === 'user').length,
-            eyeContactSummary: {
-              score: eyeTracker.samples > 0 ? eyeTracker.score : null,
-              samples: eyeTracker.samples,
-            },
+            eyeContactSummary: getCheckpointEyeContactSummary(),
           });
         }
         aiSpeechBufferRef.current = '';
         return;
       }
 
-      if (data.type === 'error') {
+      if (eventType === 'error') {
         clearFirstPromptTimeout();
         setConnectionState('error');
-        setError(data.message || 'The audio interviewer could not respond. Check that the backend service is running.');
+        setError(normalizeApiError(data, 'The audio interviewer could not respond. Check that the backend service is running.'));
         aiMessageOpenRef.current = false;
+        initialReplayExpectedTextRef.current = null;
         setIsAiResponding(false);
         aiSpeechBufferRef.current = '';
         return;
       }
 
-      if (data.text) {
+      if (responseText) {
         clearFirstPromptTimeout();
         setIsAiResponding(true);
-        aiSpeechBufferRef.current += data.text;
+        aiSpeechBufferRef.current += responseText;
+        if (initialReplayExpectedTextRef.current !== null) return;
         setMessages(prev => {
           let next: ChatMessage[];
           if (aiMessageOpenRef.current && prev[prev.length - 1]?.sender === 'ai') {
             next = prev.map((message, index) =>
-              index === prev.length - 1 ? { ...message, text: message.text + data.text } : message
+              index === prev.length - 1 ? { ...message, text: message.text + responseText } : message
             );
-          } else if (prev[prev.length - 1]?.sender === 'ai' && prev[prev.length - 1]?.text === data.text) {
+          } else if (prev[prev.length - 1]?.sender === 'ai' && prev[prev.length - 1]?.text === responseText) {
             next = prev;
           } else {
             aiMessageOpenRef.current = true;
-            next = [...prev, { sender: 'ai', text: data.text }];
+            next = [...prev, { sender: 'ai', text: responseText }];
           }
           messagesRef.current = next;
           return next;
@@ -380,6 +463,7 @@ export function PostTestPage({
     try {
       const questions = getPostTestQuestions(userDepartment);
       if (!effectiveOnline) {
+        offlineEyeContactBaselineRef.current = null;
         const clientSessionId = createClientSessionId();
         const initialMessages: ChatMessage[] = [{ sender: 'ai', text: questions[0] }];
         const checkpoint = await onActivityStart({
@@ -408,6 +492,9 @@ export function PostTestPage({
         return;
       }
 
+      messagesRef.current = [];
+      initialReplayExpectedTextRef.current = null;
+      offlineEyeContactBaselineRef.current = null;
       const token = localStorage.getItem('token');
       if (!token) return;
       const response = await fetch(`${apiUrl}/post-test-interview/start`, {
@@ -419,7 +506,7 @@ export function PostTestPage({
       });
       if (!response.ok) {
         const body = await response.json().catch(() => null);
-        throw new Error(body?.detail || 'Unable to start the post-test interview.');
+        throw new Error(normalizeApiError(body, 'Unable to start the post-test interview.'));
       }
       const session: Session = await response.json();
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
@@ -469,6 +556,8 @@ export function PostTestPage({
     wsRef.current = null;
     aiMessageOpenRef.current = false;
     aiSpeechBufferRef.current = '';
+    initialReplayExpectedTextRef.current = null;
+    offlineEyeContactBaselineRef.current = null;
     setActiveSession(null);
     setMessages([]);
     setReply('');
@@ -486,49 +575,78 @@ export function PostTestPage({
     const text = spokenText.trim();
     if (!text || isAiResponding || isVoiceSpeaking) return;
     if (sessionMode !== 'offline' && (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)) return;
-    aiMessageOpenRef.current = false;
-    aiSpeechBufferRef.current = '';
-    const questions = getPostTestQuestions(userDepartment);
-    const offlineTurn = sessionMode === 'offline'
-      ? appendOfflinePostTestAnswer(messagesRef.current, text, questions)
-      : null;
-    const userMessages = offlineTurn
-      ? offlineTurn.conversationLog.filter(message => message.sender === 'user')
-      : [...messagesRef.current, { sender: 'user' as const, text }];
-    const answerCount = offlineTurn?.answerCount
-      ?? userMessages.filter(message => message.sender === 'user').length;
-    const nextQuestion = offlineTurn?.nextQuestion || '';
-    const checkpointMessages = offlineTurn?.conversationLog || userMessages;
-    const saved = await onActivityCheckpoint({
-      conversationLog: checkpointMessages,
-      currentQuestion: offlineTurn?.currentQuestion || questions[Math.min(answerCount - 1, questions.length - 1)],
-      currentStep: answerCount,
-      responseCount: answerCount,
-      answers: userMessages
-        .filter(message => message.sender === 'user')
-        .map((message, index) => ({ step: index + 1, text: message.text, createdAt: Date.now() })),
-      eyeContactSummary: {
-        score: eyeTracker.samples > 0 ? eyeTracker.score : null,
-        samples: eyeTracker.samples,
-      },
-    });
-    if (!saved) return;
-    messagesRef.current = checkpointMessages;
-    setMessages(checkpointMessages);
-    if (sessionMode === 'offline') {
-      setLatestAiQuestion(nextQuestion);
+    if (answerSubmissionInFlightRef.current) return;
+    const currentMessages = messagesRef.current;
+    const currentBoundary = getPostTestAnswerBoundary(currentMessages);
+    if (!currentBoundary.canAcceptAnswer) {
       setReply('');
-      if (nextQuestion) speakText(nextQuestion);
-      else setNotice('All five offline Post-Test answers are saved. Complete the interview to queue it for sync.');
+      if (currentBoundary.hasTooManyAnswers) {
+        setError('This saved Post-Test contains more than five answers. It was preserved and requires manual recovery.');
+        setNotice(null);
+      } else {
+        setError(null);
+        setNotice('All five Post-Test answers are already recorded. Complete the interview to continue.');
+      }
       return;
     }
-    wsRef.current?.send(JSON.stringify({ text }));
-    setReply('');
+
+    answerSubmissionInFlightRef.current = true;
+    setIsSubmittingAnswer(true);
+    try {
+      aiMessageOpenRef.current = false;
+      aiSpeechBufferRef.current = '';
+      const questions = getPostTestQuestions(userDepartment);
+      const offlineTurn = sessionMode === 'offline'
+        ? appendOfflinePostTestAnswer(currentMessages, text, questions)
+        : null;
+      const onlineTurn = sessionMode === 'offline'
+        ? null
+        : appendPostTestUserAnswer(currentMessages, text);
+      const checkpointMessages = offlineTurn?.conversationLog ?? onlineTurn?.conversationLog ?? currentMessages;
+      const answerCount = offlineTurn?.answerCount ?? onlineTurn?.answerCount ?? currentBoundary.answerCount;
+      const nextQuestion = offlineTurn?.nextQuestion || '';
+      const saved = await onActivityCheckpoint({
+        conversationLog: checkpointMessages,
+        currentQuestion: offlineTurn?.currentQuestion || questions[Math.min(answerCount - 1, POST_TEST_ANSWER_LIMIT - 1)],
+        currentStep: answerCount,
+        responseCount: answerCount,
+        answers: checkpointMessages
+          .filter(message => message.sender === 'user')
+          .map((message, index) => ({ step: index + 1, text: message.text, createdAt: Date.now() })),
+        eyeContactSummary: getCheckpointEyeContactSummary(),
+      });
+      if (!saved) return;
+      messagesRef.current = checkpointMessages;
+      setMessages(checkpointMessages);
+      setReply('');
+      if (sessionMode === 'offline') {
+        setLatestAiQuestion(nextQuestion);
+        if (nextQuestion) speakText(nextQuestion);
+        else setNotice('All five offline Post-Test answers are saved. Complete the interview to queue it for sync.');
+        return;
+      }
+      setIsAiResponding(true);
+      wsRef.current?.send(JSON.stringify({ text }));
+    } catch (submissionError) {
+      setError(submissionError instanceof Error ? submissionError.message : 'Unable to save the Post-Test answer.');
+    } finally {
+      answerSubmissionInFlightRef.current = false;
+      setIsSubmittingAnswer(false);
+    }
   };
 
   const recordAndSendReply = () => {
     setError(null);
-    const answerIndex = messagesRef.current.filter(message => message.sender === 'user').length + 1;
+    const boundary = getPostTestAnswerBoundary(messagesRef.current);
+    if (!boundary.canAcceptAnswer || answerSubmissionInFlightRef.current) {
+      if (boundary.hasTooManyAnswers) {
+        setError('This saved Post-Test contains more than five answers. It was preserved and requires manual recovery.');
+      } else if (boundary.canComplete) {
+        setNotice('All five Post-Test answers are already recorded. Complete the interview to continue.');
+      }
+      return;
+    }
+    const answerIndex = boundary.answerCount + 1;
     startListening(transcript => void sendReply(transcript), setError, sessionMode === 'offline' && activeSession ? {
       enabled: true,
       activityType: 'post_test',
@@ -540,21 +658,24 @@ export function PostTestPage({
 
   const completePostTest = async () => {
     if (!activeSession) return;
+    const currentMessages = messagesRef.current;
+    try {
+      requireExactPostTestAnswerCount(currentMessages);
+    } catch (completionError) {
+      setError(completionError instanceof Error ? completionError.message : 'The Post-Test answer count is invalid.');
+      return;
+    }
     if (sessionMode === 'offline') {
-      if (messages.filter(message => message.sender === 'user').length < 5) {
-        setError('Complete all five Post-Test questions before finishing this offline session.');
-        return;
-      }
       setCompleting(true);
       setError(null);
-      const result = evaluatePostTest(messages);
-      const rawAnswers = messages.filter(message => message.sender === 'user').map((message, index) => ({
+      const result = evaluatePostTest(currentMessages);
+      const rawAnswers = currentMessages.filter(message => message.sender === 'user').map((message, index) => ({
         step: index + 1,
         text: message.text,
         createdAt: Date.now(),
       }));
       const saved = await onActivityCheckpoint({
-        conversationLog: messages,
+        conversationLog: currentMessages,
         answers: rawAnswers,
         responseCount: rawAnswers.length,
         currentStep: rawAnswers.length,
@@ -562,10 +683,7 @@ export function PostTestPage({
         localScore: result.localScore,
         evaluationAuthority: 'local_provisional',
         pendingEvaluation: null,
-        eyeContactSummary: {
-          score: eyeTracker.samples > 0 ? eyeTracker.score : null,
-          samples: eyeTracker.samples,
-        },
+        eyeContactSummary: getCheckpointEyeContactSummary(),
       });
       if (!saved || !await onActivityEnd('completed_local')) {
         setCompleting(false);
@@ -577,6 +695,7 @@ export function PostTestPage({
       setMessages([]);
       messagesRef.current = [];
       setLatestAiQuestion('');
+      offlineEyeContactBaselineRef.current = null;
       setConnectionState('idle');
       setNotice('Post-Test completed locally and is pending sync.');
       onSessionModeChange(false);
@@ -597,9 +716,9 @@ export function PostTestPage({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          conversation: messages,
+          conversation: currentMessages,
           evaluation: {
-            ...evaluatePostTest(messages).evaluation,
+            ...evaluatePostTest(currentMessages).evaluation,
             eye_contact_score: eyeTracker.samples > 0 ? eyeTracker.score : null,
             eye_contact_samples: eyeTracker.samples,
           },
@@ -607,7 +726,7 @@ export function PostTestPage({
       });
       if (!response.ok) {
         const body = await response.json().catch(() => null);
-        throw new Error(body?.detail || 'Unable to complete the post-test interview.');
+        throw new Error(normalizeApiError(body, 'Unable to complete the post-test interview.'));
       }
       cancelListening();
       connectionAttemptRef.current += 1;
@@ -617,12 +736,12 @@ export function PostTestPage({
       wsRef.current = null;
       setConnectionState('idle');
       cancelSpeech();
-      const completedSession: Session = await response.json();
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
       setActiveSession(null);
       setMessages([]);
       setLatestAiQuestion('');
-      setNotice(`Post-Test session ${completedSession.id} completed.`);
+      offlineEyeContactBaselineRef.current = null;
+      setNotice('Post-Test completed.');
       void onActivityEnd('cloud_completed');
       onSessionModeChange(false);
       await loadSessions();
@@ -635,6 +754,7 @@ export function PostTestPage({
   };
 
   const visibleUserMessages = messages.filter(message => message.sender === 'user');
+  const answerBoundary = getPostTestAnswerBoundary(messages);
   const askedQuestionCount = messages.filter(message =>
     message.sender === 'ai' && !message.text.startsWith('You have completed all five Post-Test questions.')
   ).length;
@@ -655,9 +775,7 @@ export function PostTestPage({
             </button>
             <button
               onClick={completePostTest}
-              disabled={completing || (sessionMode === 'offline'
-                ? messages.filter(message => message.sender === 'user').length < 5
-                : !messages.some(message => message.sender === 'user'))}
+              disabled={completing || isSubmittingAnswer || isAiResponding || !answerBoundary.canComplete}
               className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
@@ -748,17 +866,17 @@ export function PostTestPage({
             <div className="mt-4 flex justify-center">
               <button
                 onClick={isListening ? stopListening : recordAndSendReply}
-                disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking}
+                disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking || isSubmittingAnswer || !answerBoundary.canAcceptAnswer}
                 className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
               >
                 {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
-                {isListening ? 'Stop Recording' : 'Speak Answer'}
+                {isListening ? 'Stop Recording' : answerBoundary.canAcceptAnswer ? 'Speak Answer' : 'All Answers Recorded'}
               </button>
             </div>
             {sessionMode === 'offline' && (
               <div className="mx-auto mt-4 flex max-w-2xl gap-2">
-                <textarea value={reply} onChange={event => setReply(event.target.value)} placeholder="Or type your answer while offline." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none" />
-                <button type="button" onClick={() => void sendReply()} disabled={!reply.trim() || visibleUserMessages.length >= 5} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Submit</button>
+                <textarea value={reply} onChange={event => setReply(event.target.value)} disabled={isListening || isSubmittingAnswer || !answerBoundary.canAcceptAnswer} placeholder={answerBoundary.canAcceptAnswer ? 'Or type your answer while offline.' : 'All five answers are recorded.'} className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none disabled:cursor-not-allowed disabled:opacity-60" />
+                <button type="button" onClick={() => void sendReply()} disabled={!reply.trim() || isListening || isSubmittingAnswer || !answerBoundary.canAcceptAnswer} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Submit</button>
               </div>
             )}
           </section>

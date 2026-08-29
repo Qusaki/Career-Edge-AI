@@ -9,7 +9,7 @@ from alembic.migration import MigrationContext
 from sqlalchemy.engine import make_url
 
 
-EXPECTED_REVISION = "a8d4e2f6b1c3"
+EXPECTED_REVISION = "b4e7d9c2a6f1"
 EXPECTED_TABLES = {
     "custom_skills_messages",
     "custom_skills_sessions",

@@ -31,3 +31,7 @@ class PreTestIntroSessionResponse(BaseModel):
 class PreTestIntroCompleteRequest(BaseModel):
     transcript: Optional[str] = None
     evaluation: dict
+
+
+class PreTestIntroResponseRequest(BaseModel):
+    transcript: str

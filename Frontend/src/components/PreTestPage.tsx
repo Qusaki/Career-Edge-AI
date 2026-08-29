@@ -7,6 +7,7 @@ import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } f
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
 import { createClientSessionId } from '../offline/sessionFoundation';
+import { combineEyeContactSummaries, type EyeContactSummary } from '../offline/eyeContact';
 import {
   getOfflineActiveListeningPrompt,
   getActiveListeningPromptForServerSession,
@@ -16,6 +17,7 @@ import {
   PRETEST_WHO_AM_I_VERSION,
 } from '../offline/questionPacks';
 import { evaluateActiveListening, evaluateWhoAmI } from '../offline/localEvaluation';
+import { normalizeApiError } from '../utils/httpError';
 
 type Session = {
   id: number | string;
@@ -26,12 +28,55 @@ type Session = {
   eye_contact_samples?: number | null;
   passed?: boolean | null;
   feedback_summary?: string | null;
+  transcript?: string | null;
 };
 
-type ChatMessage = {
+export type PreTestChatMessage = {
+  id?: number;
   sender: 'user' | 'ai';
   text: string;
 };
+
+type ChatMessage = PreTestChatMessage;
+
+export type InitialActiveListeningReplayResolution = {
+  completedText: string;
+  isHydratedReplay: boolean;
+  shouldAppend: boolean;
+};
+
+export const getInitialActiveListeningReplay = (
+  messages: readonly PreTestChatMessage[],
+): PreTestChatMessage | null => {
+  const latestMessage = messages[messages.length - 1];
+  if (latestMessage?.sender !== 'ai' || !latestMessage.text.trim()) return null;
+  return latestMessage;
+};
+
+export const resolveInitialActiveListeningReplay = (
+  expectedMessage: PreTestChatMessage | null,
+  serverMessageId: number | null,
+  streamedText: string,
+): InitialActiveListeningReplayResolution => {
+  const completedText = streamedText.trim();
+  const hasComparableIds = expectedMessage?.id !== undefined && serverMessageId !== null;
+  const isHydratedReplay = expectedMessage !== null && (
+    hasComparableIds
+      ? expectedMessage.id === serverMessageId
+      : expectedMessage.text.trim() === completedText
+  );
+  return {
+    completedText,
+    isHydratedReplay,
+    shouldAppend: completedText.length > 0 && !isHydratedReplay,
+  };
+};
+
+export const getVisibleActiveListeningMessages = (
+  messages: readonly PreTestChatMessage[],
+): PreTestChatMessage[] => messages.filter((message, index) =>
+  message.sender === 'user' || index > 0
+);
 
 type Exercise = {
   title: string;
@@ -107,12 +152,28 @@ export function PreTestPage({
   const messagesRef = useRef<ChatMessage[]>([]);
   const aiMessageOpenRef = useRef(false);
   const aiSpeechBufferRef = useRef('');
+  const initialActiveListeningReplayRef = useRef<PreTestChatMessage | null>(null);
+  const answerSubmissionInFlightRef = useRef(false);
   const activeListeningTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionAttemptRef = useRef(0);
   const lifecycleGenerationRef = useRef(0);
+  const offlineEyeContactBaselineRef = useRef<EyeContactSummary | null>(null);
+  const introTranscriptRef = useRef('');
+  const introPersistenceInFlightRef = useRef(false);
+  const [isSubmittingAnswer, setIsSubmittingAnswer] = useState(false);
+  const [isPersistingIntro, setIsPersistingIntro] = useState(false);
   const { isListening, startListening, stopListening, cancelListening, enableOfflineRecording } = useSpeechInput();
   const eyeTracker = useEyeContactTracker(Boolean(activeExercise && activeSession));
+  const getCheckpointEyeContactSummary = (): EyeContactSummary => {
+    const liveWindow: EyeContactSummary = {
+      score: eyeTracker.samples > 0 ? eyeTracker.score : null,
+      samples: eyeTracker.samples,
+    };
+    return sessionMode === 'offline'
+      ? combineEyeContactSummaries(offlineEyeContactBaselineRef.current, liveWindow)
+      : liveWindow;
+  };
 
   useEffect(() => {
     if (sessionMode !== 'offline' || !isListening || !activeSession || !activeExercise) return;
@@ -128,6 +189,7 @@ export function PreTestPage({
   }, [activeExercise, activeSession, enableOfflineRecording, isListening, onOfflineAudioCaptured, sessionMode]);
 
   useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useEffect(() => { introTranscriptRef.current = introTranscript; }, [introTranscript]);
 
   useEffect(() => {
     if (!resumeSession || resumedSessionRef.current === resumeSession.clientSessionId) return;
@@ -144,6 +206,9 @@ export function PreTestPage({
     );
     if (!exercise) return;
     const restoredMessages = resumeSession.conversationLog as ChatMessage[];
+    offlineEyeContactBaselineRef.current = resumeSession.eyeContactSummary
+      ? { ...resumeSession.eyeContactSummary }
+      : null;
     setVersionMismatch(false);
     setActiveExercise(exercise);
     setActiveSession({
@@ -274,6 +339,7 @@ export function PreTestPage({
     }
     aiMessageOpenRef.current = false;
     aiSpeechBufferRef.current = '';
+    initialActiveListeningReplayRef.current = getInitialActiveListeningReplay(messagesRef.current);
     setConnectionState('connecting');
     setError(null);
     setNotice(retryCount > 0 ? 'Reconnecting the audio interviewer…' : 'Connecting the audio interviewer…');
@@ -284,7 +350,7 @@ export function PreTestPage({
     socket.onopen = () => {
       if (!isCurrentAttempt()) return;
       setConnectionState('ready');
-      setNotice(`Active Listening session #${session.id} started. Listen to the story, then summarize it.`);
+      setNotice('Active Listening started. Listen to the story, then summarize it.');
       setIsAiResponding(true);
       socket.send(JSON.stringify({ text: '/start_exercise' }));
       clearActiveListeningTimeout();
@@ -292,9 +358,12 @@ export function PreTestPage({
         if (!isCurrentAttempt()) return;
         aiMessageOpenRef.current = false;
         aiSpeechBufferRef.current = '';
+        initialActiveListeningReplayRef.current = null;
+        answerSubmissionInFlightRef.current = false;
+        setIsSubmittingAnswer(false);
         setIsAiResponding(false);
         setConnectionState('error');
-        setError('The active listening prompt is taking too long to start. Ollama is reachable, but the local model may still be loading or generating slowly. Please try again.');
+        setError('The AI service is taking longer than expected. Please try again.');
         connectionAttemptRef.current += 1;
         wsRef.current = null;
         if (socket.readyState === WebSocket.OPEN) socket.close(1000);
@@ -303,51 +372,87 @@ export function PreTestPage({
 
     socket.onmessage = event => {
       if (!isCurrentAttempt()) return;
-      const data = JSON.parse(event.data);
-      if (data.type === 'turn_complete') {
+      const data: unknown = JSON.parse(event.data);
+      if (typeof data !== 'object' || data === null || Array.isArray(data)) return;
+      const eventType = 'type' in data && typeof data.type === 'string' ? data.type : '';
+      const responseText = 'text' in data && typeof data.text === 'string' ? data.text : '';
+      const serverMessageId = 'message_id' in data && typeof data.message_id === 'number'
+        ? data.message_id
+        : null;
+      if (eventType === 'turn_complete') {
         clearActiveListeningTimeout();
         aiMessageOpenRef.current = false;
         setIsAiResponding(false);
-        const completedQuestion = aiSpeechBufferRef.current.trim();
+        answerSubmissionInFlightRef.current = false;
+        setIsSubmittingAnswer(false);
+        const initialReplay = initialActiveListeningReplayRef.current;
+        const replayResolution = resolveInitialActiveListeningReplay(
+          initialReplay,
+          serverMessageId,
+          aiSpeechBufferRef.current,
+        );
+        initialActiveListeningReplayRef.current = null;
+        const completedQuestion = replayResolution.completedText;
+        if (initialReplay !== null && replayResolution.shouldAppend) {
+          const nextMessage: ChatMessage = {
+            id: serverMessageId ?? undefined,
+            sender: 'ai',
+            text: completedQuestion,
+          };
+          const nextMessages = [...messagesRef.current, nextMessage];
+          messagesRef.current = nextMessages;
+          setMessages(nextMessages);
+        } else if (initialReplay === null && serverMessageId !== null) {
+          const currentMessages = messagesRef.current;
+          const latestMessage = currentMessages[currentMessages.length - 1];
+          if (latestMessage?.sender === 'ai') {
+            const nextMessages = currentMessages.map((message, index) =>
+              index === currentMessages.length - 1 ? { ...message, id: serverMessageId } : message
+            );
+            messagesRef.current = nextMessages;
+            setMessages(nextMessages);
+          }
+        }
         if (completedQuestion) {
           speakText(completedQuestion);
           onActivityCheckpoint({
             conversationLog: messagesRef.current,
             currentQuestion: completedQuestion,
             responseCount: messagesRef.current.filter(message => message.sender === 'user').length,
-            eyeContactSummary: {
-              score: eyeTracker.samples > 0 ? eyeTracker.score : null,
-              samples: eyeTracker.samples,
-            },
+            eyeContactSummary: getCheckpointEyeContactSummary(),
           });
         }
         aiSpeechBufferRef.current = '';
         return;
       }
 
-      if (data.type === 'error') {
+      if (eventType === 'error') {
         clearActiveListeningTimeout();
         setConnectionState('error');
-        setError(data.message || 'The audio interviewer could not respond. Check that the backend service is running.');
+        setError(normalizeApiError(data, 'The audio interviewer could not respond. Check that the backend service is running.'));
         aiMessageOpenRef.current = false;
+        initialActiveListeningReplayRef.current = null;
+        answerSubmissionInFlightRef.current = false;
+        setIsSubmittingAnswer(false);
         setIsAiResponding(false);
         aiSpeechBufferRef.current = '';
         return;
       }
 
-      if (data.text) {
+      if (responseText) {
         clearActiveListeningTimeout();
         setIsAiResponding(true);
-        aiSpeechBufferRef.current += data.text;
+        aiSpeechBufferRef.current += responseText;
+        if (initialActiveListeningReplayRef.current !== null) return;
         setMessages(prev => {
           let next: ChatMessage[];
           if (aiMessageOpenRef.current && prev[prev.length - 1]?.sender === 'ai') {
             next = prev.map((message, index) =>
-              index === prev.length - 1 ? { ...message, text: message.text + data.text } : message
+              index === prev.length - 1 ? { ...message, text: message.text + responseText } : message
             );
           } else {
             aiMessageOpenRef.current = true;
-            next = [...prev, { sender: 'ai', text: data.text }];
+            next = [...prev, { sender: 'ai', text: responseText }];
           }
           messagesRef.current = next;
           return next;
@@ -364,6 +469,9 @@ export function PreTestPage({
       wsRef.current = null;
       clearActiveListeningTimeout();
       aiMessageOpenRef.current = false;
+      initialActiveListeningReplayRef.current = null;
+      answerSubmissionInFlightRef.current = false;
+      setIsSubmittingAnswer(false);
       setIsAiResponding(false);
       aiSpeechBufferRef.current = '';
       if (event.code === 1000) {
@@ -396,12 +504,16 @@ export function PreTestPage({
     setError(null);
     setNotice(null);
     setIntroTranscript('');
+    introTranscriptRef.current = '';
+    introPersistenceInFlightRef.current = false;
+    setIsPersistingIntro(false);
     setMessages([]);
     setReply('');
     setConnectionState('idle');
     cancelListening();
     try {
       if (!effectiveOnline) {
+        offlineEyeContactBaselineRef.current = null;
         const type = exercise.kind === 'intro' ? 'pre_test_intro' : 'pre_test_active_listening';
         const clientSessionId = createClientSessionId();
         const questionPackVersion = exercise.kind === 'intro'
@@ -439,6 +551,7 @@ export function PreTestPage({
         return;
       }
 
+      offlineEyeContactBaselineRef.current = null;
       const token = localStorage.getItem('token');
       if (!token) return;
       const response = await fetch(`${apiUrl}${exercise.endpoint}/start`, {
@@ -450,12 +563,40 @@ export function PreTestPage({
       });
       if (!response.ok) {
         const body = await response.json().catch(() => null);
-        throw new Error(body?.detail || `Unable to start ${exercise.title}.`);
+        throw new Error(normalizeApiError(body, `Unable to start ${exercise.title}.`));
       }
       const session: Session = await response.json();
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
+      const restoredIntroTranscript = exercise.kind === 'intro'
+        ? (session.transcript?.trim() || '')
+        : '';
+      if (exercise.kind === 'active-listening') {
+        messagesRef.current = [];
+        initialActiveListeningReplayRef.current = null;
+        const sessionDetailResponse = await fetch(`${apiUrl}${exercise.endpoint}/${session.id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!sessionDetailResponse.ok) {
+          const body = await sessionDetailResponse.json().catch(() => null);
+          throw new Error(normalizeApiError(body, 'Unable to restore the Active Listening conversation.'));
+        }
+        const sessionDetail: {
+          messages?: Array<{ id: number; role: string; content: string }>;
+        } = await sessionDetailResponse.json();
+        if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
+        const restoredMessages: ChatMessage[] = (sessionDetail.messages || []).map(message => {
+          const sender: ChatMessage['sender'] = message.role === 'ai' ? 'ai' : 'user';
+          return { id: message.id, sender, text: message.content };
+        });
+        messagesRef.current = restoredMessages;
+        setMessages(restoredMessages);
+      }
       setActiveExercise(exercise);
       setActiveSession(session);
+      if (exercise.kind === 'intro') {
+        introTranscriptRef.current = restoredIntroTranscript;
+        setIntroTranscript(restoredIntroTranscript);
+      }
       onSessionModeChange(true);
       const type = exercise.kind === 'intro' ? 'pre_test_intro' : 'pre_test_active_listening';
       const canonicalPrompt = exercise.kind === 'intro'
@@ -466,12 +607,21 @@ export function PreTestPage({
         serverSessionId: typeof session.id === 'number' ? session.id : null,
         questionPackVersion: exercise.kind === 'intro' ? PRETEST_WHO_AM_I_VERSION : PRETEST_ACTIVE_LISTENING_VERSION,
         currentQuestion: canonicalPrompt,
+        ...(exercise.kind === 'intro' ? {
+          currentStep: restoredIntroTranscript ? 1 : 0,
+          responseCount: restoredIntroTranscript ? 1 : 0,
+          answers: restoredIntroTranscript
+            ? [{ step: 1, text: restoredIntroTranscript, createdAt: Date.now() }]
+            : [],
+        } : {}),
         activityState: { exerciseKind: exercise.kind, exerciseTitle: exercise.title },
       });
       if (exercise.kind === 'active-listening') {
         connectActiveListeningChat(session);
+      } else if (restoredIntroTranscript) {
+        setNotice('Your saved Who Am I? response was restored. You can complete the exercise when ready.');
       } else {
-        setNotice(`Who Am I? session #${session.id} started. Use the mic to introduce yourself.`);
+        setNotice('Who Am I? started. Use the mic to introduce yourself.');
       }
       await loadSessions();
     } catch (err) {
@@ -494,6 +644,13 @@ export function PreTestPage({
     wsRef.current = null;
     aiMessageOpenRef.current = false;
     aiSpeechBufferRef.current = '';
+    initialActiveListeningReplayRef.current = null;
+    answerSubmissionInFlightRef.current = false;
+    offlineEyeContactBaselineRef.current = null;
+    introTranscriptRef.current = '';
+    introPersistenceInFlightRef.current = false;
+    setIsSubmittingAnswer(false);
+    setIsPersistingIntro(false);
     setActiveExercise(null);
     setActiveSession(null);
     setIntroTranscript('');
@@ -511,49 +668,114 @@ export function PreTestPage({
     const text = spokenText.trim();
     if (!text || isAiResponding) return;
     if (sessionMode !== 'offline' && (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)) return;
-    aiMessageOpenRef.current = false;
-    aiSpeechBufferRef.current = '';
-    const nextMessages = [...messagesRef.current, { sender: 'user' as const, text }];
-    const saved = await onActivityCheckpoint({
-      conversationLog: nextMessages,
-      responseCount: nextMessages.filter(message => message.sender === 'user').length,
-      answers: nextMessages
-        .filter(message => message.sender === 'user')
-        .map((message, index) => ({ step: index + 1, text: message.text, createdAt: Date.now() })),
-      eyeContactSummary: {
-        score: eyeTracker.samples > 0 ? eyeTracker.score : null,
-        samples: eyeTracker.samples,
-      },
-      pendingEvaluation: sessionMode === 'offline'
-        ? { aiFeedback: true, reason: 'Active Listening feedback requires server evaluation after sync.' }
-        : null,
-    });
-    if (!saved) return;
-    messagesRef.current = nextMessages;
-    setMessages(nextMessages);
-    if (sessionMode === 'offline') {
-      setReply('');
-      setNotice('Response saved locally. Detailed AI feedback is pending until this activity is synchronized.');
-      return;
+    const isOnlineSubmission = sessionMode !== 'offline';
+    if (isOnlineSubmission && answerSubmissionInFlightRef.current) return;
+    if (isOnlineSubmission) {
+      answerSubmissionInFlightRef.current = true;
+      setIsSubmittingAnswer(true);
     }
-    wsRef.current?.send(JSON.stringify({ text }));
+    let sentToServer = false;
+    try {
+      aiMessageOpenRef.current = false;
+      aiSpeechBufferRef.current = '';
+      const nextMessage: ChatMessage = { sender: 'user', text };
+      const nextMessages = [...messagesRef.current, nextMessage];
+      const saved = await onActivityCheckpoint({
+        conversationLog: nextMessages,
+        responseCount: nextMessages.filter(message => message.sender === 'user').length,
+        answers: nextMessages
+          .filter(message => message.sender === 'user')
+          .map((message, index) => ({ step: index + 1, text: message.text, createdAt: Date.now() })),
+        eyeContactSummary: getCheckpointEyeContactSummary(),
+        pendingEvaluation: sessionMode === 'offline'
+          ? { aiFeedback: true, reason: 'Active Listening feedback requires server evaluation after sync.' }
+          : null,
+      });
+      if (!saved) return;
+      messagesRef.current = nextMessages;
+      setMessages(nextMessages);
+      setReply('');
+      if (sessionMode === 'offline') {
+        setNotice('Response saved locally. Detailed AI feedback is pending until this activity is synchronized.');
+        return;
+      }
+      const socket = wsRef.current;
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        throw new Error('The audio interviewer disconnected before the response could be submitted.');
+      }
+      setIsAiResponding(true);
+      socket.send(JSON.stringify({ text }));
+      sentToServer = true;
+    } catch (submissionError) {
+      setError(submissionError instanceof Error ? submissionError.message : 'Unable to submit the Active Listening response.');
+    } finally {
+      if (isOnlineSubmission && !sentToServer) {
+        answerSubmissionInFlightRef.current = false;
+        setIsSubmittingAnswer(false);
+      }
+    }
   };
 
   const recordIntro = () => {
-    if (!activeExercise) return;
+    if (!activeExercise || !activeSession) return;
     setError(null);
     startListening(async transcript => {
-        const nextTranscript = [introTranscript, transcript].filter(Boolean).join(' ').trim();
-        const saved = await onActivityCheckpoint({
-          currentStep: 1,
-          responseCount: nextTranscript ? 1 : 0,
-          answers: nextTranscript ? [{ step: 1, text: nextTranscript, createdAt: Date.now() }] : [],
-          eyeContactSummary: {
-            score: eyeTracker.samples > 0 ? eyeTracker.score : null,
-            samples: eyeTracker.samples,
-          },
-        });
-        if (saved) setIntroTranscript(nextTranscript);
+      const nextTranscript = [introTranscriptRef.current, transcript].filter(Boolean).join(' ').trim();
+      if (!nextTranscript) return;
+      if (sessionMode !== 'offline') {
+        if (introPersistenceInFlightRef.current) return;
+        introPersistenceInFlightRef.current = true;
+        setIsPersistingIntro(true);
+        const lifecycleGeneration = lifecycleGenerationRef.current;
+        try {
+          const token = localStorage.getItem('token');
+          if (!token) return;
+          const response = await fetch(`${apiUrl}${activeExercise.endpoint}/${activeSession.id}/response`, {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ transcript: nextTranscript }),
+          });
+          if (!response.ok) {
+            const body = await response.json().catch(() => null);
+            throw new Error(normalizeApiError(body, 'Unable to save your Who Am I? response.'));
+          }
+          const persistedSession: Session = await response.json();
+          if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
+          const canonicalTranscript = persistedSession.transcript?.trim() || nextTranscript;
+          introTranscriptRef.current = canonicalTranscript;
+          setIntroTranscript(canonicalTranscript);
+          await onActivityCheckpoint({
+            currentStep: 1,
+            responseCount: 1,
+            answers: [{ step: 1, text: canonicalTranscript, createdAt: Date.now() }],
+            eyeContactSummary: getCheckpointEyeContactSummary(),
+          });
+          setNotice('Your Who Am I? response is saved. You can complete the exercise when ready.');
+        } catch (persistenceError) {
+          if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
+          setError(persistenceError instanceof Error ? persistenceError.message : 'Unable to save your Who Am I? response.');
+        } finally {
+          if (lifecycleGenerationRef.current === lifecycleGeneration) {
+            introPersistenceInFlightRef.current = false;
+            setIsPersistingIntro(false);
+          }
+        }
+        return;
+      }
+
+      const saved = await onActivityCheckpoint({
+        currentStep: 1,
+        responseCount: 1,
+        answers: [{ step: 1, text: nextTranscript, createdAt: Date.now() }],
+        eyeContactSummary: getCheckpointEyeContactSummary(),
+      });
+      if (saved) {
+        introTranscriptRef.current = nextTranscript;
+        setIntroTranscript(nextTranscript);
+      }
     }, setError, sessionMode === 'offline' && activeSession ? {
       enabled: true,
       activityType: activeExercise.kind === 'intro' ? 'pre_test_intro' : 'pre_test_active_listening',
@@ -570,10 +792,7 @@ export function PreTestPage({
       currentStep: 1,
       responseCount: 1,
       answers: [{ step: 1, text, createdAt: Date.now() }],
-      eyeContactSummary: {
-        score: eyeTracker.samples > 0 ? eyeTracker.score : null,
-        samples: eyeTracker.samples,
-      },
+      eyeContactSummary: getCheckpointEyeContactSummary(),
     });
   };
 
@@ -591,6 +810,7 @@ export function PreTestPage({
 
   const completeActiveExercise = async () => {
     if (!activeSession || !activeExercise) return;
+    if (activeExercise.kind === 'intro' && introPersistenceInFlightRef.current) return;
     if (sessionMode === 'offline') {
       setCompleting(true);
       setError(null);
@@ -610,10 +830,7 @@ export function PreTestPage({
           aiFeedback: true,
           reason: 'Summary accuracy and detailed AI feedback require server evaluation after sync.',
         },
-        eyeContactSummary: {
-          score: eyeTracker.samples > 0 ? eyeTracker.score : null,
-          samples: eyeTracker.samples,
-        },
+        eyeContactSummary: getCheckpointEyeContactSummary(),
       });
       if (!checkpointSaved || !await onActivityEnd('completed_local')) {
         setCompleting(false);
@@ -624,6 +841,8 @@ export function PreTestPage({
       setActiveSession(null);
       setMessages([]);
       messagesRef.current = [];
+      offlineEyeContactBaselineRef.current = null;
+      introTranscriptRef.current = '';
       setIntroTranscript('');
       setConnectionState('idle');
       setNotice(`${activeExercise.title} completed locally and is pending sync.`);
@@ -664,7 +883,7 @@ export function PreTestPage({
       });
       if (!response.ok) {
         const body = await response.json().catch(() => null);
-        throw new Error(body?.detail || `Unable to complete ${activeExercise.title}.`);
+        throw new Error(normalizeApiError(body, `Unable to complete ${activeExercise.title}.`));
       }
       cancelListening();
       connectionAttemptRef.current += 1;
@@ -672,14 +891,20 @@ export function PreTestPage({
       reconnectTimeoutRef.current = null;
       wsRef.current?.close(1000, 'Exercise completed.');
       wsRef.current = null;
+      initialActiveListeningReplayRef.current = null;
+      answerSubmissionInFlightRef.current = false;
+      offlineEyeContactBaselineRef.current = null;
+      introTranscriptRef.current = '';
+      introPersistenceInFlightRef.current = false;
+      setIsSubmittingAnswer(false);
+      setIsPersistingIntro(false);
       setConnectionState('idle');
-      const completedSession: Session = await response.json();
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
       setActiveExercise(null);
       setActiveSession(null);
       setMessages([]);
       setIntroTranscript('');
-      setNotice(`${activeExercise.title} session #${completedSession.id} completed.`);
+      setNotice(`${activeExercise.title} completed.`);
       void onActivityEnd('cloud_completed');
       onSessionModeChange(false);
       await loadSessions();
@@ -691,7 +916,7 @@ export function PreTestPage({
     }
   };
 
-  const visibleActiveListeningMessages = messages.filter(message => message.sender === 'user');
+  const visibleActiveListeningMessages = getVisibleActiveListeningMessages(messages);
 
   if (activeExercise && activeSession) {
     return (
@@ -708,7 +933,9 @@ export function PreTestPage({
             </button>
             <button
               onClick={completeActiveExercise}
-              disabled={completing || (activeExercise.kind === 'intro' ? !introTranscript.trim() : !messages.some(message => message.sender === 'user'))}
+              disabled={completing || (activeExercise.kind === 'intro'
+                ? isPersistingIntro || !introTranscript.trim()
+                : isSubmittingAnswer || isAiResponding || !messages.some(message => message.sender === 'user'))}
               className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
@@ -719,7 +946,7 @@ export function PreTestPage({
           <section className="flex-1 rounded-lg border border-line bg-card p-5">
             <div className="mb-4">
               <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Pre-Test Session</p>
-              <h1 className="text-3xl font-bold tracking-tight text-ink">{activeExercise.title} #{activeSession.id}</h1>
+              <h1 className="text-3xl font-bold tracking-tight text-ink">{activeExercise.kind === 'active-listening' ? 'Active Listening' : activeExercise.title}</h1>
               <p className="mt-1 text-sm text-muted">
                 {activeExercise.kind === 'intro'
                   ? 'Introduce yourself clearly, completely, and concisely.'
@@ -768,6 +995,7 @@ export function PreTestPage({
                 <div className="mt-4 flex justify-center">
                   <button
                     onClick={isListening ? stopListening : recordIntro}
+                    disabled={isPersistingIntro}
                     className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
@@ -809,9 +1037,11 @@ export function PreTestPage({
                       )}
                     </div>
                   ) : visibleActiveListeningMessages.map((message, index) => (
-                    <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div key={message.id ?? index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                       <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'program-accent-fill' : 'border border-line bg-card text-ink'}`}>
-                        <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">You</p>
+                        <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">
+                          {message.sender === 'user' ? 'You' : 'Professor Maxiel'}
+                        </p>
                         {message.text}
                       </div>
                     </div>
@@ -821,7 +1051,7 @@ export function PreTestPage({
                 <div className="mt-3 flex justify-center">
                   <button
                     onClick={isListening ? stopListening : recordAndSendReply}
-                    disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking}
+                    disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking || isSubmittingAnswer}
                     className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
@@ -862,7 +1092,7 @@ export function PreTestPage({
         <section className="rounded-lg border border-line bg-card p-5">
           <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
             <div>
-              <h2 className="text-xl font-bold text-ink">{activeExercise.title} #{activeSession.id}</h2>
+              <h2 className="text-xl font-bold text-ink">{activeExercise.kind === 'active-listening' ? 'Active Listening' : activeExercise.title}</h2>
               <p className="mt-1 text-sm text-muted">
                 {activeExercise.kind === 'intro'
                   ? 'Introduce yourself clearly, completely, and concisely.'
@@ -871,7 +1101,9 @@ export function PreTestPage({
             </div>
             <button
               onClick={completeActiveExercise}
-              disabled={completing || (activeExercise.kind === 'intro' ? !introTranscript.trim() : !messages.some(message => message.sender === 'user'))}
+              disabled={completing || (activeExercise.kind === 'intro'
+                ? isPersistingIntro || !introTranscript.trim()
+                : isSubmittingAnswer || isAiResponding || !messages.some(message => message.sender === 'user'))}
               className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
@@ -893,6 +1125,7 @@ export function PreTestPage({
               <div className="mt-4 flex justify-center">
                 <button
                   onClick={isListening ? stopListening : recordIntro}
+                  disabled={isPersistingIntro}
                   className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                 >
                   {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
@@ -918,9 +1151,11 @@ export function PreTestPage({
                     )}
                   </div>
                 ) : visibleActiveListeningMessages.map((message, index) => (
-                  <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div key={message.id ?? index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'program-accent-fill' : 'border border-line bg-card text-ink'}`}>
-                      <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">You</p>
+                      <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">
+                        {message.sender === 'user' ? 'You' : 'Professor Maxiel'}
+                      </p>
                       {message.text}
                     </div>
                   </div>
@@ -930,7 +1165,7 @@ export function PreTestPage({
               <div className="mt-4 flex justify-center">
                 <button
                   onClick={isListening ? stopListening : recordAndSendReply}
-                  disabled={isAiResponding}
+                  disabled={isAiResponding || isSubmittingAnswer}
                   className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                 >
                   {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}

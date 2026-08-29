@@ -1,7 +1,7 @@
 import json
 import random
 import datetime
-from typing import List
+from typing import Callable, List
 # pyrefly: ignore [missing-import]
 from fastapi import APIRouter, HTTPException, Depends
 # pyrefly: ignore [missing-import]
@@ -12,7 +12,7 @@ from core.deps import get_current_user
 from core.drill_scoring import calculate_drill_score
 from models.user import User
 from models.drills import DrillSession
-from schemas.drills import DrillSessionResponse, DrillStartRequest, DrillCompleteRequest, NegotiationTurnRequest
+from schemas.drills import DrillCompleteRequest, DrillPrompt, DrillSessionResponse, DrillStartRequest, NegotiationTurnRequest
 
 router = APIRouter()
 
@@ -146,6 +146,77 @@ def generate_crisis():
         "questions": random.sample(reporter_questions, 4)
     }
 
+
+def generate_negotiation_prompt() -> DrillPrompt:
+    return {
+        "scenario": "You are negotiating a starting salary. The employer opens with ₱35,000 and is strict about the budget.",
+        "instruction": "Reply professionally. You can accept, negotiate salary, or ask about benefits.",
+    }
+
+
+DRILL_LEVEL_BY_TYPE = {
+    "jam": "easy",
+    "fast_word": "easy",
+    "emotion": "medium",
+    "synonym": "medium",
+    "fake_profile": "medium",
+    "emoji_story": "medium",
+    "taboo": "hard",
+    "elevator_pitch": "hard",
+    "rephrase": "hard",
+    "positive_framing": "medium",
+    "negotiation": "hard",
+    "crisis": "hard",
+}
+
+DRILL_PROMPT_GENERATORS: dict[str, Callable[[], DrillPrompt]] = {
+    "jam": generate_jam_topic,
+    "fast_word": generate_fast_word,
+    "emotion": generate_emotion_sentence,
+    "synonym": generate_synonym_word,
+    "fake_profile": generate_fake_profile,
+    "emoji_story": generate_emojis,
+    "taboo": generate_taboo_words,
+    "elevator_pitch": generate_elevator_pitch,
+    "rephrase": generate_rephrase,
+    "positive_framing": generate_positive_framing,
+    "negotiation": generate_negotiation_prompt,
+    "crisis": generate_crisis,
+}
+
+
+def generate_drill_prompt(drill_level: str, drill_type: str) -> DrillPrompt:
+    expected_level = DRILL_LEVEL_BY_TYPE.get(drill_type)
+    generator = DRILL_PROMPT_GENERATORS.get(drill_type)
+    if generator is None or expected_level != drill_level:
+        raise ValueError("Unsupported Drill level/type combination.")
+    return generator()
+
+
+def require_drill_prompt(drill_level: str, drill_type: str) -> DrillPrompt:
+    try:
+        return generate_drill_prompt(drill_level, drill_type)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+def initialize_legacy_canonical_prompt(session_id: int, db: Session) -> DrillSession:
+    locked_session = (
+        db.query(DrillSession)
+        .filter(DrillSession.id == session_id)
+        .populate_existing()
+        .with_for_update()
+        .one()
+    )
+    if locked_session.canonical_prompt is None:
+        locked_session.canonical_prompt = require_drill_prompt(
+            locked_session.drill_level,
+            locked_session.drill_type,
+        )
+        db.commit()
+        db.refresh(locked_session)
+    return locked_session
+
 @router.post("/hard/negotiation/turn")
 def negotiation_turn(request: NegotiationTurnRequest):
     """Simple logic tree to simulate a negotiation bot."""
@@ -206,6 +277,8 @@ def start_drill_session(request: DrillStartRequest, db: Session = Depends(get_db
     if active_session:
         now = datetime.datetime.utcnow()
         if (now - active_session.start_time).total_seconds() <= 3600:
+            if active_session.canonical_prompt is None:
+                return initialize_legacy_canonical_prompt(active_session.id, db)
             return active_session
 
         active_session.status = "expired"
@@ -215,7 +288,8 @@ def start_drill_session(request: DrillStartRequest, db: Session = Depends(get_db
     session = DrillSession(
         user_id=current_user.id,
         drill_level=request.drill_level,
-        drill_type=request.drill_type
+        drill_type=request.drill_type,
+        canonical_prompt=require_drill_prompt(request.drill_level, request.drill_type),
     )
     db.add(session)
     db.commit()
@@ -239,7 +313,12 @@ def get_user_drill_sessions(db: Session = Depends(get_db), current_user: User = 
 @router.post("/{session_id}/complete", response_model=DrillSessionResponse)
 def complete_drill_session(session_id: int, request: DrillCompleteRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Completes the drill session and saves evaluation data."""
-    session = db.query(DrillSession).filter(DrillSession.id == session_id, DrillSession.user_id == current_user.id).first()
+    session = (
+        db.query(DrillSession)
+        .filter(DrillSession.id == session_id, DrillSession.user_id == current_user.id)
+        .with_for_update()
+        .first()
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Drill session not found.")
         
@@ -249,8 +328,13 @@ def complete_drill_session(session_id: int, request: DrillCompleteRequest, db: S
     if not request.evaluation_data:
         raise HTTPException(status_code=400, detail="Missing Drill response data.")
 
+    evaluation_data = dict(request.evaluation_data)
+    if session.canonical_prompt is None:
+        session.canonical_prompt = require_drill_prompt(session.drill_level, session.drill_type)
+    evaluation_data["prompt"] = session.canonical_prompt
+
     try:
-        apply_drill_score(session, request.evaluation_data)
+        apply_drill_score(session, evaluation_data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 

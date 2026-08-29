@@ -7,6 +7,7 @@ import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
 import { createClientSessionId } from '../offline/sessionFoundation';
 import { evaluateDrill, getOfflineNegotiationTurn } from '../offline/localEvaluation';
 import { DRILLS_VERSION, getOfflineDrillPrompt, hasCurrentQuestionPack, NEGOTIATION_OPENING_PROMPT } from '../offline/questionPacks';
+import { normalizeApiError } from '../utils/httpError';
 
 type DrillSession = {
   id: number | string;
@@ -18,6 +19,7 @@ type DrillSession = {
   score?: number | null;
   passed?: boolean | null;
   feedback_summary?: string | null;
+  canonical_prompt?: Record<string, string | number | string[]> | null;
   evaluation_data?: string | null;
 };
 
@@ -26,7 +28,6 @@ type Drill = {
   description: string;
   drillLevel: string;
   drillType: string;
-  generatorEndpoint?: string;
   isNegotiation?: boolean;
 };
 
@@ -41,70 +42,60 @@ const drills: Drill[] = [
     description: 'Build fluency by speaking clearly about a surprise topic.',
     drillLevel: 'easy',
     drillType: 'jam',
-    generatorEndpoint: '/drills/generate/jam',
   },
   {
     title: 'Fast Word Response',
     description: 'Practice quick, confident answers from a single cue word.',
     drillLevel: 'easy',
     drillType: 'fast_word',
-    generatorEndpoint: '/drills/generate/fast-word',
   },
   {
     title: 'Emotion Delivery',
     description: 'Improve tone control by saying a sentence with a target emotion.',
     drillLevel: 'medium',
     drillType: 'emotion',
-    generatorEndpoint: '/drills/generate/emotion',
   },
   {
     title: 'Synonym Sprint',
     description: 'Quickly give alternatives for a word to widen your vocabulary.',
     drillLevel: 'medium',
     drillType: 'synonym',
-    generatorEndpoint: '/drills/generate/synonym',
   },
   {
     title: 'Fake Profile Pitch',
     description: 'Create a short introduction from a generated profile.',
     drillLevel: 'medium',
     drillType: 'fake_profile',
-    generatorEndpoint: '/drills/generate/fake-profile',
   },
   {
     title: 'Emoji Story',
     description: 'Turn random emojis into a coherent spoken story.',
     drillLevel: 'medium',
     drillType: 'emoji_story',
-    generatorEndpoint: '/drills/generate/emojis',
   },
   {
     title: 'Taboo Explainer',
     description: 'Explain a topic clearly without using the banned words.',
     drillLevel: 'hard',
     drillType: 'taboo',
-    generatorEndpoint: '/drills/generate/taboo',
   },
   {
     title: 'Elevator Pitch',
     description: 'Practice a persuasive answer under pressure.',
     drillLevel: 'hard',
     drillType: 'elevator_pitch',
-    generatorEndpoint: '/drills/generate/elevator-pitch',
   },
   {
     title: 'Plain-Language Rephrase',
     description: 'Rewrite complex language into something clear and professional.',
     drillLevel: 'hard',
     drillType: 'rephrase',
-    generatorEndpoint: '/drills/generate/rephrase',
   },
   {
     title: 'Positive Framing',
     description: 'Turn tense feedback into calm, professional language.',
     drillLevel: 'medium',
     drillType: 'positive_framing',
-    generatorEndpoint: '/drills/generate/positive-framing',
   },
   {
     title: 'Salary Negotiation',
@@ -118,13 +109,11 @@ const drills: Drill[] = [
     description: 'Handle difficult questions with composure and structure.',
     drillLevel: 'hard',
     drillType: 'crisis',
-    generatorEndpoint: '/drills/generate/hard/crisis',
   },
 ];
 
-const formatPrompt = (prompt: unknown) => {
-  if (!prompt || typeof prompt !== 'object') return String(prompt ?? '');
-  return Object.entries(prompt as Record<string, unknown>).map(([key, value]) => {
+const formatPrompt = (prompt: Record<string, unknown>) => {
+  return Object.entries(prompt).map(([key, value]) => {
     const label = key.replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
     const formattedValue = Array.isArray(value) ? value.join(', ') : String(value);
     return `${label}: ${formattedValue}`;
@@ -329,19 +318,6 @@ export function DrillsPage({
 
       const token = localStorage.getItem('token');
       if (!token) return;
-      const promptResponse = drill.generatorEndpoint
-        ? await fetch(`${apiUrl}${drill.generatorEndpoint}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        : null;
-      if (exerciseGenerationRef.current !== attemptId) return;
-      if (promptResponse && !promptResponse.ok) throw new Error(`Unable to generate a prompt for ${drill.title}.`);
-
-      const prompt = promptResponse ? await promptResponse.json() : {
-        scenario: 'You are negotiating a starting salary. The employer opens with ₱35,000 and is strict about the budget.',
-        instruction: 'Reply professionally. You can accept, negotiate salary, or ask about benefits.',
-      };
-      if (exerciseGenerationRef.current !== attemptId) return;
       const sessionResponse = await fetch(`${apiUrl}/drills/start`, {
         method: 'POST',
         headers: {
@@ -356,12 +332,15 @@ export function DrillsPage({
       if (exerciseGenerationRef.current !== attemptId) return;
       if (!sessionResponse.ok) {
         const body = await sessionResponse.json().catch(() => null);
-        throw new Error(body?.detail || `Unable to start ${drill.title}.`);
+        throw new Error(normalizeApiError(body, `Unable to start ${drill.title}.`));
       }
 
       const session: DrillSession = await sessionResponse.json();
       if (exerciseGenerationRef.current !== attemptId) return;
-      const formattedPrompt = formatPrompt(prompt);
+      if (!session.canonical_prompt) {
+        throw new Error(`The server did not return a canonical prompt for ${drill.title}.`);
+      }
+      const formattedPrompt = formatPrompt(session.canonical_prompt);
       setActiveSession(session);
       setActivePrompt(formattedPrompt);
       if (drill.isNegotiation) {
@@ -376,7 +355,7 @@ export function DrillsPage({
       } else {
         speakText(formattedPrompt);
       }
-      setNotice(`${drill.title} session #${session.id} is ready.`);
+      setNotice(`${drill.title} is ready.`);
       void onActivityStart({
         type: 'drill',
         serverSessionId: typeof session.id === 'number' ? session.id : null,
@@ -644,7 +623,6 @@ export function DrillsPage({
         },
         body: JSON.stringify({
           evaluation_data: {
-            prompt: activePrompt,
             spoken_response: spokenResponse || undefined,
             negotiation_messages: negotiationMessages.length > 0 ? negotiationMessages : undefined,
             current_offer: negotiationMessages.length > 0 ? currentOffer : undefined,
@@ -653,13 +631,13 @@ export function DrillsPage({
       });
       if (!response.ok) {
         const body = await response.json().catch(() => null);
-        throw new Error(body?.detail || 'Unable to complete the drill session.');
+        throw new Error(normalizeApiError(body, 'Unable to complete the drill session.'));
       }
-      const completedSession: DrillSession = await response.json();
+      await response.json();
       if (exerciseGenerationRef.current !== attemptId) return;
       cancelListening();
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-      setNotice(`Drill session #${completedSession.id} was marked complete.`);
+      setNotice('Drill was marked complete.');
       void onActivityEnd('cloud_completed');
       setActiveSession(null);
       setActivePrompt('');
@@ -707,7 +685,7 @@ export function DrillsPage({
                 <Sparkles className="h-6 w-6" />
               </div>
               <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Drill Session</p>
-              <h1 className="text-3xl font-bold tracking-tight text-ink">Current Drill #{activeSession.id}</h1>
+              <h1 className="text-3xl font-bold tracking-tight text-ink">Current Drill</h1>
               <p className="text-program-accent mt-1 text-sm font-bold uppercase tracking-wider">
                 {activeSession.drill_level} · {activeSession.drill_type.replace(/_/g, ' ')}
               </p>

@@ -26,7 +26,12 @@ class PreTestActiveListeningSession(Base):
     passed = Column(Boolean, nullable=True)
     feedback_summary = Column(String, nullable=True)
     
-    messages = relationship("PreTestActiveListeningMessage", back_populates="session", cascade="all, delete-orphan")
+    messages = relationship(
+        "PreTestActiveListeningMessage",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="PreTestActiveListeningMessage.id",
+    )
 
 
 class PreTestActiveListeningMessage(Base):
