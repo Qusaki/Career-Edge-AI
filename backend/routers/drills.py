@@ -9,10 +9,17 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from core.deps import get_current_user
+from core.drill_progression import (
+    DRILL_LEVEL_BY_TYPE,
+    build_drill_progress,
+    get_completed_drill_types,
+    get_drill_lock_message,
+    is_drill_level_unlocked,
+)
 from core.drill_scoring import calculate_drill_score
 from models.user import User
 from models.drills import DrillSession
-from schemas.drills import DrillCompleteRequest, DrillPrompt, DrillSessionResponse, DrillStartRequest, NegotiationTurnRequest
+from schemas.drills import DrillCompleteRequest, DrillProgressResponse, DrillPrompt, DrillSessionResponse, DrillStartRequest, NegotiationTurnRequest
 
 router = APIRouter()
 
@@ -165,21 +172,6 @@ def generate_negotiation_prompt() -> DrillPrompt:
     }
 
 
-DRILL_LEVEL_BY_TYPE = {
-    "jam": "easy",
-    "fast_word": "easy",
-    "emotion": "medium",
-    "synonym": "medium",
-    "fake_profile": "medium",
-    "emoji_story": "medium",
-    "taboo": "hard",
-    "elevator_pitch": "hard",
-    "rephrase": "hard",
-    "positive_framing": "medium",
-    "negotiation": "hard",
-    "crisis": "hard",
-}
-
 DRILL_PROMPT_GENERATORS: dict[str, Callable[[], DrillPrompt]] = {
     "jam": generate_jam_topic,
     "fast_word": generate_fast_word,
@@ -279,6 +271,9 @@ def negotiation_turn(request: NegotiationTurnRequest):
 @router.post("/start", response_model=DrillSessionResponse)
 def start_drill_session(request: DrillStartRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Starts or resumes the active drill session for this drill."""
+    if DRILL_LEVEL_BY_TYPE.get(request.drill_type) != request.drill_level:
+        raise HTTPException(status_code=422, detail="Unsupported Drill level/type combination.")
+
     active_session = db.query(DrillSession).filter(
         DrillSession.user_id == current_user.id,
         DrillSession.drill_level == request.drill_level,
@@ -296,6 +291,13 @@ def start_drill_session(request: DrillStartRequest, db: Session = Depends(get_db
         active_session.end_time = now
         db.commit()
 
+    completed_types = get_completed_drill_types(db, current_user.id)
+    if not is_drill_level_unlocked(request.drill_level, completed_types):
+        raise HTTPException(
+            status_code=403,
+            detail=get_drill_lock_message(request.drill_level),
+        )
+
     session = DrillSession(
         user_id=current_user.id,
         drill_level=request.drill_level,
@@ -306,6 +308,12 @@ def start_drill_session(request: DrillStartRequest, db: Session = Depends(get_db
     db.commit()
     db.refresh(session)
     return session
+
+
+@router.get("/progress", response_model=DrillProgressResponse)
+def get_user_drill_progress(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Returns per-user progression derived from unique completed Drill types."""
+    return DrillProgressResponse(**build_drill_progress(db, current_user.id))
 
 @router.get("/", response_model=List[DrillSessionResponse])
 def get_user_drill_sessions(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

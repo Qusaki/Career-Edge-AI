@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Dumbbell, LoaderCircle, Mic, MicOff, RefreshCw, Sparkles, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Dumbbell, LoaderCircle, Lock, Mic, MicOff, RefreshCw, Sparkles } from 'lucide-react';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
@@ -28,13 +28,24 @@ type DrillSession = {
   evaluation_data?: string | null;
 };
 
+type DrillLevel = 'easy' | 'medium' | 'hard';
+
 type Drill = {
   title: string;
   description: string;
-  drillLevel: string;
+  drillLevel: DrillLevel;
   drillType: string;
   isNegotiation?: boolean;
 };
+
+type DrillLevelProgress = {
+  unlocked: boolean;
+  completed: number;
+  total: number;
+  completed_types: string[];
+};
+
+type DrillProgress = Record<DrillLevel, DrillLevelProgress>;
 
 type NegotiationMessage = {
   sender: 'user' | 'bot';
@@ -117,6 +128,33 @@ const drills: Drill[] = [
   },
 ];
 
+const drillLevels: DrillLevel[] = ['easy', 'medium', 'hard'];
+
+const createInitialProgress = (): DrillProgress => ({
+  easy: {
+    unlocked: true,
+    completed: 0,
+    total: drills.filter(drill => drill.drillLevel === 'easy').length,
+    completed_types: [],
+  },
+  medium: {
+    unlocked: false,
+    completed: 0,
+    total: drills.filter(drill => drill.drillLevel === 'medium').length,
+    completed_types: [],
+  },
+  hard: {
+    unlocked: false,
+    completed: 0,
+    total: drills.filter(drill => drill.drillLevel === 'hard').length,
+    completed_types: [],
+  },
+});
+
+const getLockedLevelCopy = (level: DrillLevel) => level === 'medium'
+  ? 'Complete all Easy drills to unlock.'
+  : 'Complete all Medium drills to unlock.';
+
 const formatPrompt = (prompt: Record<string, unknown>) => {
   return Object.entries(prompt).map(([key, value]) => {
     const label = key.replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
@@ -142,6 +180,7 @@ export function DrillsPage({
   onOfflineAudioCaptured,
 }: DrillsPageProps) {
   const [sessions, setSessions] = useState<DrillSession[]>([]);
+  const [progress, setProgress] = useState<DrillProgress>(createInitialProgress);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState<string | null>(null);
   const [completing, setCompleting] = useState<number | string | null>(null);
@@ -273,11 +312,20 @@ export function DrillsPage({
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${apiUrl}/drills/`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) throw new Error('Unable to load drill sessions.');
-      setSessions(await response.json());
+      const headers = { Authorization: `Bearer ${token}` };
+      const [sessionsResponse, progressResponse] = await Promise.all([
+        fetch(`${apiUrl}/drills/`, { headers }),
+        fetch(`${apiUrl}/drills/progress`, { headers }),
+      ]);
+      if (!sessionsResponse.ok || !progressResponse.ok) {
+        throw new Error('Unable to load Drill progress.');
+      }
+      const [sessionData, progressData]: [DrillSession[], DrillProgress] = await Promise.all([
+        sessionsResponse.json(),
+        progressResponse.json(),
+      ]);
+      setSessions(sessionData);
+      setProgress(progressData);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load drill sessions.');
     } finally {
@@ -294,6 +342,10 @@ export function DrillsPage({
   }, [cancelListening]);
 
   const startDrill = async (drill: Drill) => {
+    if (!progress[drill.drillLevel].unlocked) {
+      setError(getLockedLevelCopy(drill.drillLevel));
+      return;
+    }
     const attemptId = exerciseGenerationRef.current + 1;
     exerciseGenerationRef.current = attemptId;
     setStarting(drill.drillType);
@@ -653,7 +705,7 @@ export function DrillsPage({
         setCurrentOffer(35000);
         setNegotiationGameOver(false);
         offlineEyeContactBaselineRef.current = null;
-        setNotice('Drill completed locally and is pending sync.');
+        setNotice('Drill completed locally and is pending sync. Higher levels unlock after server synchronization.');
         onSessionModeChange(false);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unable to calculate the provisional Drill score.');
@@ -869,27 +921,70 @@ export function DrillsPage({
         </div>
       )}
 
-      <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {drills.map(drill => (
-          <article key={drill.drillType} className="flex flex-col justify-between rounded-lg border border-line bg-card p-5">
-            <div>
-              <div className="program-accent-surface mb-4 flex h-11 w-11 items-center justify-center rounded-lg">
-                <Dumbbell className="h-6 w-6" />
+      <section className="space-y-4">
+        {drillLevels.map(level => {
+          const levelProgress = progress[level];
+          const levelDrills = drills.filter(drill => drill.drillLevel === level);
+          const isLocked = !levelProgress.unlocked;
+          return (
+            <article key={level} className={`rounded-lg border p-5 ${isLocked ? 'border-dashed border-line bg-background' : 'border-line bg-card'}`}>
+              <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${isLocked ? 'border border-line bg-card text-muted' : 'program-accent-surface'}`}>
+                    {isLocked ? <Lock className="h-5 w-5" aria-hidden="true" /> : <Dumbbell className="h-6 w-6" aria-hidden="true" />}
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-xl font-bold capitalize text-ink">{level}</h2>
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${isLocked ? 'border border-line text-muted' : 'program-accent-surface'}`}>
+                        {isLocked ? 'Locked' : 'Unlocked'}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm font-medium text-muted">
+                      {levelProgress.completed} / {levelProgress.total} drills completed
+                    </p>
+                    {isLocked && <p className="mt-1 text-sm text-muted">{getLockedLevelCopy(level)}</p>}
+                  </div>
+                </div>
               </div>
-              <h2 className="text-xl font-bold text-ink">{drill.title}</h2>
-              <p className="mt-2 leading-relaxed text-muted">{drill.description}</p>
-              <p className="text-program-accent mt-3 text-xs font-bold uppercase tracking-wider">{drill.drillLevel}</p>
-            </div>
-            <button
-              onClick={() => startDrill(drill)}
-              disabled={starting !== null || completing !== null}
-              className="program-accent-button mt-6 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {starting === drill.drillType ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <ArrowRight className="h-5 w-5" />}
-              {starting === drill.drillType ? 'Starting…' : 'Start Drill'}
-            </button>
-          </article>
-        ))}
+
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                {levelDrills.map(drill => {
+                  const isCompleted = levelProgress.completed_types.includes(drill.drillType);
+                  return (
+                    <div key={drill.drillType} className="flex flex-col justify-between rounded-lg border border-line bg-card p-4">
+                      <div>
+                        <div className="flex items-start justify-between gap-3">
+                          <h3 className="font-bold text-ink">{drill.title}</h3>
+                          <span className={`flex shrink-0 items-center gap-1 text-xs font-bold ${isCompleted ? 'text-success' : 'text-muted'}`}>
+                            {isCompleted ? <Check className="h-4 w-4" aria-hidden="true" /> : <span aria-hidden="true">○</span>}
+                            {isCompleted ? 'Completed' : 'Not completed'}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-sm leading-relaxed text-muted">{drill.description}</p>
+                      </div>
+                      <button
+                        onClick={() => startDrill(drill)}
+                        disabled={isLocked || starting !== null || completing !== null}
+                        className={`mt-4 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed ${isLocked ? 'border border-line bg-background text-muted opacity-70' : 'program-accent-button disabled:opacity-60'}`}
+                        aria-label={isLocked ? `${drill.title} is locked` : undefined}
+                      >
+                        {isLocked ? (
+                          <Lock className="h-5 w-5" aria-hidden="true" />
+                        ) : starting === drill.drillType ? (
+                          <LoaderCircle className="h-5 w-5 animate-spin" />
+                        ) : (
+                          <ArrowRight className="h-5 w-5" />
+                        )}
+                        {isLocked ? 'Locked' : starting === drill.drillType ? 'Starting…' : isCompleted ? 'Replay Drill' : 'Start Drill'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </article>
+          );
+        })}
       </section>
 
       <section className="mt-6">

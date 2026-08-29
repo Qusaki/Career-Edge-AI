@@ -302,6 +302,48 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["authoritative_result"]["score"], 76.67)
 
+    def test_locked_offline_drill_cannot_bypass_server_progression(self):
+        payload = {
+            "client_session_id": "locked-medium-drill",
+            "activity_type": "drill",
+            "question_pack_version": "drills-v1",
+            "answers": [{"step": 1, "text": "calm confident response"}],
+            "conversation_log": [],
+            "activity_state": {"drillType": "emotion", "drillLevel": "medium"},
+        }
+
+        response = self.client.post("/offline-sync", json=payload)
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "drill_level_locked")
+        self.assertEqual(
+            response.json()["detail"]["message"],
+            "Complete all Easy drills before unlocking Medium.",
+        )
+        with self.Session() as db:
+            self.assertEqual(db.query(DrillSession).count(), 0)
+
+    def test_synchronized_prerequisites_allow_next_offline_level(self):
+        with self.Session() as db:
+            db.add_all([
+                DrillSession(user_id=1, drill_type="jam", drill_level="easy", status="completed"),
+                DrillSession(user_id=1, drill_type="fast_word", drill_level="easy", status="completed"),
+            ])
+            db.commit()
+        payload = {
+            "client_session_id": "unlocked-medium-drill",
+            "activity_type": "drill",
+            "question_pack_version": "drills-v1",
+            "answers": [{"step": 1, "text": "calm confident response"}],
+            "conversation_log": [],
+            "activity_state": {"drillType": "emotion", "drillLevel": "medium"},
+        }
+
+        response = self.client.post("/offline-sync", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["authoritative_result"]["drill_level"], "medium")
+
     def test_drill_sync_applies_eye_contact_summary(self):
         payload = {
             "client_session_id": "drill-camera-client",

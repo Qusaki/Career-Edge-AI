@@ -10,6 +10,11 @@ from sqlalchemy.orm import Session
 
 from core.config import settings
 from core.deps import get_current_user
+from core.drill_progression import (
+    get_completed_drill_types,
+    get_drill_lock_message,
+    is_drill_level_unlocked,
+)
 from database import get_db
 from models.offline_sync import OfflineSyncReceipt
 from models.user import User
@@ -197,6 +202,16 @@ async def sync_offline_session(
 
     try:
         existing_session = get_owned_existing_session(db, current_user, payload)
+        if payload.activity_type == "drill" and existing_session is None:
+            drill_level = str(payload.activity_state["drillLevel"])
+            completed_types = get_completed_drill_types(db, current_user.id)
+            if not is_drill_level_unlocked(drill_level, completed_types):
+                raise sync_error(
+                    403,
+                    "drill_level_locked",
+                    get_drill_lock_message(drill_level),
+                    retryable=False,
+                )
         if existing_session is not None and existing_session.status == "completed":
             result = serialize_session(existing_session)
         else:

@@ -30,6 +30,19 @@ class DrillStartRequest(BaseModel):
     drill_level: str
     drill_type: str
 
+
+class DrillLevelProgress(BaseModel):
+    unlocked: bool
+    completed: int = Field(ge=0)
+    total: int = Field(ge=0)
+    completed_types: List[str]
+
+
+class DrillProgressResponse(BaseModel):
+    easy: DrillLevelProgress
+    medium: DrillLevelProgress
+    hard: DrillLevelProgress
+
 class DrillCompleteRequest(BaseModel):
     score: Optional[float] = None
     passed: Optional[bool] = None

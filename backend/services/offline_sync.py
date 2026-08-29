@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
+from core.drill_progression import DRILL_LEVEL_BY_TYPE
 from core.drill_scoring import calculate_drill_score
 from core.scoring import bounded_integer_score, bounded_score
 from models.drills import DrillSession
@@ -97,6 +98,8 @@ def validate_sync_payload(payload: OfflineSyncRequest, department: str) -> None:
             raise HTTPException(status_code=422, detail="Drill type is required.")
         if not isinstance(drill_level, str) or not 1 <= len(drill_level) <= 32:
             raise HTTPException(status_code=422, detail="Drill level is required.")
+        if DRILL_LEVEL_BY_TYPE.get(drill_type) != drill_level:
+            raise HTTPException(status_code=422, detail="Unsupported Drill level/type combination.")
     pending_audio_steps = {
         item.answer_index for item in payload.audio_manifest if item.transcript_status == "pending"
     }

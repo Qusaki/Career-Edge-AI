@@ -85,6 +85,19 @@ class DrillCanonicalPromptTests(unittest.TestCase):
             json={"drill_level": drill_level, "drill_type": drill_type},
         )
 
+    def complete_level(self, drill_level: str) -> None:
+        with self.Session() as db:
+            for drill_type, level in drills.DRILL_LEVEL_BY_TYPE.items():
+                if level == drill_level:
+                    db.add(DrillSession(
+                        user_id=1,
+                        drill_level=level,
+                        drill_type=drill_type,
+                        status="completed",
+                        canonical_prompt={"seed": drill_type},
+                    ))
+            db.commit()
+
     def test_fresh_prompt_is_generated_persisted_and_returned(self) -> None:
         prompt = {"topic": "Canonical teamwork"}
         with patch.object(drills, "generate_drill_prompt", return_value=prompt) as generator:
@@ -184,6 +197,7 @@ class DrillCanonicalPromptTests(unittest.TestCase):
             self.assertEqual(json.loads(stored.evaluation_data)["prompt"], canonical_prompt)
 
     def test_negotiation_prompt_is_session_scoped_and_stable(self) -> None:
+        self.complete_level("medium")
         first = self.start("hard", "negotiation")
         second = self.start("hard", "negotiation")
 
