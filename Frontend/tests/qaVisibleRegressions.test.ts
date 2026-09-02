@@ -16,7 +16,8 @@ test('Pre-Test headings show activity names without offline UUID or online numer
 
   // IDs remain internal and available for offline identity and API routing.
   assert.match(source, /id: checkpoint\.clientSessionId/);
-  assert.match(source, /\$\{activeSession\.id\}\/complete/);
+  assert.match(source, /const serverSessionId = introExecution\?\.mode === 'online'/);
+  assert.match(source, /\$\{serverSessionId\}\/complete/);
 });
 
 test('Drill headings show the drill label without offline UUID or online numeric IDs', () => {

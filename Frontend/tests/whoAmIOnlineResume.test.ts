@@ -22,7 +22,7 @@ test('a final online Who Am I response is persisted before frontend checkpoint s
   const canonicalStateUpdate = preTestSource.indexOf('setIntroTranscript(canonicalTranscript)');
   const checkpointUpdate = preTestSource.indexOf('answers: [{ step: 1, text: canonicalTranscript');
 
-  assert.match(preTestSource, /\$\{activeExercise\.endpoint\}\/\$\{activeSession\.id\}\/response/);
+  assert.match(preTestSource, /\$\{activeExercise\.endpoint\}\/\$\{execution\.serverSessionId\}\/response/);
   assert.ok(persistenceRequest >= 0);
   assert.ok(canonicalStateUpdate > persistenceRequest);
   assert.ok(checkpointUpdate > canonicalStateUpdate);
@@ -43,13 +43,13 @@ test('accepted response persistence and speech delivery both guard duplicate fin
 
 test('completion remains explicit and sends the hydrated response only once', () => {
   assert.match(preTestSource, /if \(activeExercise\.kind === 'intro' && introPersistenceInFlightRef\.current\) return/);
-  assert.match(preTestSource, /\$\{activeExercise\.endpoint\}\/\$\{activeSession\.id\}\/complete/);
+  assert.match(preTestSource, /\$\{activeExercise\.endpoint\}\/\$\{serverSessionId\}\/complete/);
   assert.match(preTestSource, /transcript: introTranscript/);
   assert.doesNotMatch(preTestSource, /automatically complete/i);
 });
 
 test('offline Who Am I keeps its local checkpoint, audio, and cumulative eye-contact path', () => {
-  assert.match(preTestSource, /if \(sessionMode !== 'offline'\)[\s\S]*?method: 'PUT'[\s\S]*?return;[\s\S]*?const saved = await onActivityCheckpoint/);
+  assert.match(preTestSource, /if \(execution\.mode === 'online'\)[\s\S]*?method: 'PUT'[\s\S]*?return;[\s\S]*?const saved = await onActivityCheckpoint/);
   assert.match(preTestSource, /sessionMode === 'offline' && activeSession \? \{/);
   assert.match(preTestSource, /activityType: activeExercise\.kind === 'intro' \? 'pre_test_intro'/);
   assert.match(preTestSource, /eyeContactSummary: getCheckpointEyeContactSummary\(\)/);

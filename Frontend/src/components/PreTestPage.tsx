@@ -18,6 +18,7 @@ import {
 } from '../offline/questionPacks';
 import { evaluateActiveListening, evaluateWhoAmI } from '../offline/localEvaluation';
 import { normalizeApiError } from '../utils/httpError';
+import { resolvePreTestSessionExecution } from '../utils/preTestSessionExecution';
 
 type Session = {
   id: number | string;
@@ -115,6 +116,7 @@ const getWebSocketUrl = (apiUrl: string, path: string, token: string) => {
 const ACTIVE_LISTENING_FIRST_TOKEN_TIMEOUT_MS = 180000;
 const ACTIVE_LISTENING_MAX_RETRIES = 1;
 const ACTIVE_LISTENING_RETRY_BACKOFF_MS = 500;
+const PRE_TEST_SESSION_RECOVERY_ERROR = 'Unable to verify this Pre-Test session. Please reload the activity and try again.';
 
 type PreTestPageProps = OfflineActivityBridgeProps & {
   apiUrl: string;
@@ -159,6 +161,7 @@ export function PreTestPage({
   const connectionAttemptRef = useRef(0);
   const lifecycleGenerationRef = useRef(0);
   const offlineEyeContactBaselineRef = useRef<EyeContactSummary | null>(null);
+  const activeOfflineClientSessionIdRef = useRef<string | null>(null);
   const introTranscriptRef = useRef('');
   const introPersistenceInFlightRef = useRef(false);
   const [isSubmittingAnswer, setIsSubmittingAnswer] = useState(false);
@@ -202,7 +205,7 @@ export function PreTestPage({
   useEffect(() => { introTranscriptRef.current = introTranscript; }, [introTranscript]);
 
   useEffect(() => {
-    if (!resumeSession || resumedSessionRef.current === resumeSession.clientSessionId) return;
+    if (!resumeSession || resumeSession.mode !== 'offline' || resumedSessionRef.current === resumeSession.clientSessionId) return;
     if (!['pre_test_intro', 'pre_test_active_listening'].includes(resumeSession.type)) return;
     resumedSessionRef.current = resumeSession.clientSessionId;
     if (!hasCurrentQuestionPack(resumeSession.type, resumeSession.questionPackVersion)) {
@@ -216,6 +219,7 @@ export function PreTestPage({
     );
     if (!exercise) return;
     const restoredMessages = resumeSession.conversationLog as ChatMessage[];
+    activeOfflineClientSessionIdRef.current = resumeSession.clientSessionId;
     offlineEyeContactBaselineRef.current = resumeSession.eyeContactSummary
       ? { ...resumeSession.eyeContactSummary }
       : null;
@@ -551,6 +555,7 @@ export function PreTestPage({
           activityState: { exerciseKind: exercise.kind, exerciseTitle: exercise.title },
         });
         if (!checkpoint || lifecycleGenerationRef.current !== lifecycleGeneration) return;
+        activeOfflineClientSessionIdRef.current = checkpoint.clientSessionId;
         setActiveExercise(exercise);
         setActiveSession({
           id: checkpoint.clientSessionId,
@@ -567,6 +572,7 @@ export function PreTestPage({
       }
 
       offlineEyeContactBaselineRef.current = null;
+      activeOfflineClientSessionIdRef.current = null;
       const token = localStorage.getItem('token');
       if (!token) return;
       const response = await fetch(`${apiUrl}${exercise.endpoint}/start`, {
@@ -582,6 +588,14 @@ export function PreTestPage({
       }
       const session: Session = await response.json();
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
+      if (exercise.kind === 'intro') {
+        const execution = resolvePreTestSessionExecution({
+          sessionMode: 'online',
+          activeSessionId: session.id,
+          knownOfflineClientSessionId: null,
+        });
+        if (execution.mode !== 'online') throw new Error(PRE_TEST_SESSION_RECOVERY_ERROR);
+      }
       const restoredIntroTranscript = exercise.kind === 'intro'
         ? (session.transcript?.trim() || '')
         : '';
@@ -662,6 +676,7 @@ export function PreTestPage({
     initialActiveListeningReplayRef.current = null;
     answerSubmissionInFlightRef.current = false;
     offlineEyeContactBaselineRef.current = null;
+    activeOfflineClientSessionIdRef.current = null;
     introTranscriptRef.current = '';
     introPersistenceInFlightRef.current = false;
     setIsSubmittingAnswer(false);
@@ -742,7 +757,18 @@ export function PreTestPage({
     startListening(async transcript => {
       const nextTranscript = [introTranscriptRef.current, transcript].filter(Boolean).join(' ').trim();
       if (!nextTranscript) return;
-      if (sessionMode !== 'offline') {
+      const execution = resolvePreTestSessionExecution({
+        sessionMode,
+        activeSessionId: activeSession.id,
+        knownOfflineClientSessionId: activeOfflineClientSessionIdRef.current,
+      });
+      if (execution.mode === 'invalid') {
+        introTranscriptRef.current = nextTranscript;
+        setIntroTranscript(nextTranscript);
+        setError(PRE_TEST_SESSION_RECOVERY_ERROR);
+        return;
+      }
+      if (execution.mode === 'online') {
         if (introPersistenceInFlightRef.current) return;
         introPersistenceInFlightRef.current = true;
         setIsPersistingIntro(true);
@@ -750,7 +776,7 @@ export function PreTestPage({
         try {
           const token = localStorage.getItem('token');
           if (!token) return;
-          const response = await fetch(`${apiUrl}${activeExercise.endpoint}/${activeSession.id}/response`, {
+          const response = await fetch(`${apiUrl}${activeExercise.endpoint}/${execution.serverSessionId}/response`, {
             method: 'PUT',
             headers: {
               Authorization: `Bearer ${token}`,
@@ -838,7 +864,18 @@ export function PreTestPage({
   const completeActiveExercise = async () => {
     if (!activeSession || !activeExercise) return;
     if (activeExercise.kind === 'intro' && introPersistenceInFlightRef.current) return;
-    if (sessionMode === 'offline') {
+    const introExecution = activeExercise.kind === 'intro'
+      ? resolvePreTestSessionExecution({
+          sessionMode,
+          activeSessionId: activeSession.id,
+          knownOfflineClientSessionId: activeOfflineClientSessionIdRef.current,
+        })
+      : null;
+    if (introExecution?.mode === 'invalid') {
+      setError(PRE_TEST_SESSION_RECOVERY_ERROR);
+      return;
+    }
+    if (introExecution?.mode === 'offline' || (introExecution === null && sessionMode === 'offline')) {
       setCompleting(true);
       setError(null);
       const isIntro = activeExercise.kind === 'intro';
@@ -869,6 +906,7 @@ export function PreTestPage({
       setMessages([]);
       messagesRef.current = [];
       offlineEyeContactBaselineRef.current = null;
+      activeOfflineClientSessionIdRef.current = null;
       introTranscriptRef.current = '';
       setIntroTranscript('');
       setConnectionState('idle');
@@ -885,7 +923,10 @@ export function PreTestPage({
     setNotice(null);
     try {
       const isIntro = activeExercise.kind === 'intro';
-      const response = await fetch(`${apiUrl}${activeExercise.endpoint}/${activeSession.id}/complete`, {
+      const serverSessionId = introExecution?.mode === 'online'
+        ? introExecution.serverSessionId
+        : activeSession.id;
+      const response = await fetch(`${apiUrl}${activeExercise.endpoint}/${serverSessionId}/complete`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -921,6 +962,7 @@ export function PreTestPage({
       initialActiveListeningReplayRef.current = null;
       answerSubmissionInFlightRef.current = false;
       offlineEyeContactBaselineRef.current = null;
+      activeOfflineClientSessionIdRef.current = null;
       introTranscriptRef.current = '';
       introPersistenceInFlightRef.current = false;
       setIsSubmittingAnswer(false);
