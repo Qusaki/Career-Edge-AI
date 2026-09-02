@@ -463,6 +463,30 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       setOfflineFoundationError('A verified account is required before this activity can be saved offline.');
       return null;
     }
+    if (
+      input.type === 'drill'
+      && (input.mode ?? 'online') === 'online'
+      && input.serverSessionId !== null
+      && input.serverSessionId !== undefined
+    ) {
+      try {
+        const matchingCheckpoint = (await accountStorage.getOfflineSessions(userId, 'drill'))
+          .filter(checkpoint => (
+            checkpoint.mode === 'online'
+            && checkpoint.status === 'in_progress'
+            && checkpoint.serverSessionId === input.serverSessionId
+          ))
+          .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+        if (matchingCheckpoint) {
+          activeActivityCheckpointRef.current = matchingCheckpoint;
+          setActiveActivityCheckpoint(matchingCheckpoint);
+          setOfflineFoundationError(null);
+          return matchingCheckpoint;
+        }
+      } catch (error) {
+        console.error('Unable to inspect the existing Drill checkpoint.', error);
+      }
+    }
     const checkpoint = createActivityCheckpoint(
       userId,
       input,

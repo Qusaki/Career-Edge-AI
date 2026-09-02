@@ -44,7 +44,7 @@ test('Enrollment uses its existing Mic while listening and MicOff otherwise', ()
 test('finalizing renders the inactive icon and prevents a new microphone start', () => {
   assert.match(preTestSource, /disabled=\{isPersistingIntro \|\| isFinalizing \|\| isVoiceSpeaking\}/);
   assert.match(postTestSource, /isSubmittingAnswer \|\| isFinalizing \|\| !answerBoundary\.canAcceptAnswer/);
-  assert.match(drillsSource, /disabled=\{isVoiceSpeaking \|\| isFinalizing\}/);
+  assert.match(drillsSource, /disabled=\{isVoiceSpeaking \|\| isFinalizing \|\| drillTimer\?\.phase === 'expired'\}/);
   assert.match(enrollmentControls, /disabled=\{isMicTransitioning \|\| isAiSpeaking \|\| isSubmittingOfflineAnswer/);
 });
 

@@ -74,7 +74,7 @@ test('TTS is pending before speak and every microphone handler rejects overlap',
     assert.match(source, /speechSynthesis\?\.speaking \|\| window\.speechSynthesis\?\.pending/);
   }
   assert.match(drillsSource, /disabled=\{negotiationLoading \|\| negotiationGameOver \|\| isVoiceSpeaking \|\| isFinalizing\}/);
-  assert.match(drillsSource, /disabled=\{isVoiceSpeaking \|\| isFinalizing\}/);
+  assert.match(drillsSource, /disabled=\{isVoiceSpeaking \|\| isFinalizing \|\| drillTimer\?\.phase === 'expired'\}/);
   assert.match(dashboardSource, /isAiSpeakingRef\.current \|\| window\.speechSynthesis\?\.speaking \|\| window\.speechSynthesis\?\.pending/);
 });
 

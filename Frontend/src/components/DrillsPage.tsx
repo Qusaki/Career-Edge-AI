@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, Dumbbell, LoaderCircle, Lock, Mic, MicOff, RefreshCw, Sparkles } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clock3, Dumbbell, LoaderCircle, Lock, Mic, MicOff, RefreshCw, Sparkles } from 'lucide-react';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
@@ -12,6 +12,16 @@ import { evaluateDrill, getOfflineNegotiationTurn } from '../offline/localEvalua
 import { DRILLS_VERSION, getOfflineDrillPrompt, hasCurrentQuestionPack, NEGOTIATION_OPENING_PROMPT } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
 import { resolveDrillSessionExecution } from '../utils/drillSessionExecution';
+import {
+  createDrillTimerState,
+  formatDrillTimer,
+  getCurrentDrillTimerState,
+  pauseDrillTimer,
+  restoreDrillTimer,
+  serializeDrillTimer,
+  startDrillTimer,
+  type DrillTimerState,
+} from '../utils/drillTimer';
 
 type DrillSession = {
   id: number | string;
@@ -339,6 +349,7 @@ export function DrillsPage({
   const [negotiationGameOver, setNegotiationGameOver] = useState(false);
   const [negotiationLoading, setNegotiationLoading] = useState(false);
   const [isVoiceSpeaking, setIsVoiceSpeaking] = useState(false);
+  const [drillTimer, setDrillTimer] = useState<DrillTimerState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const exerciseGenerationRef = useRef(0);
@@ -346,6 +357,7 @@ export function DrillsPage({
   const sessionModeRef = useRef(sessionMode);
   const activeOfflineClientSessionIdRef = useRef<string | null>(null);
   const offlineEyeContactBaselineRef = useRef<EyeContactSummary | null>(null);
+  const drillTimerRef = useRef<DrillTimerState | null>(null);
   const {
     isListening,
     isFinalizing,
@@ -358,6 +370,24 @@ export function DrillsPage({
     enableOfflineRecording,
   } = useSpeechInput();
   const eyeTracker = useEyeContactTracker(Boolean(activeSession));
+  const applyDrillTimer = useCallback((nextTimer: DrillTimerState | null) => {
+    drillTimerRef.current = nextTimer;
+    setDrillTimer(nextTimer);
+  }, []);
+  const buildDrillActivityState = useCallback((
+    timer: DrillTimerState | null = drillTimerRef.current,
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> => ({
+    drillType: activeSession?.drill_type,
+    drillLevel: activeSession?.drill_level,
+    prompt: activePrompt,
+    spokenResponse,
+    negotiationTurn,
+    currentOffer,
+    negotiationGameOver,
+    ...serializeDrillTimer(timer),
+    ...overrides,
+  }), [activePrompt, activeSession, currentOffer, negotiationGameOver, negotiationTurn, spokenResponse]);
   const getCheckpointEyeContactSummary = (): EyeContactSummary => {
     const liveWindow: EyeContactSummary = {
       score: eyeTracker.samples > 0 ? eyeTracker.score : null,
@@ -384,6 +414,43 @@ export function DrillsPage({
   }, [activeSession, enableOfflineRecording, isListening, negotiationMessages, onOfflineAudioCaptured, sessionMode]);
 
   useEffect(() => { sessionModeRef.current = sessionMode; }, [sessionMode]);
+
+  const persistTimerState = useCallback((nextTimer: DrillTimerState) => {
+    applyDrillTimer(nextTimer);
+    void onActivityCheckpoint({
+      activityState: buildDrillActivityState(nextTimer),
+    });
+  }, [applyDrillTimer, buildDrillActivityState, onActivityCheckpoint]);
+
+  useEffect(() => {
+    const current = drillTimerRef.current;
+    if (!isListening || !current || current.phase === 'running' || current.phase === 'expired') return;
+    persistTimerState(startDrillTimer(current));
+  }, [isListening, persistTimerState]);
+
+  useEffect(() => {
+    const current = drillTimerRef.current;
+    if (isListening || !current || current.phase !== 'running') return;
+    persistTimerState(pauseDrillTimer(current));
+  }, [isListening, persistTimerState]);
+
+  useEffect(() => {
+    if (drillTimer?.phase !== 'running') return;
+    const intervalId = window.setInterval(() => {
+      const current = drillTimerRef.current;
+      if (!current || current.phase !== 'running') return;
+      const next = getCurrentDrillTimerState(current);
+      if (next === current) return;
+      applyDrillTimer(next);
+      if (next.phase === 'expired') {
+        void onActivityCheckpoint({
+          activityState: buildDrillActivityState(next),
+        });
+        stopListening();
+      }
+    }, 250);
+    return () => window.clearInterval(intervalId);
+  }, [applyDrillTimer, buildDrillActivityState, drillTimer?.phase, onActivityCheckpoint, stopListening]);
 
   useEffect(() => {
     if (
@@ -424,9 +491,10 @@ export function DrillsPage({
     setNegotiationTurn(Number(resumeSession.activityState.negotiationTurn || 0));
     setCurrentOffer(Number(resumeSession.activityState.currentOffer || 35000));
     setNegotiationGameOver(Boolean(resumeSession.activityState.negotiationGameOver));
+    applyDrillTimer(restoreDrillTimer(drill.drillType, resumeSession.activityState));
     setNotice('Your saved offline Drill has been restored from its last checkpoint.');
     onSessionModeChange(true);
-  }, [onSessionModeChange, resumeSession]);
+  }, [applyDrillTimer, onSessionModeChange, resumeSession]);
 
   useEffect(() => {
     if (sessionMode === 'offline' && activeSession) {
@@ -515,6 +583,8 @@ export function DrillsPage({
     setNegotiationTurn(0);
     setCurrentOffer(35000);
     setNegotiationGameOver(false);
+    const initialTimer = createDrillTimerState(drill.drillType);
+    applyDrillTimer(initialTimer);
     activeOfflineClientSessionIdRef.current = null;
     offlineEyeContactBaselineRef.current = null;
     cancelListening();
@@ -544,6 +614,7 @@ export function DrillsPage({
             negotiationTurn: 0,
             currentOffer: 35000,
             negotiationGameOver: false,
+            ...serializeDrillTimer(initialTimer),
           },
         });
         if (!checkpoint || exerciseGenerationRef.current !== attemptId) return;
@@ -556,6 +627,7 @@ export function DrillsPage({
           status: 'active',
         });
         setActivePrompt(formattedPrompt);
+        applyDrillTimer(restoreDrillTimer(drill.drillType, checkpoint.activityState));
         setNegotiationMessages(initialNegotiationMessages);
         setNotice(`${drill.title} started offline. Your provisional result will be queued for sync.`);
         onSessionModeChange(true);
@@ -603,7 +675,7 @@ export function DrillsPage({
         speakText(formattedPrompt);
       }
       setNotice(`${drill.title} is ready.`);
-      void onActivityStart({
+      const checkpoint = await onActivityStart({
         type: 'drill',
         serverSessionId: typeof session.id === 'number' ? session.id : null,
         questionPackVersion: DRILLS_VERSION,
@@ -618,12 +690,17 @@ export function DrillsPage({
           negotiationTurn: 0,
           currentOffer: 35000,
           negotiationGameOver: false,
+          ...serializeDrillTimer(initialTimer),
         },
       });
+      if (checkpoint && exerciseGenerationRef.current === attemptId) {
+        applyDrillTimer(restoreDrillTimer(drill.drillType, checkpoint.activityState));
+      }
       onSessionModeChange(true);
       await loadSessions();
     } catch (err) {
       if (exerciseGenerationRef.current !== attemptId) return;
+      applyDrillTimer(null);
       setError(err instanceof Error ? err.message : `Unable to start ${drill.title}.`);
     } finally {
       if (exerciseGenerationRef.current === attemptId) setStarting(null);
@@ -645,6 +722,7 @@ export function DrillsPage({
     setCurrentOffer(35000);
     setNegotiationGameOver(false);
     setIsVoiceSpeaking(false);
+    applyDrillTimer(null);
     activeOfflineClientSessionIdRef.current = null;
     offlineEyeContactBaselineRef.current = null;
     setNotice('Drill exited. Mark it complete later to finish it properly.');
@@ -678,6 +756,7 @@ export function DrillsPage({
         negotiationTurn,
         currentOffer,
         negotiationGameOver,
+        ...serializeDrillTimer(drillTimerRef.current),
       },
     });
     if (!userCheckpointSaved) {
@@ -733,6 +812,7 @@ export function DrillsPage({
           negotiationTurn: nextTurn,
           currentOffer: data.new_offer,
           negotiationGameOver: data.is_game_over,
+          ...serializeDrillTimer(drillTimerRef.current),
         },
       });
       if (!responseSaved) return;
@@ -749,6 +829,10 @@ export function DrillsPage({
   };
 
   const recordDrillResponse = () => {
+    if (drillTimerRef.current?.phase === 'expired') {
+      setError('Time is up for this response. Review your transcript, then mark the Drill complete.');
+      return;
+    }
     if (isVoiceSpeaking || window.speechSynthesis?.speaking || window.speechSynthesis?.pending) {
       setError('Wait for the audio prompt to finish before starting the microphone.');
       return;
@@ -770,6 +854,7 @@ export function DrillsPage({
             negotiationTurn,
             currentOffer,
             negotiationGameOver,
+            ...serializeDrillTimer(drillTimerRef.current),
           },
         });
         if (saved) {
@@ -783,6 +868,14 @@ export function DrillsPage({
       answerIndex: 1,
       persistAudio: onOfflineAudioCaptured,
     } : undefined);
+  };
+
+  const stopDrillResponse = () => {
+    const current = drillTimerRef.current;
+    if (current?.phase === 'running') {
+      persistTimerState(pauseDrillTimer(current));
+    }
+    stopListening();
   };
 
   const recordNegotiationReply = () => {
@@ -818,6 +911,7 @@ export function DrillsPage({
         negotiationTurn,
         currentOffer,
         negotiationGameOver,
+        ...serializeDrillTimer(drillTimerRef.current),
       },
     });
   };
@@ -864,6 +958,7 @@ export function DrillsPage({
             negotiationTurn,
             currentOffer,
             negotiationGameOver,
+            ...serializeDrillTimer(drillTimerRef.current),
           },
         });
         if (!saved || !await onActivityEnd('completed_local')) return;
@@ -877,6 +972,7 @@ export function DrillsPage({
         setNegotiationTurn(0);
         setCurrentOffer(35000);
         setNegotiationGameOver(false);
+        applyDrillTimer(null);
         activeOfflineClientSessionIdRef.current = null;
         offlineEyeContactBaselineRef.current = null;
         setNotice('Drill completed locally and is pending sync. Higher levels unlock after server synchronization.');
@@ -938,6 +1034,7 @@ export function DrillsPage({
       setNegotiationTurn(0);
       setCurrentOffer(35000);
       setNegotiationGameOver(false);
+      applyDrillTimer(null);
       activeOfflineClientSessionIdRef.current = null;
       offlineEyeContactBaselineRef.current = null;
       onSessionModeChange(false);
@@ -953,6 +1050,13 @@ export function DrillsPage({
   if (activeSession) {
     const activeInstruction = getDrillInstruction(activeSession.drill_type);
     const activeScoringNote = getDrillScoringNote(activeSession.drill_type);
+    const timerStatus = drillTimer?.phase === 'running'
+      ? drillTimer.remainingSeconds <= 10 ? 'Low time' : 'Running'
+      : drillTimer?.phase === 'paused'
+        ? 'Paused'
+        : drillTimer?.phase === 'expired'
+          ? 'Time is up'
+          : 'Ready';
     return (
       <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
         <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
@@ -995,32 +1099,57 @@ export function DrillsPage({
               </div>
             )}
 
-            <div className="mb-4 grid gap-3 rounded-lg border border-line bg-background p-4 sm:grid-cols-2" aria-label="Drill instructions">
-              <div>
-                <p className="text-program-accent text-xs font-bold uppercase tracking-wider">Task</p>
-                <p className="mt-1 text-sm font-semibold leading-relaxed text-ink">{activeInstruction.task}</p>
-              </div>
-              <div>
-                <p className="text-program-accent text-xs font-bold uppercase tracking-wider">How to answer</p>
-                <p className="mt-1 text-sm leading-relaxed text-muted">{activeInstruction.howToAnswer}</p>
-              </div>
-              {activeInstruction.example && (
-                <p className="text-sm leading-relaxed text-muted sm:col-span-2">
-                  <span className="font-semibold text-ink">Answer format: </span>{activeInstruction.example}
-                </p>
-              )}
-              <div className="border-t border-line pt-3 sm:col-span-2">
-                <p className="text-xs font-bold uppercase tracking-wider text-muted">Automatic scoring</p>
-                <p className="mt-1 text-sm leading-relaxed text-muted">
-                  Practice goal: follow the task directions as closely as possible. {activeScoringNote}
-                </p>
-              </div>
-            </div>
-
             <SoundWaveInterviewer
               active={isVoiceSpeaking || negotiationLoading}
               label={isVoiceSpeaking ? 'Speaking...' : negotiationLoading ? 'Preparing reply...' : 'Audio prompt ready'}
             />
+
+            {drillTimer && (
+              <div
+                className={`mb-4 flex items-center justify-between gap-4 rounded-lg border px-4 py-3 ${drillTimer.phase === 'expired' ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-line bg-background text-ink'}`}
+                role="timer"
+                aria-label={`Response timer: ${formatDrillTimer(drillTimer.remainingSeconds)} remaining, ${timerStatus}`}
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <Clock3 className={`h-5 w-5 shrink-0 ${drillTimer.phase === 'running' && drillTimer.remainingSeconds <= 10 ? 'text-rose-600' : 'text-program-accent'}`} aria-hidden="true" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold uppercase tracking-wider text-muted">Response time</p>
+                    <p className="text-sm font-semibold">{timerStatus}</p>
+                  </div>
+                </div>
+                <span className={`font-mono text-2xl font-bold tabular-nums ${drillTimer.phase === 'running' && drillTimer.remainingSeconds <= 10 ? 'text-rose-600' : ''}`}>
+                  {formatDrillTimer(drillTimer.remainingSeconds)}
+                </span>
+              </div>
+            )}
+
+            <div className="mb-4 overflow-hidden rounded-lg border border-line bg-background" aria-label="Drill instructions">
+              <div className="border-b border-line px-4 py-3">
+                <p className="text-xs font-bold uppercase tracking-[0.16em] text-muted">Instructions</p>
+              </div>
+              <div className="divide-y divide-line">
+                <div className="px-4 py-3">
+                <p className="text-program-accent text-xs font-bold uppercase tracking-wider">Task</p>
+                <p className="mt-1 text-sm font-semibold leading-relaxed text-ink">{activeInstruction.task}</p>
+                </div>
+                <div className="px-4 py-3">
+                <p className="text-program-accent text-xs font-bold uppercase tracking-wider">How to answer</p>
+                <p className="mt-1 text-sm leading-relaxed text-muted">{activeInstruction.howToAnswer}</p>
+                </div>
+                <div className="px-4 py-3">
+                  <p className="text-program-accent text-xs font-bold uppercase tracking-wider">Answer format</p>
+                  <p className="mt-1 text-sm leading-relaxed text-muted">
+                    {activeInstruction.example || 'Give one clear, complete spoken response that follows the prompt details.'}
+                  </p>
+                </div>
+                <div className="bg-card/50 px-4 py-3">
+                  <p className="text-xs font-bold uppercase tracking-wider text-muted">Automatic scoring</p>
+                  <p className="mt-1 text-sm leading-relaxed text-muted">
+                    Practice goal: follow the task directions as closely as possible. {activeScoringNote}
+                  </p>
+                </div>
+              </div>
+            </div>
 
             {activeSession.drill_type === 'negotiation' ? (
               <>
@@ -1093,12 +1222,12 @@ export function DrillsPage({
                 )}
                 <div className="mt-4 flex justify-center">
                   <button
-                    onClick={isListening ? stopListening : recordDrillResponse}
-                    disabled={isVoiceSpeaking || isFinalizing}
+                    onClick={isListening ? stopDrillResponse : recordDrillResponse}
+                    disabled={isVoiceSpeaking || isFinalizing || drillTimer?.phase === 'expired'}
                     className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-                    {isListening ? 'Stop Recording' : 'Speak Answer'}
+                    {isListening ? 'Stop Recording' : drillTimer?.phase === 'expired' ? 'Time Expired' : 'Speak Answer'}
                   </button>
                 </div>
                 {sessionMode === 'offline' && (

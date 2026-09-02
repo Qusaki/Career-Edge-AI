@@ -42,12 +42,38 @@ test('only an explicitly offline checkpoint can restore a local Drill identity',
   assert.match(source, /activeOfflineClientSessionIdRef\.current = resumeSession\.clientSessionId/);
 });
 
-test('the active Drill shows compact responsive Task and How to answer areas', () => {
+test('the active Drill shows one vertical responsive instruction hierarchy', () => {
   assert.match(source, /aria-label="Drill instructions"/);
   assert.match(source, />Task<\/p>/);
   assert.match(source, />How to answer<\/p>/);
-  assert.match(source, /sm:grid-cols-2/);
-  assert.match(source, /sm:col-span-2/);
+  assert.match(source, />Answer format<\/p>/);
+  assert.match(source, /divide-y divide-line/);
+  const instructionsStart = source.indexOf('aria-label="Drill instructions"');
+  const instructionsEnd = source.indexOf("activeSession.drill_type === 'negotiation'", instructionsStart);
+  assert.doesNotMatch(source.slice(instructionsStart, instructionsEnd), /grid-cols|col-span/);
+});
+
+test('session status, timer, instructions, and prompt details follow the intended order', () => {
+  const activeSessionStart = source.indexOf('if (activeSession)');
+  const statusIndex = source.indexOf('<SoundWaveInterviewer', activeSessionStart);
+  const timerIndex = source.indexOf('role="timer"', statusIndex);
+  const instructionsIndex = source.indexOf('aria-label="Drill instructions"', timerIndex);
+  const promptIndex = source.indexOf('Prompt details', instructionsIndex);
+  assert.ok(statusIndex >= 0 && timerIndex > statusIndex && instructionsIndex > timerIndex && promptIndex > instructionsIndex);
+  assert.ok(source.indexOf('>Prompt</p>', instructionsIndex) > instructionsIndex);
+});
+
+test('instruction sections read Task, How to answer, Answer format, then Automatic scoring', () => {
+  const instructionsStart = source.indexOf('aria-label="Drill instructions"');
+  const instructionsEnd = source.indexOf("activeSession.drill_type === 'negotiation'", instructionsStart);
+  const instructionMarkup = source.slice(instructionsStart, instructionsEnd);
+  const taskIndex = instructionMarkup.indexOf('>Task</p>');
+  const howIndex = instructionMarkup.indexOf('>How to answer</p>');
+  const formatIndex = instructionMarkup.indexOf('>Answer format</p>');
+  const scoringIndex = instructionMarkup.indexOf('>Automatic scoring</p>');
+  assert.ok(taskIndex >= 0 && howIndex > taskIndex && formatIndex > howIndex && scoringIndex > formatIndex);
+  assert.match(instructionMarkup, /bg-card\/50 px-4 py-3/);
+  assert.doesNotMatch(instructionMarkup, /w-\[[^\]]+\]|min-w-\[[^\]]+\]/);
 });
 
 test('task directions and automatic scoring transparency remain visibly separate', () => {
