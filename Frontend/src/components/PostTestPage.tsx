@@ -11,6 +11,7 @@ import { combineEyeContactSummaries, type EyeContactSummary } from '../offline/e
 import { evaluatePostTest } from '../offline/localEvaluation';
 import { getPostTestQuestions, hasCurrentQuestionPack, POST_TEST_VERSION } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
+import { resolveSessionExecution } from '../utils/sessionExecution';
 import {
   appendOfflinePostTestAnswer,
   appendPostTestUserAnswer,
@@ -75,6 +76,7 @@ const getWebSocketUrl = (apiUrl: string, path: string, token: string) => {
 const POST_TEST_FIRST_PROMPT_TIMEOUT_MS = 30000;
 const POST_TEST_MAX_RETRIES = 1;
 const POST_TEST_RETRY_BACKOFF_MS = 500;
+const POST_TEST_SESSION_RECOVERY_ERROR = 'Unable to verify this Post-Test session. Please reload the activity and try again.';
 
 type PostTestPageProps = OfflineActivityBridgeProps & {
   apiUrl: string;
@@ -117,6 +119,7 @@ export function PostTestPage({
   const connectionAttemptRef = useRef(0);
   const lifecycleGenerationRef = useRef(0);
   const resumedSessionRef = useRef<string | null>(null);
+  const activeOfflineClientSessionIdRef = useRef<string | null>(null);
   const offlineEyeContactBaselineRef = useRef<EyeContactSummary | null>(null);
   const answerSubmissionInFlightRef = useRef(false);
   const [isSubmittingAnswer, setIsSubmittingAnswer] = useState(false);
@@ -157,13 +160,19 @@ export function PostTestPage({
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   useEffect(() => {
-    if (!resumeSession || resumeSession.type !== 'post_test' || resumedSessionRef.current === resumeSession.clientSessionId) return;
+    if (
+      !resumeSession
+      || resumeSession.type !== 'post_test'
+      || resumeSession.mode !== 'offline'
+      || resumedSessionRef.current === resumeSession.clientSessionId
+    ) return;
     resumedSessionRef.current = resumeSession.clientSessionId;
     if (!hasCurrentQuestionPack('post_test', resumeSession.questionPackVersion)) {
       setError('This saved offline activity uses an older question version. It was preserved and cannot be resumed automatically.');
       return;
     }
     const restoredMessages = resumeSession.conversationLog as ChatMessage[];
+    activeOfflineClientSessionIdRef.current = resumeSession.clientSessionId;
     offlineEyeContactBaselineRef.current = resumeSession.eyeContactSummary
       ? { ...resumeSession.eyeContactSummary }
       : null;
@@ -307,7 +316,7 @@ export function PostTestPage({
     firstPromptTimeoutRef.current = null;
   };
 
-  function connectPostTestChat(session: Session, retryCount = 0) {
+  function connectPostTestChat(serverSessionId: number, retryCount = 0) {
     const token = localStorage.getItem('token');
     if (!token) {
       setConnectionState('error');
@@ -334,7 +343,7 @@ export function PostTestPage({
     setConnectionState('connecting');
     setError(null);
     setNotice(retryCount > 0 ? 'Reconnecting the audio interviewer…' : 'Connecting the audio interviewer…');
-    const socket = new WebSocket(getWebSocketUrl(apiUrl, `/post-test-interview/${session.id}/chat`, token));
+    const socket = new WebSocket(getWebSocketUrl(apiUrl, `/post-test-interview/${serverSessionId}/chat`, token));
     wsRef.current = socket;
     const isCurrentAttempt = () => connectionAttemptRef.current === attemptId && wsRef.current === socket;
 
@@ -452,7 +461,7 @@ export function PostTestPage({
         reconnectTimeoutRef.current = setTimeout(() => {
           reconnectTimeoutRef.current = null;
           if (connectionAttemptRef.current === attemptId) {
-            connectPostTestChat(session, retryCount + 1);
+            connectPostTestChat(serverSessionId, retryCount + 1);
           }
         }, POST_TEST_RETRY_BACKOFF_MS);
         return;
@@ -472,6 +481,7 @@ export function PostTestPage({
     setNotice(null);
     setMessages([]);
     setLatestAiQuestion('');
+    activeOfflineClientSessionIdRef.current = null;
     cancelSpeech();
     cancelListening();
     setConnectionState('idle');
@@ -492,6 +502,7 @@ export function PostTestPage({
           activityState: { department: userDepartment },
         });
         if (!checkpoint || lifecycleGenerationRef.current !== lifecycleGeneration) return;
+        activeOfflineClientSessionIdRef.current = checkpoint.clientSessionId;
         messagesRef.current = initialMessages;
         setMessages(initialMessages);
         setLatestAiQuestion(questions[0]);
@@ -525,31 +536,40 @@ export function PostTestPage({
       }
       const session: Session = await response.json();
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
+      const execution = resolveSessionExecution({
+        sessionMode: 'online',
+        activeSessionId: session.id,
+        knownOfflineClientSessionId: null,
+      });
+      if (execution.mode !== 'online') throw new Error(POST_TEST_SESSION_RECOVERY_ERROR);
+      const serverSessionId = execution.serverSessionId;
 
-      const sessionDetailResponse = await fetch(`${apiUrl}/post-test-interview/${session.id}`, {
+      const sessionDetailResponse = await fetch(`${apiUrl}/post-test-interview/${serverSessionId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (sessionDetailResponse.ok) {
-        const sessionDetail: { messages?: Array<{ role: string; content: string }> } = await sessionDetailResponse.json();
-        if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
-        const restoredMessages = (sessionDetail.messages || []).map(message => ({
-          sender: message.role === 'ai' ? 'ai' : 'user',
-          text: message.content,
-        })) as ChatMessage[];
-        messagesRef.current = restoredMessages;
-        setMessages(restoredMessages);
+      if (!sessionDetailResponse.ok) {
+        const body = await sessionDetailResponse.json().catch(() => null);
+        throw new Error(normalizeApiError(body, 'Unable to restore the Post-Test conversation.'));
       }
+      const sessionDetail: { messages?: Array<{ role: string; content: string }> } = await sessionDetailResponse.json();
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
-      setActiveSession(session);
+      const restoredMessages = (sessionDetail.messages || []).map(message => ({
+        sender: message.role === 'ai' ? 'ai' : 'user',
+        text: message.content,
+      })) as ChatMessage[];
+      messagesRef.current = restoredMessages;
+      setMessages(restoredMessages);
+      if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
+      setActiveSession({ ...session, id: serverSessionId });
       onSessionModeChange(true);
       void onActivityStart({
         type: 'post_test',
-        serverSessionId: typeof session.id === 'number' ? session.id : null,
+        serverSessionId,
         questionPackVersion: POST_TEST_VERSION,
         currentQuestion: questions[0],
         activityState: { department: userDepartment },
       });
-      connectPostTestChat(session);
+      connectPostTestChat(serverSessionId);
       await loadSessions();
     } catch (err) {
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
@@ -573,6 +593,7 @@ export function PostTestPage({
     aiSpeechBufferRef.current = '';
     initialReplayExpectedTextRef.current = null;
     offlineEyeContactBaselineRef.current = null;
+    activeOfflineClientSessionIdRef.current = null;
     setActiveSession(null);
     setMessages([]);
     setReply('');
@@ -678,6 +699,18 @@ export function PostTestPage({
 
   const completePostTest = async () => {
     if (!activeSession) return;
+    const checkpointOfflineClientSessionId = resumeSession?.type === 'post_test' && resumeSession.mode === 'offline'
+      ? resumeSession.clientSessionId
+      : null;
+    const execution = resolveSessionExecution({
+      sessionMode,
+      activeSessionId: activeSession.id,
+      knownOfflineClientSessionId: activeOfflineClientSessionIdRef.current ?? checkpointOfflineClientSessionId,
+    });
+    if (execution.mode === 'invalid') {
+      setError(POST_TEST_SESSION_RECOVERY_ERROR);
+      return;
+    }
     const currentMessages = messagesRef.current;
     try {
       requireExactPostTestAnswerCount(currentMessages);
@@ -685,7 +718,7 @@ export function PostTestPage({
       setError(completionError instanceof Error ? completionError.message : 'The Post-Test answer count is invalid.');
       return;
     }
-    if (sessionMode === 'offline') {
+    if (execution.mode === 'offline') {
       setCompleting(true);
       setError(null);
       const result = evaluatePostTest(currentMessages);
@@ -716,6 +749,7 @@ export function PostTestPage({
       messagesRef.current = [];
       setLatestAiQuestion('');
       offlineEyeContactBaselineRef.current = null;
+      activeOfflineClientSessionIdRef.current = null;
       setConnectionState('idle');
       setNotice('Post-Test completed locally and is pending sync.');
       onSessionModeChange(false);
@@ -729,7 +763,7 @@ export function PostTestPage({
     setError(null);
     setNotice(null);
     try {
-      const response = await fetch(`${apiUrl}/post-test-interview/${activeSession.id}/complete`, {
+      const response = await fetch(`${apiUrl}/post-test-interview/${execution.serverSessionId}/complete`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -761,6 +795,7 @@ export function PostTestPage({
       setMessages([]);
       setLatestAiQuestion('');
       offlineEyeContactBaselineRef.current = null;
+      activeOfflineClientSessionIdRef.current = null;
       setNotice('Post-Test completed.');
       void onActivityEnd('cloud_completed');
       onSessionModeChange(false);

@@ -19,6 +19,7 @@ import {
 import { evaluateActiveListening, evaluateWhoAmI } from '../offline/localEvaluation';
 import { normalizeApiError } from '../utils/httpError';
 import { resolvePreTestSessionExecution } from '../utils/preTestSessionExecution';
+import { resolveSessionExecution } from '../utils/sessionExecution';
 
 type Session = {
   id: number | string;
@@ -337,7 +338,7 @@ export function PreTestPage({
     }
   }, []);
 
-  function connectActiveListeningChat(session: Session, retryCount = 0) {
+  function connectActiveListeningChat(serverSessionId: number, retryCount = 0) {
     const token = localStorage.getItem('token');
     if (!token) {
       setConnectionState('error');
@@ -362,7 +363,7 @@ export function PreTestPage({
     setConnectionState('connecting');
     setError(null);
     setNotice(retryCount > 0 ? 'Reconnecting the audio interviewer…' : 'Connecting the audio interviewer…');
-    const socket = new WebSocket(getWebSocketUrl(apiUrl, `/pre-test-active-listening/${session.id}/chat`, token));
+    const socket = new WebSocket(getWebSocketUrl(apiUrl, `/pre-test-active-listening/${serverSessionId}/chat`, token));
     wsRef.current = socket;
     const isCurrentAttempt = () => connectionAttemptRef.current === attemptId && wsRef.current === socket;
 
@@ -504,7 +505,7 @@ export function PreTestPage({
         reconnectTimeoutRef.current = setTimeout(() => {
           reconnectTimeoutRef.current = null;
           if (connectionAttemptRef.current === attemptId) {
-            connectActiveListeningChat(session, retryCount + 1);
+            connectActiveListeningChat(serverSessionId, retryCount + 1);
           }
         }, ACTIVE_LISTENING_RETRY_BACKOFF_MS);
         return;
@@ -588,6 +589,7 @@ export function PreTestPage({
       }
       const session: Session = await response.json();
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
+      let activeListeningServerSessionId: number | null = null;
       if (exercise.kind === 'intro') {
         const execution = resolvePreTestSessionExecution({
           sessionMode: 'online',
@@ -595,14 +597,23 @@ export function PreTestPage({
           knownOfflineClientSessionId: null,
         });
         if (execution.mode !== 'online') throw new Error(PRE_TEST_SESSION_RECOVERY_ERROR);
+      } else {
+        const execution = resolveSessionExecution({
+          sessionMode: 'online',
+          activeSessionId: session.id,
+          knownOfflineClientSessionId: null,
+        });
+        if (execution.mode !== 'online') throw new Error(PRE_TEST_SESSION_RECOVERY_ERROR);
+        activeListeningServerSessionId = execution.serverSessionId;
       }
       const restoredIntroTranscript = exercise.kind === 'intro'
         ? (session.transcript?.trim() || '')
         : '';
       if (exercise.kind === 'active-listening') {
+        if (activeListeningServerSessionId === null) throw new Error(PRE_TEST_SESSION_RECOVERY_ERROR);
         messagesRef.current = [];
         initialActiveListeningReplayRef.current = null;
-        const sessionDetailResponse = await fetch(`${apiUrl}${exercise.endpoint}/${session.id}`, {
+        const sessionDetailResponse = await fetch(`${apiUrl}${exercise.endpoint}/${activeListeningServerSessionId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!sessionDetailResponse.ok) {
@@ -621,19 +632,25 @@ export function PreTestPage({
         setMessages(restoredMessages);
       }
       setActiveExercise(exercise);
-      setActiveSession(session);
+      setActiveSession(exercise.kind === 'active-listening'
+        ? { ...session, id: activeListeningServerSessionId }
+        : session);
       if (exercise.kind === 'intro') {
         introTranscriptRef.current = restoredIntroTranscript;
         setIntroTranscript(restoredIntroTranscript);
       }
       onSessionModeChange(true);
       const type = exercise.kind === 'intro' ? 'pre_test_intro' : 'pre_test_active_listening';
-      const canonicalPrompt = exercise.kind === 'intro'
-        ? PRETEST_WHO_AM_I_PROMPT
-        : getActiveListeningPromptForServerSession(Number(session.id));
+      let canonicalPrompt = PRETEST_WHO_AM_I_PROMPT;
+      if (exercise.kind === 'active-listening') {
+        if (activeListeningServerSessionId === null) throw new Error(PRE_TEST_SESSION_RECOVERY_ERROR);
+        canonicalPrompt = getActiveListeningPromptForServerSession(activeListeningServerSessionId);
+      }
       void onActivityStart({
         type,
-        serverSessionId: typeof session.id === 'number' ? session.id : null,
+        serverSessionId: exercise.kind === 'intro'
+          ? (typeof session.id === 'number' ? session.id : null)
+          : activeListeningServerSessionId,
         questionPackVersion: exercise.kind === 'intro' ? PRETEST_WHO_AM_I_VERSION : PRETEST_ACTIVE_LISTENING_VERSION,
         currentQuestion: canonicalPrompt,
         ...(exercise.kind === 'intro' ? {
@@ -646,7 +663,8 @@ export function PreTestPage({
         activityState: { exerciseKind: exercise.kind, exerciseTitle: exercise.title },
       });
       if (exercise.kind === 'active-listening') {
-        connectActiveListeningChat(session);
+        if (activeListeningServerSessionId === null) throw new Error(PRE_TEST_SESSION_RECOVERY_ERROR);
+        connectActiveListeningChat(activeListeningServerSessionId);
       } else if (restoredIntroTranscript) {
         setNotice('Your saved Who Am I? response was restored. You can complete the exercise when ready.');
       } else {
@@ -871,11 +889,22 @@ export function PreTestPage({
           knownOfflineClientSessionId: activeOfflineClientSessionIdRef.current,
         })
       : null;
+    const activeListeningExecution = activeExercise.kind === 'active-listening'
+      ? resolveSessionExecution({
+          sessionMode,
+          activeSessionId: activeSession.id,
+          knownOfflineClientSessionId: activeOfflineClientSessionIdRef.current,
+        })
+      : null;
     if (introExecution?.mode === 'invalid') {
       setError(PRE_TEST_SESSION_RECOVERY_ERROR);
       return;
     }
-    if (introExecution?.mode === 'offline' || (introExecution === null && sessionMode === 'offline')) {
+    if (activeListeningExecution?.mode === 'invalid') {
+      setError(PRE_TEST_SESSION_RECOVERY_ERROR);
+      return;
+    }
+    if (introExecution?.mode === 'offline' || activeListeningExecution?.mode === 'offline') {
       setCompleting(true);
       setError(null);
       const isIntro = activeExercise.kind === 'intro';
@@ -925,7 +954,13 @@ export function PreTestPage({
       const isIntro = activeExercise.kind === 'intro';
       const serverSessionId = introExecution?.mode === 'online'
         ? introExecution.serverSessionId
-        : activeSession.id;
+        : activeListeningExecution?.mode === 'online'
+          ? activeListeningExecution.serverSessionId
+          : null;
+      if (serverSessionId === null) {
+        setError(PRE_TEST_SESSION_RECOVERY_ERROR);
+        return;
+      }
       const response = await fetch(`${apiUrl}${activeExercise.endpoint}/${serverSessionId}/complete`, {
         method: 'POST',
         headers: {

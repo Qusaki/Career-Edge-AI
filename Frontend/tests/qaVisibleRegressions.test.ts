@@ -36,7 +36,8 @@ test('Drill headings show the drill label without offline UUID or online numeric
 test('Post-Test no longer presents its completion session ID and retains internal routing identity', () => {
   const source = readComponent('PostTestPage.tsx');
   assert.doesNotMatch(source, /Post-Test session \$\{completedSession\.id\}/);
-  assert.match(source, /post-test-interview\/\$\{activeSession\.id\}\/complete/);
+  assert.match(source, /post-test-interview\/\$\{execution\.serverSessionId\}\/complete/);
+  assert.doesNotMatch(source, /post-test-interview\/\$\{activeSession\.id\}\/complete/);
 });
 
 test('all scoped HTTP handlers use the shared normalizer and WebSocket messages are narrowed safely', () => {

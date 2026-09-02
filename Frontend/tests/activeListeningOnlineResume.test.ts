@@ -121,7 +121,7 @@ test('stable message IDs allow legitimate identical later text', () => {
 test('PreTestPage hydrates server history before connecting and guards one online submission', () => {
   const source = readFileSync(new URL('../src/components/PreTestPage.tsx', import.meta.url), 'utf8');
   const hydrationIndex = source.indexOf('const sessionDetailResponse = await fetch');
-  const connectionIndex = source.indexOf('connectActiveListeningChat(session);');
+  const connectionIndex = source.indexOf('connectActiveListeningChat(activeListeningServerSessionId);');
 
   assert.ok(hydrationIndex >= 0);
   assert.ok(connectionIndex > hydrationIndex);
