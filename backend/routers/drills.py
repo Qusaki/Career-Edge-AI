@@ -14,7 +14,9 @@ from core.drill_progression import (
     build_drill_progress,
     get_completed_drill_types,
     get_drill_lock_message,
+    get_drill_type_lock_message,
     is_drill_level_unlocked,
+    is_drill_type_unlocked,
 )
 from core.drill_scoring import calculate_drill_score
 from models.user import User
@@ -296,6 +298,11 @@ def start_drill_session(request: DrillStartRequest, db: Session = Depends(get_db
         raise HTTPException(
             status_code=403,
             detail=get_drill_lock_message(request.drill_level),
+        )
+    if not is_drill_type_unlocked(request.drill_type, completed_types):
+        raise HTTPException(
+            status_code=403,
+            detail=get_drill_type_lock_message(request.drill_type),
         )
 
     session = DrillSession(

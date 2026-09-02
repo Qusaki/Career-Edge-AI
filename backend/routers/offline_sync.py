@@ -13,7 +13,9 @@ from core.deps import get_current_user
 from core.drill_progression import (
     get_completed_drill_types,
     get_drill_lock_message,
+    get_drill_type_lock_message,
     is_drill_level_unlocked,
+    is_drill_type_unlocked,
 )
 from database import get_db
 from models.offline_sync import OfflineSyncReceipt
@@ -204,12 +206,20 @@ async def sync_offline_session(
         existing_session = get_owned_existing_session(db, current_user, payload)
         if payload.activity_type == "drill" and existing_session is None:
             drill_level = str(payload.activity_state["drillLevel"])
+            drill_type = str(payload.activity_state["drillType"])
             completed_types = get_completed_drill_types(db, current_user.id)
             if not is_drill_level_unlocked(drill_level, completed_types):
                 raise sync_error(
                     403,
                     "drill_level_locked",
                     get_drill_lock_message(drill_level),
+                    retryable=False,
+                )
+            if not is_drill_type_unlocked(drill_type, completed_types):
+                raise sync_error(
+                    403,
+                    "drill_type_locked",
+                    get_drill_type_lock_message(drill_type),
                     retryable=False,
                 )
         if existing_session is not None and existing_session.status == "completed":

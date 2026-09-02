@@ -62,10 +62,18 @@ type DrillLevelProgress = {
   unlocked: boolean;
   completed: number;
   total: number;
-  completed_types: string[];
+  completed_types: DrillType[];
+  drills: DrillTypeProgress[];
 };
 
 type DrillProgress = Record<DrillLevel, DrillLevelProgress>;
+
+type DrillTypeProgress = {
+  type: DrillType;
+  completed: boolean;
+  unlocked: boolean;
+  prerequisite_type: DrillType | null;
+};
 
 type NegotiationMessage = {
   sender: 'user' | 'bot';
@@ -147,6 +155,33 @@ const drills: Drill[] = [
     drillType: 'crisis',
   },
 ];
+
+const drillTypesByLevel: Record<DrillLevel, readonly DrillType[]> = {
+  easy: ['jam', 'fast_word'],
+  medium: ['emotion', 'synonym', 'fake_profile', 'emoji_story', 'positive_framing'],
+  hard: ['taboo', 'elevator_pitch', 'rephrase', 'negotiation', 'crisis'],
+};
+
+const drillUnlockNames: Record<DrillType, string> = {
+  jam: 'JAM',
+  fast_word: 'Fast Word',
+  emotion: 'Emotion',
+  synonym: 'Synonym',
+  fake_profile: 'Fake Profile',
+  emoji_story: 'Emoji Story',
+  positive_framing: 'Positive Framing',
+  taboo: 'Taboo',
+  elevator_pitch: 'Elevator Pitch',
+  rephrase: 'Rephrase',
+  negotiation: 'Salary Negotiation',
+  crisis: 'Crisis',
+};
+
+const getDrillDefinition = (drillType: DrillType): Drill => {
+  const drill = drills.find(item => item.drillType === drillType);
+  if (!drill) throw new Error(`Missing Drill definition for ${drillType}.`);
+  return drill;
+};
 
 const drillTaskInstructions: Record<DrillType, DrillInstruction> = {
   jam: {
@@ -234,30 +269,36 @@ const getDrillScoringNote = (drillType: string) => drillType === 'negotiation'
 
 const drillLevels: DrillLevel[] = ['easy', 'medium', 'hard'];
 
+const createInitialLevelProgress = (level: DrillLevel): DrillLevelProgress => {
+  const orderedTypes = drillTypesByLevel[level];
+  const levelUnlocked = level === 'easy';
+  return {
+    unlocked: levelUnlocked,
+    completed: 0,
+    total: orderedTypes.length,
+    completed_types: [],
+    drills: orderedTypes.map((type, index) => ({
+      type,
+      completed: false,
+      unlocked: levelUnlocked && index === 0,
+      prerequisite_type: index > 0 ? orderedTypes[index - 1] : null,
+    })),
+  };
+};
+
 const createInitialProgress = (): DrillProgress => ({
-  easy: {
-    unlocked: true,
-    completed: 0,
-    total: drills.filter(drill => drill.drillLevel === 'easy').length,
-    completed_types: [],
-  },
-  medium: {
-    unlocked: false,
-    completed: 0,
-    total: drills.filter(drill => drill.drillLevel === 'medium').length,
-    completed_types: [],
-  },
-  hard: {
-    unlocked: false,
-    completed: 0,
-    total: drills.filter(drill => drill.drillLevel === 'hard').length,
-    completed_types: [],
-  },
+  easy: createInitialLevelProgress('easy'),
+  medium: createInitialLevelProgress('medium'),
+  hard: createInitialLevelProgress('hard'),
 });
 
 const getLockedLevelCopy = (level: DrillLevel) => level === 'medium'
-  ? 'Complete all Easy drills to unlock.'
-  : 'Complete all Medium drills to unlock.';
+  ? 'Complete all Easy drills to unlock Medium.'
+  : 'Complete all Medium drills to unlock Hard.';
+
+const getLockedDrillCopy = (drillProgress: DrillTypeProgress | undefined) => drillProgress?.prerequisite_type
+  ? `Complete ${drillUnlockNames[drillProgress.prerequisite_type]} first to unlock.`
+  : 'Complete the previous Drill first to unlock.';
 
 const formatPrompt = (prompt: Record<string, unknown>) => {
   return Object.entries(prompt).map(([key, value]) => {
@@ -453,8 +494,14 @@ export function DrillsPage({
   }, [cancelListening]);
 
   const startDrill = async (drill: Drill) => {
-    if (!progress[drill.drillLevel].unlocked) {
+    const levelProgress = progress[drill.drillLevel];
+    const drillProgress = levelProgress.drills.find(item => item.type === drill.drillType);
+    if (!levelProgress.unlocked) {
       setError(getLockedLevelCopy(drill.drillLevel));
+      return;
+    }
+    if (!drillProgress?.unlocked) {
+      setError(getLockedDrillCopy(drillProgress));
       return;
     }
     const attemptId = exerciseGenerationRef.current + 1;
@@ -1087,59 +1134,74 @@ export function DrillsPage({
       <section className="space-y-4">
         {drillLevels.map(level => {
           const levelProgress = progress[level];
-          const levelDrills = drills.filter(drill => drill.drillLevel === level);
-          const isLocked = !levelProgress.unlocked;
+          const levelDrills = drillTypesByLevel[level].map(getDrillDefinition);
+          const isLevelLocked = !levelProgress.unlocked;
           return (
-            <article key={level} className={`rounded-lg border p-5 ${isLocked ? 'border-dashed border-line bg-background' : 'border-line bg-card'}`}>
+            <article key={level} className={`rounded-lg border p-5 ${isLevelLocked ? 'border-dashed border-line bg-background' : 'border-line bg-card'}`}>
               <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="flex items-start gap-3">
-                  <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${isLocked ? 'border border-line bg-card text-muted' : 'program-accent-surface'}`}>
-                    {isLocked ? <Lock className="h-5 w-5" aria-hidden="true" /> : <Dumbbell className="h-6 w-6" aria-hidden="true" />}
+                  <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${isLevelLocked ? 'border border-line bg-card text-muted' : 'program-accent-surface'}`}>
+                    {isLevelLocked ? <Lock className="h-5 w-5" aria-hidden="true" /> : <Dumbbell className="h-6 w-6" aria-hidden="true" />}
                   </div>
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-xl font-bold capitalize text-ink">{level}</h2>
-                      <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${isLocked ? 'border border-line text-muted' : 'program-accent-surface'}`}>
-                        {isLocked ? 'Locked' : 'Unlocked'}
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${isLevelLocked ? 'border border-line text-muted' : 'program-accent-surface'}`}>
+                        {isLevelLocked ? 'Locked' : 'Unlocked'}
                       </span>
                     </div>
                     <p className="mt-1 text-sm font-medium text-muted">
                       {levelProgress.completed} / {levelProgress.total} drills completed
                     </p>
-                    {isLocked && <p className="mt-1 text-sm text-muted">{getLockedLevelCopy(level)}</p>}
+                    {isLevelLocked && <p className="mt-1 text-sm text-muted">{getLockedLevelCopy(level)}</p>}
                   </div>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                 {levelDrills.map(drill => {
-                  const isCompleted = levelProgress.completed_types.includes(drill.drillType);
+                  const drillProgress = levelProgress.drills.find(item => item.type === drill.drillType);
+                  const isCompleted = Boolean(drillProgress?.completed);
+                  const isDrillLocked = !drillProgress?.unlocked;
+                  const lockedCopy = isLevelLocked
+                    ? getLockedLevelCopy(level)
+                    : getLockedDrillCopy(drillProgress);
                   return (
-                    <div key={drill.drillType} className="flex flex-col justify-between rounded-lg border border-line bg-card p-4">
+                    <div
+                      key={drill.drillType}
+                      className={`flex flex-col justify-between rounded-lg border p-4 ${isDrillLocked ? 'border-dashed border-line bg-background' : 'border-line bg-card'}`}
+                    >
                       <div>
                         <div className="flex items-start justify-between gap-3">
                           <h3 className="font-bold text-ink">{drill.title}</h3>
                           <span className={`flex shrink-0 items-center gap-1 text-xs font-bold ${isCompleted ? 'text-success' : 'text-muted'}`}>
-                            {isCompleted ? <Check className="h-4 w-4" aria-hidden="true" /> : <span aria-hidden="true">○</span>}
-                            {isCompleted ? 'Completed' : 'Not completed'}
+                            {isCompleted ? (
+                              <Check className="h-4 w-4" aria-hidden="true" />
+                            ) : isDrillLocked ? (
+                              <Lock className="h-4 w-4" aria-hidden="true" />
+                            ) : (
+                              <span aria-hidden="true">○</span>
+                            )}
+                            {isCompleted ? 'Completed' : isDrillLocked ? 'Locked' : 'Available'}
                           </span>
                         </div>
                         <p className="mt-2 text-sm leading-relaxed text-muted">{drill.description}</p>
+                        {isDrillLocked && <p className="mt-2 text-xs font-semibold text-muted">{lockedCopy}</p>}
                       </div>
                       <button
                         onClick={() => startDrill(drill)}
-                        disabled={isLocked || starting !== null || completing !== null}
-                        className={`mt-4 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed ${isLocked ? 'border border-line bg-background text-muted opacity-70' : 'program-accent-button disabled:opacity-60'}`}
-                        aria-label={isLocked ? `${drill.title} is locked` : undefined}
+                        disabled={isDrillLocked || starting !== null || completing !== null}
+                        className={`mt-4 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed ${isDrillLocked ? 'border border-line bg-card text-muted opacity-70' : 'program-accent-button disabled:opacity-60'}`}
+                        aria-label={isDrillLocked ? `${drill.title} is locked. ${lockedCopy}` : undefined}
                       >
-                        {isLocked ? (
+                        {isDrillLocked ? (
                           <Lock className="h-5 w-5" aria-hidden="true" />
                         ) : starting === drill.drillType ? (
                           <LoaderCircle className="h-5 w-5 animate-spin" />
                         ) : (
                           <ArrowRight className="h-5 w-5" />
                         )}
-                        {isLocked ? 'Locked' : starting === drill.drillType ? 'Starting…' : isCompleted ? 'Replay Drill' : 'Start Drill'}
+                        {isDrillLocked ? 'Locked' : starting === drill.drillType ? 'Starting…' : isCompleted ? 'Replay Drill' : 'Start Drill'}
                       </button>
                     </div>
                   );

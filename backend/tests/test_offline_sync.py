@@ -116,6 +116,19 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         self.client.close()
         self.engine.dispose()
 
+    def add_completed_drills(self, *drill_types: str) -> None:
+        with self.Session() as db:
+            db.add_all([
+                DrillSession(
+                    user_id=1,
+                    drill_type=drill_type,
+                    drill_level="easy" if drill_type in {"jam", "fast_word"} else "medium",
+                    status="completed",
+                )
+                for drill_type in drill_types
+            ])
+            db.commit()
+
     def test_authentication_is_required(self):
         app = FastAPI()
         app.include_router(offline_sync.router, prefix="/offline-sync")
@@ -289,6 +302,7 @@ class OfflineSyncEndpointTests(unittest.TestCase):
             self.assertEqual(db.query(PreTestIntroSession).count(), 0)
 
     def test_drill_is_recomputed_by_canonical_backend_scorer(self):
+        self.add_completed_drills("jam")
         payload = {
             "client_session_id": "drill-client",
             "activity_type": "drill",
@@ -323,6 +337,27 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         with self.Session() as db:
             self.assertEqual(db.query(DrillSession).count(), 0)
 
+    def test_offline_drill_cannot_skip_same_level_prerequisite(self):
+        payload = {
+            "client_session_id": "locked-fast-word-drill",
+            "activity_type": "drill",
+            "question_pack_version": "drills-v1",
+            "answers": [{"step": 1, "text": "one two three four five six seven eight"}],
+            "conversation_log": [],
+            "activity_state": {"drillType": "fast_word", "drillLevel": "easy"},
+        }
+
+        response = self.client.post("/offline-sync", json=payload)
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "drill_type_locked")
+        self.assertEqual(
+            response.json()["detail"]["message"],
+            "Complete JAM first to unlock.",
+        )
+        with self.Session() as db:
+            self.assertEqual(db.query(DrillSession).count(), 0)
+
     def test_synchronized_prerequisites_allow_next_offline_level(self):
         with self.Session() as db:
             db.add_all([
@@ -345,6 +380,7 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         self.assertEqual(response.json()["authoritative_result"]["drill_level"], "medium")
 
     def test_drill_sync_applies_eye_contact_summary(self):
+        self.add_completed_drills("jam")
         payload = {
             "client_session_id": "drill-camera-client",
             "activity_type": "drill",
@@ -367,6 +403,7 @@ class OfflineSyncEndpointTests(unittest.TestCase):
             self.assertEqual(stored.eye_contact_samples, 20)
 
     def test_drill_sync_preserves_valid_zero_percent_eye_contact(self):
+        self.add_completed_drills("jam")
         payload = {
             "client_session_id": "drill-zero-camera-client",
             "activity_type": "drill",
@@ -385,6 +422,7 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         self.assertEqual(result["eye_contact_samples"], 20)
 
     def test_drill_sync_without_samples_produces_no_measurement(self):
+        self.add_completed_drills("jam")
         payload = {
             "client_session_id": "drill-no-camera-client",
             "activity_type": "drill",

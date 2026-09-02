@@ -198,6 +198,13 @@ class DrillCanonicalPromptTests(unittest.TestCase):
 
     def test_negotiation_prompt_is_session_scoped_and_stable(self) -> None:
         self.complete_level("medium")
+        for prerequisite in ("taboo", "elevator_pitch", "rephrase"):
+            self.create_session(
+                drill_level="hard",
+                drill_type=prerequisite,
+                status="completed",
+                canonical_prompt={"seed": prerequisite},
+            )
         first = self.start("hard", "negotiation")
         second = self.start("hard", "negotiation")
 

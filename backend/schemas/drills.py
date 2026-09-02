@@ -31,11 +31,19 @@ class DrillStartRequest(BaseModel):
     drill_type: str
 
 
+class DrillTypeProgress(BaseModel):
+    type: str
+    completed: bool
+    unlocked: bool
+    prerequisite_type: Optional[str] = None
+
+
 class DrillLevelProgress(BaseModel):
     unlocked: bool
     completed: int = Field(ge=0)
     total: int = Field(ge=0)
     completed_types: List[str]
+    drills: List[DrillTypeProgress]
 
 
 class DrillProgressResponse(BaseModel):
