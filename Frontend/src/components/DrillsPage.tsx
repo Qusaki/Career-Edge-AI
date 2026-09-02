@@ -11,6 +11,7 @@ import { combineEyeContactSummaries, type EyeContactSummary } from '../offline/e
 import { evaluateDrill, getOfflineNegotiationTurn } from '../offline/localEvaluation';
 import { DRILLS_VERSION, getOfflineDrillPrompt, hasCurrentQuestionPack, NEGOTIATION_OPENING_PROMPT } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
+import { resolveDrillSessionExecution } from '../utils/drillSessionExecution';
 
 type DrillSession = {
   id: number | string;
@@ -29,13 +30,32 @@ type DrillSession = {
 };
 
 type DrillLevel = 'easy' | 'medium' | 'hard';
+type DrillType =
+  | 'jam'
+  | 'fast_word'
+  | 'emotion'
+  | 'synonym'
+  | 'fake_profile'
+  | 'emoji_story'
+  | 'positive_framing'
+  | 'taboo'
+  | 'elevator_pitch'
+  | 'rephrase'
+  | 'negotiation'
+  | 'crisis';
 
 type Drill = {
   title: string;
   description: string;
   drillLevel: DrillLevel;
-  drillType: string;
+  drillType: DrillType;
   isNegotiation?: boolean;
+};
+
+type DrillInstruction = {
+  task: string;
+  howToAnswer: string;
+  example?: string;
 };
 
 type DrillLevelProgress = {
@@ -128,6 +148,90 @@ const drills: Drill[] = [
   },
 ];
 
+const drillTaskInstructions: Record<DrillType, DrillInstruction> = {
+  jam: {
+    task: 'Practice speaking continuously about the topic shown.',
+    howToAnswer: 'Try to give a natural spoken response, develop your ideas, and stay focused on the topic.',
+    example: 'Use a simple opening, add supporting details, and finish with a brief closing thought.',
+  },
+  fast_word: {
+    task: 'Practice giving a quick response connected to the target word.',
+    howToAnswer: 'Try a short, complete spoken response rather than repeating only the displayed word.',
+  },
+  emotion: {
+    task: 'Practice delivering the sentence using the target emotion.',
+    howToAnswer: 'Try using your voice, pace, and emphasis to express the named emotion as you read the sentence aloud.',
+  },
+  synonym: {
+    task: 'Practice responding with words that have a similar meaning to the target word.',
+    howToAnswer: 'Try one or more similar words, using a short spoken phrase if helpful.',
+  },
+  fake_profile: {
+    task: 'Practice introducing yourself as the fictional person shown.',
+    howToAnswer: 'Try using the displayed name, age, job, and hobby in a clear first-person introduction.',
+    example: 'Use the profile details in a short introduction without adding unrelated personal information.',
+  },
+  emoji_story: {
+    task: 'Practice creating a short spoken story inspired by the emojis shown.',
+    howToAnswer: 'Try connecting the displayed emojis in one understandable story with a beginning, middle, and ending.',
+  },
+  positive_framing: {
+    task: 'Practice reframing the complaint in a more constructive way.',
+    howToAnswer: 'Try keeping the original concern while expressing it calmly, professionally, and with a solution-focused tone.',
+  },
+  taboo: {
+    task: 'Practice explaining the topic without using the listed forbidden words.',
+    howToAnswer: 'Try describing the target clearly with alternative words while avoiding the displayed list.',
+  },
+  elevator_pitch: {
+    task: 'Practice giving a concise spoken pitch for the scenario shown.',
+    howToAnswer: 'Try stating the main value clearly, supporting it with relevant details, and ending with a confident purpose or request.',
+  },
+  rephrase: {
+    task: 'Practice restating the provided text in clear, plain language.',
+    howToAnswer: 'Try preserving the original meaning while replacing complex wording with a concise explanation.',
+  },
+  negotiation: {
+    task: 'Practice responding professionally to the current employer message.',
+    howToAnswer: 'Try continuing the negotiation one turn at a time by accepting, countering the offer, or discussing benefits.',
+  },
+  crisis: {
+    task: 'Practice giving a calm and organized response to the crisis scenario.',
+    howToAnswer: 'Try addressing the situation and listed questions with a responsible, structured spoken response.',
+  },
+};
+
+const promptFieldLabels: Record<string, string> = {
+  topic: 'Topic',
+  word: 'Target word',
+  sentence: 'Sentence',
+  emotion: 'Target emotion',
+  name: 'Name',
+  age: 'Age',
+  job: 'Job',
+  hobby: 'Hobby',
+  emojis: 'Emojis',
+  complaint: 'Situation',
+  banned_words: 'Forbidden words',
+  scenario: 'Scenario',
+  instruction: 'Instructions',
+  text: 'Text to rephrase',
+  questions: 'Questions to address',
+};
+
+const isDrillType = (value: string): value is DrillType => Object.prototype.hasOwnProperty.call(drillTaskInstructions, value);
+
+const getDrillInstruction = (drillType: string): DrillInstruction => isDrillType(drillType)
+  ? drillTaskInstructions[drillType]
+  : {
+      task: 'Practice responding to the Drill prompt shown.',
+      howToAnswer: 'Try giving a clear spoken response based on the available prompt details.',
+    };
+
+const getDrillScoringNote = (drillType: string) => drillType === 'negotiation'
+  ? 'Current automatic scoring focuses mainly on completed conversation turns.'
+  : 'Current automatic scoring focuses mainly on response completion and speaking length.';
+
 const drillLevels: DrillLevel[] = ['easy', 'medium', 'hard'];
 
 const createInitialProgress = (): DrillProgress => ({
@@ -157,7 +261,7 @@ const getLockedLevelCopy = (level: DrillLevel) => level === 'medium'
 
 const formatPrompt = (prompt: Record<string, unknown>) => {
   return Object.entries(prompt).map(([key, value]) => {
-    const label = key.replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+    const label = promptFieldLabels[key] ?? key.replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
     const formattedValue = Array.isArray(value) ? value.join(', ') : String(value);
     return `${label}: ${formattedValue}`;
   }).join('\n');
@@ -199,6 +303,7 @@ export function DrillsPage({
   const exerciseGenerationRef = useRef(0);
   const resumedSessionRef = useRef<string | null>(null);
   const sessionModeRef = useRef(sessionMode);
+  const activeOfflineClientSessionIdRef = useRef<string | null>(null);
   const offlineEyeContactBaselineRef = useRef<EyeContactSummary | null>(null);
   const {
     isListening,
@@ -240,7 +345,12 @@ export function DrillsPage({
   useEffect(() => { sessionModeRef.current = sessionMode; }, [sessionMode]);
 
   useEffect(() => {
-    if (!resumeSession || resumeSession.type !== 'drill' || resumedSessionRef.current === resumeSession.clientSessionId) return;
+    if (
+      !resumeSession
+      || resumeSession.type !== 'drill'
+      || resumeSession.mode !== 'offline'
+      || resumedSessionRef.current === resumeSession.clientSessionId
+    ) return;
     resumedSessionRef.current = resumeSession.clientSessionId;
     if (!hasCurrentQuestionPack('drill', resumeSession.questionPackVersion)) {
       setError('This saved offline activity uses an older question version. It was preserved and cannot be resumed automatically.');
@@ -252,6 +362,7 @@ export function DrillsPage({
       setError('The saved Drill type is not available in the current offline question pack.');
       return;
     }
+    activeOfflineClientSessionIdRef.current = resumeSession.clientSessionId;
     const restoredNegotiationMessages = resumeSession.conversationLog.map(message => ({
       sender: message.sender === 'ai' ? 'bot' as const : 'user' as const,
       text: message.text,
@@ -357,6 +468,7 @@ export function DrillsPage({
     setNegotiationTurn(0);
     setCurrentOffer(35000);
     setNegotiationGameOver(false);
+    activeOfflineClientSessionIdRef.current = null;
     offlineEyeContactBaselineRef.current = null;
     cancelListening();
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
@@ -388,6 +500,7 @@ export function DrillsPage({
           },
         });
         if (!checkpoint || exerciseGenerationRef.current !== attemptId) return;
+        activeOfflineClientSessionIdRef.current = checkpoint.clientSessionId;
         setActiveSession({
           id: checkpoint.clientSessionId,
           drill_level: drill.drillLevel,
@@ -485,6 +598,7 @@ export function DrillsPage({
     setCurrentOffer(35000);
     setNegotiationGameOver(false);
     setIsVoiceSpeaking(false);
+    activeOfflineClientSessionIdRef.current = null;
     offlineEyeContactBaselineRef.current = null;
     setNotice('Drill exited. Mark it complete later to finish it properly.');
     void onActivityEnd('abandoned');
@@ -663,7 +777,19 @@ export function DrillsPage({
 
   const completeDrill = async () => {
     if (!activeSession) return;
-    if (sessionMode === 'offline') {
+    const checkpointOfflineClientSessionId = resumeSession?.type === 'drill' && resumeSession.mode === 'offline'
+      ? resumeSession.clientSessionId
+      : null;
+    const execution = resolveDrillSessionExecution({
+      sessionMode,
+      activeSessionId: activeSession.id,
+      knownOfflineClientSessionId: activeOfflineClientSessionIdRef.current ?? checkpointOfflineClientSessionId,
+    });
+    if (execution.mode === 'invalid') {
+      setError('Unable to verify this Drill session. Please reload the activity and try again. Your response is still available.');
+      return;
+    }
+    if (execution.mode === 'offline') {
       setCompleting(activeSession.id);
       setError(null);
       try {
@@ -704,6 +830,7 @@ export function DrillsPage({
         setNegotiationTurn(0);
         setCurrentOffer(35000);
         setNegotiationGameOver(false);
+        activeOfflineClientSessionIdRef.current = null;
         offlineEyeContactBaselineRef.current = null;
         setNotice('Drill completed locally and is pending sync. Higher levels unlock after server synchronization.');
         onSessionModeChange(false);
@@ -716,20 +843,28 @@ export function DrillsPage({
     }
     const token = localStorage.getItem('token');
     if (!token) return;
+    const serverSessionId = execution.serverSessionId;
     const attemptId = exerciseGenerationRef.current;
     setCompleting(activeSession.id);
     setError(null);
     setNotice(null);
     try {
       const eyeContactSummary = getCheckpointEyeContactSummary();
-      const response = await fetch(`${apiUrl}/drills/${activeSession.id}/complete`, {
+      if (!Number.isSafeInteger(eyeContactSummary.samples) || eyeContactSummary.samples < 0) {
+        throw new Error('Eye-contact sample data is invalid. Your response is still available; restart the camera or retry completion.');
+      }
+      const eyeContactScore = eyeContactSummary.samples > 0 ? eyeContactSummary.score : null;
+      if (eyeContactScore !== null && (!Number.isFinite(eyeContactScore) || eyeContactScore < 0 || eyeContactScore > 100)) {
+        throw new Error('Eye-contact score data is invalid. Your response is still available; restart the camera or retry completion.');
+      }
+      const response = await fetch(`${apiUrl}/drills/${serverSessionId}/complete`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          eye_contact_score: eyeContactSummary.samples > 0 ? eyeContactSummary.score : null,
+          eye_contact_score: eyeContactScore,
           eye_contact_samples: eyeContactSummary.samples,
           evaluation_data: {
             spoken_response: spokenResponse || undefined,
@@ -756,6 +891,7 @@ export function DrillsPage({
       setNegotiationTurn(0);
       setCurrentOffer(35000);
       setNegotiationGameOver(false);
+      activeOfflineClientSessionIdRef.current = null;
       offlineEyeContactBaselineRef.current = null;
       onSessionModeChange(false);
       await loadSessions();
@@ -768,6 +904,8 @@ export function DrillsPage({
   };
 
   if (activeSession) {
+    const activeInstruction = getDrillInstruction(activeSession.drill_type);
+    const activeScoringNote = getDrillScoringNote(activeSession.drill_type);
     return (
       <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
         <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
@@ -810,6 +948,28 @@ export function DrillsPage({
               </div>
             )}
 
+            <div className="mb-4 grid gap-3 rounded-lg border border-line bg-background p-4 sm:grid-cols-2" aria-label="Drill instructions">
+              <div>
+                <p className="text-program-accent text-xs font-bold uppercase tracking-wider">Task</p>
+                <p className="mt-1 text-sm font-semibold leading-relaxed text-ink">{activeInstruction.task}</p>
+              </div>
+              <div>
+                <p className="text-program-accent text-xs font-bold uppercase tracking-wider">How to answer</p>
+                <p className="mt-1 text-sm leading-relaxed text-muted">{activeInstruction.howToAnswer}</p>
+              </div>
+              {activeInstruction.example && (
+                <p className="text-sm leading-relaxed text-muted sm:col-span-2">
+                  <span className="font-semibold text-ink">Answer format: </span>{activeInstruction.example}
+                </p>
+              )}
+              <div className="border-t border-line pt-3 sm:col-span-2">
+                <p className="text-xs font-bold uppercase tracking-wider text-muted">Automatic scoring</p>
+                <p className="mt-1 text-sm leading-relaxed text-muted">
+                  Practice goal: follow the task directions as closely as possible. {activeScoringNote}
+                </p>
+              </div>
+            </div>
+
             <SoundWaveInterviewer
               active={isVoiceSpeaking || negotiationLoading}
               label={isVoiceSpeaking ? 'Speaking...' : negotiationLoading ? 'Preparing reply...' : 'Audio prompt ready'}
@@ -818,7 +978,7 @@ export function DrillsPage({
             {activeSession.drill_type === 'negotiation' ? (
               <>
                 <div className="mb-4 mt-4 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
-                  <p className="text-program-accent mb-2 font-bold">Scenario</p>
+                  <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-wider">Prompt details</p>
                   <p className="whitespace-pre-wrap">{activePrompt || 'Prompt loaded.'}</p>
                 </div>
 
@@ -866,9 +1026,12 @@ export function DrillsPage({
               </>
             ) : (
               <>
-                <pre className="whitespace-pre-wrap rounded-lg border border-line bg-background p-4 font-sans text-base leading-relaxed text-ink">
-                  {activePrompt || 'Prompt loaded.'}
-                </pre>
+                <div className="rounded-lg border border-line bg-background p-4">
+                  <p className="text-program-accent text-xs font-bold uppercase tracking-wider">Prompt</p>
+                  <pre className="mt-2 whitespace-pre-wrap break-words font-sans text-base leading-relaxed text-ink">
+                    {activePrompt || 'Prompt loaded.'}
+                  </pre>
+                </div>
                 <div className="mt-4 min-h-[28vh] rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
                   <p className="text-program-accent mb-2 font-bold">Your spoken response</p>
                   {spokenResponse || <span className="text-muted">Press the mic and answer the drill out loud.</span>}

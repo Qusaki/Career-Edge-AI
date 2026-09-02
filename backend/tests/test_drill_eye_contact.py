@@ -52,20 +52,27 @@ class DrillEyeContactTests(unittest.TestCase):
         self.client.close()
         self.engine.dispose()
 
-    def create_session(self, *, user_id: int = 1) -> DrillSession:
+    def create_session(
+        self,
+        *,
+        user_id: int = 1,
+        drill_level: str = "easy",
+        drill_type: str = "jam",
+        canonical_prompt: dict | None = None,
+    ) -> DrillSession:
         with self.Session() as db:
             session = DrillSession(
                 user_id=user_id,
-                drill_level="easy",
-                drill_type="jam",
-                canonical_prompt={"topic": "Stable camera prompt"},
+                drill_level=drill_level,
+                drill_type=drill_type,
+                canonical_prompt=canonical_prompt or {"topic": "Stable camera prompt"},
             )
             db.add(session)
             db.commit()
             db.refresh(session)
             return session
 
-    def complete(self, session_id: int, **camera):
+    def complete(self, session_id: int | str, **camera):
         return self.client.post(
             f"/drills/{session_id}/complete",
             json={
@@ -106,6 +113,45 @@ class DrillEyeContactTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertIsNone(response.json()["score_eye_contact"])
         self.assertEqual(response.json()["eye_contact_samples"], 0)
+
+    def test_fake_profile_completion_persists_numeric_camera_fields(self) -> None:
+        session = self.create_session(
+            drill_level="medium",
+            drill_type="fake_profile",
+            canonical_prompt={"name": "Alex", "age": 28, "job": "Engineer", "hobby": "Reading"},
+        )
+
+        response = self.complete(session.id, eye_contact_score=75, eye_contact_samples=30)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "completed")
+        self.assertEqual(response.json()["eye_contact_samples"], 30)
+        self.assertIsInstance(response.json()["eye_contact_samples"], int)
+        self.assertEqual(response.json()["canonical_prompt"]["age"], 28)
+        progress = self.client.get("/drills/progress").json()
+        self.assertEqual(progress["medium"]["completed_types"], ["fake_profile"])
+
+    def test_offline_uuid_in_integer_session_path_reproduces_validation_error(self) -> None:
+        local_id = "7f4d6d6e-1b7a-4d28-a6c9-9c0b1d2e3f40"
+
+        response = self.complete(local_id, eye_contact_score=75, eye_contact_samples=20)
+
+        self.assertEqual(response.status_code, 422, response.text)
+        error = response.json()["detail"][0]
+        self.assertEqual(error["loc"], ["path", "session_id"])
+        self.assertEqual(error["type"], "int_parsing")
+        self.assertEqual(error["input"], local_id)
+
+    def test_malformed_numeric_camera_value_is_rejected_without_completion(self) -> None:
+        session = self.create_session()
+
+        response = self.complete(session.id, eye_contact_score=75, eye_contact_samples="twenty")
+
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(response.json()["detail"][0]["loc"], ["body", "eye_contact_samples"])
+        with self.Session() as db:
+            self.assertEqual(db.get(DrillSession, session.id).status, "active")
+        self.assertEqual(self.client.get("/drills/progress").json()["easy"]["completed"], 0)
 
     def test_camera_metric_bounds_are_rejected(self) -> None:
         invalid_metrics = [

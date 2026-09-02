@@ -41,8 +41,11 @@ test('every normal Drill and negotiation share the active-session camera path', 
 
 test('online Drill completion serializes camera metrics without dropping zero percent', () => {
   assert.match(drillsSource, /const eyeContactSummary = getCheckpointEyeContactSummary\(\)/);
-  assert.match(drillsSource, /eye_contact_score: eyeContactSummary\.samples > 0 \? eyeContactSummary\.score : null/);
+  assert.match(drillsSource, /const eyeContactScore = eyeContactSummary\.samples > 0 \? eyeContactSummary\.score : null/);
+  assert.match(drillsSource, /eye_contact_score: eyeContactScore/);
   assert.match(drillsSource, /eye_contact_samples: eyeContactSummary\.samples/);
+  assert.match(drillsSource, /Number\.isSafeInteger\(eyeContactSummary\.samples\)/);
+  assert.match(drillsSource, /Number\.isFinite\(eyeContactScore\)/);
   assert.doesNotMatch(drillsSource, /eye_contact_score:\s*eyeContactSummary\.score\s*\?/);
 });
 

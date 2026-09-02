@@ -28,7 +28,8 @@ test('Drill headings show the drill label without offline UUID or online numeric
 
   // IDs remain internal and available for offline identity and API routing.
   assert.match(source, /id: checkpoint\.clientSessionId/);
-  assert.match(source, /\/drills\/\$\{activeSession\.id\}\/complete/);
+  assert.match(source, /const serverSessionId = execution\.serverSessionId/);
+  assert.match(source, /\/drills\/\$\{serverSessionId\}\/complete/);
 });
 
 test('Post-Test no longer presents its completion session ID and retains internal routing identity', () => {
