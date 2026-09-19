@@ -74,9 +74,36 @@ const getWebSocketUrl = (apiUrl: string, path: string, token: string) => {
 };
 
 const POST_TEST_FIRST_PROMPT_TIMEOUT_MS = 30000;
+const POST_TEST_TURN_TIMEOUT_MS = POST_TEST_FIRST_PROMPT_TIMEOUT_MS;
 const POST_TEST_MAX_RETRIES = 1;
 const POST_TEST_RETRY_BACKOFF_MS = 500;
 const POST_TEST_SESSION_RECOVERY_ERROR = 'Unable to verify this Post-Test session. Please reload the activity and try again.';
+const POST_TEST_AUTH_RECOVERY_ERROR = 'Your session could not be verified. Please sign in again and retry.';
+
+type PostTestCompletionState = {
+  completing: boolean;
+  isSubmittingAnswer: boolean;
+  isAiResponding: boolean;
+  isListening: boolean;
+  isFinalizing: boolean;
+  canComplete: boolean;
+};
+
+export const isPostTestCompletionDisabled = ({
+  completing,
+  isSubmittingAnswer,
+  isAiResponding,
+  isListening,
+  isFinalizing,
+  canComplete,
+}: PostTestCompletionState): boolean => (
+  completing
+  || isSubmittingAnswer
+  || isAiResponding
+  || isListening
+  || isFinalizing
+  || !canComplete
+);
 
 type PostTestPageProps = OfflineActivityBridgeProps & {
   apiUrl: string;
@@ -115,6 +142,7 @@ export function PostTestPage({
   const aiSpeechBufferRef = useRef('');
   const initialReplayExpectedTextRef = useRef<string | null>(null);
   const firstPromptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const postTestTurnTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionAttemptRef = useRef(0);
   const lifecycleGenerationRef = useRef(0);
@@ -122,6 +150,7 @@ export function PostTestPage({
   const activeOfflineClientSessionIdRef = useRef<string | null>(null);
   const offlineEyeContactBaselineRef = useRef<EyeContactSummary | null>(null);
   const answerSubmissionInFlightRef = useRef(false);
+  const completionInFlightRef = useRef(false);
   const [isSubmittingAnswer, setIsSubmittingAnswer] = useState(false);
   const {
     isListening,
@@ -302,6 +331,7 @@ export function PostTestPage({
     lifecycleGenerationRef.current += 1;
     connectionAttemptRef.current += 1;
     if (firstPromptTimeoutRef.current) clearTimeout(firstPromptTimeoutRef.current);
+    if (postTestTurnTimeoutRef.current) clearTimeout(postTestTurnTimeoutRef.current);
     if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     const socket = wsRef.current;
     wsRef.current = null;
@@ -314,6 +344,38 @@ export function PostTestPage({
     if (!firstPromptTimeoutRef.current) return;
     clearTimeout(firstPromptTimeoutRef.current);
     firstPromptTimeoutRef.current = null;
+  };
+
+  const clearPostTestTurnWatchdog = () => {
+    if (!postTestTurnTimeoutRef.current) return;
+    clearTimeout(postTestTurnTimeoutRef.current);
+    postTestTurnTimeoutRef.current = null;
+  };
+
+  const resetPostTestTurnState = () => {
+    clearPostTestTurnWatchdog();
+    answerSubmissionInFlightRef.current = false;
+    aiMessageOpenRef.current = false;
+    aiSpeechBufferRef.current = '';
+    setIsSubmittingAnswer(false);
+    setIsAiResponding(false);
+  };
+
+  const armPostTestTurnWatchdog = (
+    socket: WebSocket,
+    isCurrentAttempt: () => boolean,
+  ) => {
+    clearPostTestTurnWatchdog();
+    postTestTurnTimeoutRef.current = setTimeout(() => {
+      if (!isCurrentAttempt()) return;
+      resetPostTestTurnState();
+      setConnectionState('error');
+      setNotice(null);
+      setError('The interviewer did not finish the next turn. Your answer is saved; reconnect or complete the interview when ready.');
+      connectionAttemptRef.current += 1;
+      wsRef.current = null;
+      if (socket.readyState < WebSocket.CLOSING) socket.close(1000, 'Response timed out.');
+    }, POST_TEST_TURN_TIMEOUT_MS);
   };
 
   function connectPostTestChat(serverSessionId: number, retryCount = 0) {
@@ -330,6 +392,7 @@ export function PostTestPage({
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
+    resetPostTestTurnState();
     const previousSocket = wsRef.current;
     wsRef.current = null;
     if (previousSocket && previousSocket.readyState < WebSocket.CLOSING) {
@@ -376,13 +439,13 @@ export function PostTestPage({
       const responseText = 'text' in data && typeof data.text === 'string' ? data.text : '';
       if (eventType === 'turn_complete') {
         clearFirstPromptTimeout();
-        aiMessageOpenRef.current = false;
-        setIsAiResponding(false);
-        if (aiSpeechBufferRef.current.trim()) {
+        const completedStreamText = aiSpeechBufferRef.current;
+        resetPostTestTurnState();
+        if (completedStreamText.trim()) {
           const initialReplayExpectedText = initialReplayExpectedTextRef.current;
           const replayResolution = resolveInitialPostTestReplay(
             initialReplayExpectedText,
-            aiSpeechBufferRef.current,
+            completedStreamText,
           );
           initialReplayExpectedTextRef.current = null;
           const completedQuestion = replayResolution.completedText;
@@ -407,12 +470,10 @@ export function PostTestPage({
 
       if (eventType === 'error') {
         clearFirstPromptTimeout();
+        resetPostTestTurnState();
         setConnectionState('error');
         setError(normalizeApiError(data, 'The audio interviewer could not respond. Check that the backend service is running.'));
-        aiMessageOpenRef.current = false;
         initialReplayExpectedTextRef.current = null;
-        setIsAiResponding(false);
-        aiSpeechBufferRef.current = '';
         return;
       }
 
@@ -440,16 +501,17 @@ export function PostTestPage({
     };
 
     socket.onerror = () => {
-      // The close event owns retry/error handling and includes the close reason.
+      if (!isCurrentAttempt()) return;
+      clearFirstPromptTimeout();
+      resetPostTestTurnState();
+      setError('The audio interviewer connection was interrupted. Your saved answer is still available.');
     };
 
     socket.onclose = event => {
       if (!isCurrentAttempt()) return;
       wsRef.current = null;
       clearFirstPromptTimeout();
-      aiMessageOpenRef.current = false;
-      setIsAiResponding(false);
-      aiSpeechBufferRef.current = '';
+      resetPostTestTurnState();
       if (event.code === 1000) {
         setConnectionState('idle');
         return;
@@ -585,12 +647,11 @@ export function PostTestPage({
     cancelListening();
     connectionAttemptRef.current += 1;
     clearFirstPromptTimeout();
+    resetPostTestTurnState();
     if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     reconnectTimeoutRef.current = null;
     wsRef.current?.close(1000, 'Exercise closed.');
     wsRef.current = null;
-    aiMessageOpenRef.current = false;
-    aiSpeechBufferRef.current = '';
     initialReplayExpectedTextRef.current = null;
     offlineEyeContactBaselineRef.current = null;
     activeOfflineClientSessionIdRef.current = null;
@@ -610,7 +671,11 @@ export function PostTestPage({
   const sendReply = async (spokenText = reply) => {
     const text = spokenText.trim();
     if (!text || isAiResponding || isVoiceSpeaking) return;
-    if (sessionMode !== 'offline' && (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)) return;
+    const intendedSocket = sessionMode === 'offline' ? null : wsRef.current;
+    if (sessionMode !== 'offline' && (!intendedSocket || intendedSocket.readyState !== WebSocket.OPEN)) {
+      setError('The audio interviewer is disconnected. Reconnect before submitting another answer.');
+      return;
+    }
     if (answerSubmissionInFlightRef.current) return;
     const currentMessages = messagesRef.current;
     const currentBoundary = getPostTestAnswerBoundary(currentMessages);
@@ -628,6 +693,7 @@ export function PostTestPage({
 
     answerSubmissionInFlightRef.current = true;
     setIsSubmittingAnswer(true);
+    let sentToServer = false;
     try {
       aiMessageOpenRef.current = false;
       aiSpeechBufferRef.current = '';
@@ -662,13 +728,19 @@ export function PostTestPage({
         else setNotice('All five offline Post-Test answers are saved. Complete the interview to queue it for sync.');
         return;
       }
+      const socket = wsRef.current;
+      if (!socket || socket !== intendedSocket || socket.readyState !== WebSocket.OPEN) {
+        throw new Error('The audio interviewer disconnected before the saved answer could be submitted.');
+      }
+      socket.send(JSON.stringify({ text }));
+      sentToServer = true;
       setIsAiResponding(true);
-      wsRef.current?.send(JSON.stringify({ text }));
+      armPostTestTurnWatchdog(socket, () => wsRef.current === socket);
     } catch (submissionError) {
+      resetPostTestTurnState();
       setError(submissionError instanceof Error ? submissionError.message : 'Unable to save the Post-Test answer.');
     } finally {
-      answerSubmissionInFlightRef.current = false;
-      setIsSubmittingAnswer(false);
+      if (!sentToServer) resetPostTestTurnState();
     }
   };
 
@@ -699,6 +771,14 @@ export function PostTestPage({
 
   const completePostTest = async () => {
     if (!activeSession) return;
+    if (
+      completing
+      || completionInFlightRef.current
+      || isListening
+      || isFinalizing
+      || isSubmittingAnswer
+      || isAiResponding
+    ) return;
     const checkpointOfflineClientSessionId = resumeSession?.type === 'post_test' && resumeSession.mode === 'offline'
       ? resumeSession.clientSessionId
       : null;
@@ -719,46 +799,54 @@ export function PostTestPage({
       return;
     }
     if (execution.mode === 'offline') {
+      completionInFlightRef.current = true;
       setCompleting(true);
       setError(null);
-      const result = evaluatePostTest(currentMessages);
-      const rawAnswers = currentMessages.filter(message => message.sender === 'user').map((message, index) => ({
-        step: index + 1,
-        text: message.text,
-        createdAt: Date.now(),
-      }));
-      const saved = await onActivityCheckpoint({
-        conversationLog: currentMessages,
-        answers: rawAnswers,
-        responseCount: rawAnswers.length,
-        currentStep: rawAnswers.length,
-        localEvaluation: result.evaluation,
-        localScore: result.localScore,
-        evaluationAuthority: 'local_provisional',
-        pendingEvaluation: null,
-        eyeContactSummary: getCheckpointEyeContactSummary(),
-      });
-      if (!saved || !await onActivityEnd('completed_local')) {
+      try {
+        const result = evaluatePostTest(currentMessages);
+        const rawAnswers = currentMessages.filter(message => message.sender === 'user').map((message, index) => ({
+          step: index + 1,
+          text: message.text,
+          createdAt: Date.now(),
+        }));
+        const saved = await onActivityCheckpoint({
+          conversationLog: currentMessages,
+          answers: rawAnswers,
+          responseCount: rawAnswers.length,
+          currentStep: rawAnswers.length,
+          localEvaluation: result.evaluation,
+          localScore: result.localScore,
+          evaluationAuthority: 'local_provisional',
+          pendingEvaluation: null,
+          eyeContactSummary: getCheckpointEyeContactSummary(),
+        });
+        if (!saved || !await onActivityEnd('completed_local')) return;
+        cancelListening();
+        cancelSpeech();
+        setActiveSession(null);
+        setMessages([]);
+        messagesRef.current = [];
+        setLatestAiQuestion('');
+        offlineEyeContactBaselineRef.current = null;
+        activeOfflineClientSessionIdRef.current = null;
+        setConnectionState('idle');
+        setNotice('Post-Test completed locally and is pending sync.');
+        onSessionModeChange(false);
+      } catch (completionError) {
+        setError(completionError instanceof Error ? completionError.message : 'Unable to complete the Post-Test locally.');
+      } finally {
+        completionInFlightRef.current = false;
         setCompleting(false);
-        return;
       }
-      cancelListening();
-      cancelSpeech();
-      setActiveSession(null);
-      setMessages([]);
-      messagesRef.current = [];
-      setLatestAiQuestion('');
-      offlineEyeContactBaselineRef.current = null;
-      activeOfflineClientSessionIdRef.current = null;
-      setConnectionState('idle');
-      setNotice('Post-Test completed locally and is pending sync.');
-      onSessionModeChange(false);
-      setCompleting(false);
       return;
     }
     const token = localStorage.getItem('token');
-    if (!token) return;
+    if (!token) {
+      setError(POST_TEST_AUTH_RECOVERY_ERROR);
+      return;
+    }
     const lifecycleGeneration = lifecycleGenerationRef.current;
+    completionInFlightRef.current = true;
     setCompleting(true);
     setError(null);
     setNotice(null);
@@ -783,6 +871,8 @@ export function PostTestPage({
         throw new Error(normalizeApiError(body, 'Unable to complete the post-test interview.'));
       }
       cancelListening();
+      clearFirstPromptTimeout();
+      resetPostTestTurnState();
       connectionAttemptRef.current += 1;
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
@@ -804,12 +894,21 @@ export function PostTestPage({
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
       setError(err instanceof Error ? err.message : 'Unable to complete the post-test interview.');
     } finally {
+      completionInFlightRef.current = false;
       if (lifecycleGenerationRef.current === lifecycleGeneration) setCompleting(false);
     }
   };
 
   const visibleUserMessages = messages.filter(message => message.sender === 'user');
   const answerBoundary = getPostTestAnswerBoundary(messages);
+  const postTestCompletionDisabled = isPostTestCompletionDisabled({
+    completing,
+    isSubmittingAnswer,
+    isAiResponding,
+    isListening,
+    isFinalizing,
+    canComplete: answerBoundary.canComplete,
+  });
   const askedQuestionCount = messages.filter(message =>
     message.sender === 'ai' && !message.text.startsWith('You have completed all five Post-Test questions.')
   ).length;
@@ -829,7 +928,7 @@ export function PostTestPage({
             </button>
             <button
               onClick={completePostTest}
-              disabled={completing || isSubmittingAnswer || isAiResponding || !answerBoundary.canComplete}
+              disabled={postTestCompletionDisabled}
               className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
@@ -967,42 +1066,7 @@ export function PostTestPage({
         </div>
       )}
 
-      {activeSession ? (
-        <section className="rounded-lg border border-line bg-card p-5">
-          <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
-            <div>
-              <h2 className="text-xl font-bold text-ink">Post-Test Interview</h2>
-              <p className="mt-1 text-sm text-muted">Question {currentQuestionNumber} of 5</p>
-            </div>
-            <button
-              onClick={completePostTest}
-              disabled={completing || (sessionMode === 'offline'
-                ? messages.filter(message => message.sender === 'user').length < 5
-                : !messages.some(message => message.sender === 'user'))}
-              className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
-              {completing ? 'Completing…' : 'Complete Interview'}
-            </button>
-          </div>
-
-          <div className="flex h-96 items-center justify-center rounded-lg border border-line bg-background p-4 text-center text-muted">
-            Listen to the audio question, then speak your answer.
-          </div>
-
-          <div className="mt-4 flex justify-center">
-            <button
-              onClick={isListening ? stopListening : recordAndSendReply}
-              disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking || isSubmittingAnswer || isFinalizing || !answerBoundary.canAcceptAnswer}
-              className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
-            >
-              {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-              {isListening ? 'Stop Recording' : 'Speak Answer'}
-            </button>
-          </div>
-        </section>
-      ) : (
-        <section className="rounded-lg border border-line bg-card p-5">
+      <section className="rounded-lg border border-line bg-card p-5">
           <div className="flex flex-col justify-between gap-6 md:flex-row md:items-center">
             <div className="flex items-start gap-4">
               <div className="program-accent-surface flex h-12 w-12 shrink-0 items-center justify-center rounded-lg">
@@ -1024,8 +1088,7 @@ export function PostTestPage({
               {starting ? 'Starting…' : 'Start Post-Test'}
             </button>
           </div>
-        </section>
-      )}
+      </section>
 
       <section className="mt-6">
         <div className="mb-2 flex items-center justify-between">

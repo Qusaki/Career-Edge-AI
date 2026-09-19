@@ -245,23 +245,44 @@ async def post_test_chat_ws(
 @router.post("/{session_id}/complete", response_model=PostTestInterviewSessionResponse)
 def complete_session(session_id: int, request: PostTestInterviewCompleteRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Completes and grades the post-test interview session."""
-    session = db.query(PostTestInterviewSession).filter(PostTestInterviewSession.id == session_id, PostTestInterviewSession.user_id == current_user.id).first()
+    session = (
+        db.query(PostTestInterviewSession)
+        .filter(
+            PostTestInterviewSession.id == session_id,
+            PostTestInterviewSession.user_id == current_user.id,
+        )
+        .with_for_update()
+        .first()
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
         
     if session.status == "completed":
         return session
-        
-    # Build Transcript
-    history = db.query(PostTestInterviewMessage).filter(PostTestInterviewMessage.session_id == session.id).order_by(PostTestInterviewMessage.timestamp.asc()).all()
-    if not history and request.conversation:
-        for item in request.conversation:
-            new_msg = PostTestInterviewMessage(session_id=session.id, role=item.sender, content=item.text)
-            db.add(new_msg)
-        db.commit()
-        
+
+    if session.status != "active":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Only active Post-Test sessions can be completed; this session is {session.status}.",
+        )
+
     if not request.evaluation:
         raise HTTPException(status_code=400, detail="Missing frontend evaluation data.")
+
+    persisted_user_answer_count = db.query(PostTestInterviewMessage).filter(
+        PostTestInterviewMessage.session_id == session.id,
+        PostTestInterviewMessage.role == "user",
+    ).count()
+    if persisted_user_answer_count < 5:
+        raise HTTPException(
+            status_code=409,
+            detail="Complete all five Post-Test questions before finishing this session.",
+        )
+    if persisted_user_answer_count > 5:
+        raise HTTPException(
+            status_code=409,
+            detail="This Post-Test contains more than five persisted answers and requires manual recovery.",
+        )
         
     try:
         evaluation = request.evaluation
@@ -303,6 +324,7 @@ def complete_session(session_id: int, request: PostTestInterviewCompleteRequest,
         
         return session
     except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to save evaluation: {e}")
 
 @router.get("/{session_id}", response_model=PostTestInterviewSessionWithMessagesResponse)

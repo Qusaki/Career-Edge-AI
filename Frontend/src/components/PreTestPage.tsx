@@ -115,9 +115,36 @@ const getWebSocketUrl = (apiUrl: string, path: string, token: string) => {
 };
 
 const ACTIVE_LISTENING_FIRST_TOKEN_TIMEOUT_MS = 180000;
+const ACTIVE_LISTENING_TURN_TIMEOUT_MS = ACTIVE_LISTENING_FIRST_TOKEN_TIMEOUT_MS;
 const ACTIVE_LISTENING_MAX_RETRIES = 1;
 const ACTIVE_LISTENING_RETRY_BACKOFF_MS = 500;
 const PRE_TEST_SESSION_RECOVERY_ERROR = 'Unable to verify this Pre-Test session. Please reload the activity and try again.';
+const PRE_TEST_AUTH_RECOVERY_ERROR = 'Your session could not be verified. Please sign in again and retry.';
+
+type ActiveListeningCompletionState = {
+  completing: boolean;
+  isSubmittingAnswer: boolean;
+  isAiResponding: boolean;
+  isListening: boolean;
+  isFinalizing: boolean;
+  hasUserResponse: boolean;
+};
+
+export const isActiveListeningCompletionDisabled = ({
+  completing,
+  isSubmittingAnswer,
+  isAiResponding,
+  isListening,
+  isFinalizing,
+  hasUserResponse,
+}: ActiveListeningCompletionState): boolean => (
+  completing
+  || isSubmittingAnswer
+  || isAiResponding
+  || isListening
+  || isFinalizing
+  || !hasUserResponse
+);
 
 type PreTestPageProps = OfflineActivityBridgeProps & {
   apiUrl: string;
@@ -158,7 +185,9 @@ export function PreTestPage({
   const initialActiveListeningReplayRef = useRef<PreTestChatMessage | null>(null);
   const answerSubmissionInFlightRef = useRef(false);
   const activeListeningTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeListeningTurnTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const completionInFlightRef = useRef(false);
   const connectionAttemptRef = useRef(0);
   const lifecycleGenerationRef = useRef(0);
   const offlineEyeContactBaselineRef = useRef<EyeContactSummary | null>(null);
@@ -305,6 +334,7 @@ export function PreTestPage({
     lifecycleGenerationRef.current += 1;
     connectionAttemptRef.current += 1;
     if (activeListeningTimeoutRef.current) clearTimeout(activeListeningTimeoutRef.current);
+    if (activeListeningTurnTimeoutRef.current) clearTimeout(activeListeningTurnTimeoutRef.current);
     if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     const socket = wsRef.current;
     wsRef.current = null;
@@ -317,6 +347,38 @@ export function PreTestPage({
     if (!activeListeningTimeoutRef.current) return;
     clearTimeout(activeListeningTimeoutRef.current);
     activeListeningTimeoutRef.current = null;
+  };
+
+  const clearActiveListeningTurnWatchdog = () => {
+    if (!activeListeningTurnTimeoutRef.current) return;
+    clearTimeout(activeListeningTurnTimeoutRef.current);
+    activeListeningTurnTimeoutRef.current = null;
+  };
+
+  const resetActiveListeningTurnState = () => {
+    clearActiveListeningTurnWatchdog();
+    answerSubmissionInFlightRef.current = false;
+    aiMessageOpenRef.current = false;
+    aiSpeechBufferRef.current = '';
+    setIsSubmittingAnswer(false);
+    setIsAiResponding(false);
+  };
+
+  const armActiveListeningTurnWatchdog = (
+    socket: WebSocket,
+    isCurrentAttempt: () => boolean,
+  ) => {
+    clearActiveListeningTurnWatchdog();
+    activeListeningTurnTimeoutRef.current = setTimeout(() => {
+      if (!isCurrentAttempt()) return;
+      resetActiveListeningTurnState();
+      setConnectionState('error');
+      setNotice(null);
+      setError('The audio interviewer did not finish the response. Your answer is saved; reconnect or complete the exercise when ready.');
+      connectionAttemptRef.current += 1;
+      wsRef.current = null;
+      if (socket.readyState < WebSocket.CLOSING) socket.close(1000, 'Response timed out.');
+    }, ACTIVE_LISTENING_TURN_TIMEOUT_MS);
   };
 
   const speakText = useCallback((text: string) => {
@@ -352,6 +414,7 @@ export function PreTestPage({
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
+    resetActiveListeningTurnState();
     const previousSocket = wsRef.current;
     wsRef.current = null;
     if (previousSocket && previousSocket.readyState < WebSocket.CLOSING) {
@@ -401,15 +464,13 @@ export function PreTestPage({
         : null;
       if (eventType === 'turn_complete') {
         clearActiveListeningTimeout();
-        aiMessageOpenRef.current = false;
-        setIsAiResponding(false);
-        answerSubmissionInFlightRef.current = false;
-        setIsSubmittingAnswer(false);
         const initialReplay = initialActiveListeningReplayRef.current;
+        const completedStreamText = aiSpeechBufferRef.current;
+        resetActiveListeningTurnState();
         const replayResolution = resolveInitialActiveListeningReplay(
           initialReplay,
           serverMessageId,
-          aiSpeechBufferRef.current,
+          completedStreamText,
         );
         initialActiveListeningReplayRef.current = null;
         const completedQuestion = replayResolution.completedText;
@@ -448,14 +509,10 @@ export function PreTestPage({
 
       if (eventType === 'error') {
         clearActiveListeningTimeout();
+        resetActiveListeningTurnState();
         setConnectionState('error');
         setError(normalizeApiError(data, 'The audio interviewer could not respond. Check that the backend service is running.'));
-        aiMessageOpenRef.current = false;
         initialActiveListeningReplayRef.current = null;
-        answerSubmissionInFlightRef.current = false;
-        setIsSubmittingAnswer(false);
-        setIsAiResponding(false);
-        aiSpeechBufferRef.current = '';
         return;
       }
 
@@ -481,19 +538,18 @@ export function PreTestPage({
     };
 
     socket.onerror = () => {
-      // The close event owns retry/error handling and includes the close reason.
+      if (!isCurrentAttempt()) return;
+      clearActiveListeningTimeout();
+      resetActiveListeningTurnState();
+      setError('The audio interviewer connection was interrupted. Your saved response is still available.');
     };
 
     socket.onclose = event => {
       if (!isCurrentAttempt()) return;
       wsRef.current = null;
       clearActiveListeningTimeout();
-      aiMessageOpenRef.current = false;
+      resetActiveListeningTurnState();
       initialActiveListeningReplayRef.current = null;
-      answerSubmissionInFlightRef.current = false;
-      setIsSubmittingAnswer(false);
-      setIsAiResponding(false);
-      aiSpeechBufferRef.current = '';
       if (event.code === 1000) {
         setConnectionState('idle');
         return;
@@ -685,19 +741,16 @@ export function PreTestPage({
     cancelListening();
     connectionAttemptRef.current += 1;
     clearActiveListeningTimeout();
+    resetActiveListeningTurnState();
     if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     reconnectTimeoutRef.current = null;
     wsRef.current?.close(1000, 'Exercise closed.');
     wsRef.current = null;
-    aiMessageOpenRef.current = false;
-    aiSpeechBufferRef.current = '';
     initialActiveListeningReplayRef.current = null;
-    answerSubmissionInFlightRef.current = false;
     offlineEyeContactBaselineRef.current = null;
     activeOfflineClientSessionIdRef.current = null;
     introTranscriptRef.current = '';
     introPersistenceInFlightRef.current = false;
-    setIsSubmittingAnswer(false);
     setIsPersistingIntro(false);
     setActiveExercise(null);
     setActiveSession(null);
@@ -715,7 +768,10 @@ export function PreTestPage({
   const sendReply = async (spokenText = reply) => {
     const text = spokenText.trim();
     if (!text || isAiResponding) return;
-    if (sessionMode !== 'offline' && (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)) return;
+    if (sessionMode !== 'offline' && (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)) {
+      setError('The audio interviewer is disconnected. Reconnect before submitting another response.');
+      return;
+    }
     const isOnlineSubmission = sessionMode !== 'offline';
     if (isOnlineSubmission && answerSubmissionInFlightRef.current) return;
     if (isOnlineSubmission) {
@@ -752,15 +808,16 @@ export function PreTestPage({
       if (!socket || socket.readyState !== WebSocket.OPEN) {
         throw new Error('The audio interviewer disconnected before the response could be submitted.');
       }
-      setIsAiResponding(true);
       socket.send(JSON.stringify({ text }));
       sentToServer = true;
+      setIsAiResponding(true);
+      armActiveListeningTurnWatchdog(socket, () => wsRef.current === socket);
     } catch (submissionError) {
+      if (isOnlineSubmission) resetActiveListeningTurnState();
       setError(submissionError instanceof Error ? submissionError.message : 'Unable to submit the Active Listening response.');
     } finally {
       if (isOnlineSubmission && !sentToServer) {
-        answerSubmissionInFlightRef.current = false;
-        setIsSubmittingAnswer(false);
+        resetActiveListeningTurnState();
       }
     }
   };
@@ -881,7 +938,12 @@ export function PreTestPage({
 
   const completeActiveExercise = async () => {
     if (!activeSession || !activeExercise) return;
+    if (completing || completionInFlightRef.current) return;
     if (activeExercise.kind === 'intro' && introPersistenceInFlightRef.current) return;
+    if (
+      activeExercise.kind === 'active-listening'
+      && (isListening || isFinalizing || isSubmittingAnswer || isAiResponding)
+    ) return;
     const introExecution = activeExercise.kind === 'intro'
       ? resolvePreTestSessionExecution({
           sessionMode,
@@ -905,48 +967,56 @@ export function PreTestPage({
       return;
     }
     if (introExecution?.mode === 'offline' || activeListeningExecution?.mode === 'offline') {
+      completionInFlightRef.current = true;
       setCompleting(true);
       setError(null);
-      const isIntro = activeExercise.kind === 'intro';
-      const result = isIntro ? evaluateWhoAmI(introTranscript) : evaluateActiveListening(messages);
-      const checkpointSaved = await onActivityCheckpoint({
-        conversationLog: isIntro ? [] : messages,
-        responseCount: isIntro ? (introTranscript.trim() ? 1 : 0) : messages.filter(message => message.sender === 'user').length,
-        currentStep: isIntro ? 1 : messages.filter(message => message.sender === 'user').length,
-        answers: isIntro
-          ? [{ step: 1, text: introTranscript.trim(), createdAt: Date.now() }]
-          : messages.filter(message => message.sender === 'user').map((message, index) => ({ step: index + 1, text: message.text, createdAt: Date.now() })),
-        localEvaluation: result.evaluation,
-        localScore: result.localScore,
-        evaluationAuthority: 'local_provisional',
-        pendingEvaluation: isIntro ? null : {
-          aiFeedback: true,
-          reason: 'Summary accuracy and detailed AI feedback require server evaluation after sync.',
-        },
-        eyeContactSummary: getCheckpointEyeContactSummary(),
-      });
-      if (!checkpointSaved || !await onActivityEnd('completed_local')) {
+      try {
+        const isIntro = activeExercise.kind === 'intro';
+        const result = isIntro ? evaluateWhoAmI(introTranscript) : evaluateActiveListening(messages);
+        const checkpointSaved = await onActivityCheckpoint({
+          conversationLog: isIntro ? [] : messages,
+          responseCount: isIntro ? (introTranscript.trim() ? 1 : 0) : messages.filter(message => message.sender === 'user').length,
+          currentStep: isIntro ? 1 : messages.filter(message => message.sender === 'user').length,
+          answers: isIntro
+            ? [{ step: 1, text: introTranscript.trim(), createdAt: Date.now() }]
+            : messages.filter(message => message.sender === 'user').map((message, index) => ({ step: index + 1, text: message.text, createdAt: Date.now() })),
+          localEvaluation: result.evaluation,
+          localScore: result.localScore,
+          evaluationAuthority: 'local_provisional',
+          pendingEvaluation: isIntro ? null : {
+            aiFeedback: true,
+            reason: 'Summary accuracy and detailed AI feedback require server evaluation after sync.',
+          },
+          eyeContactSummary: getCheckpointEyeContactSummary(),
+        });
+        if (!checkpointSaved || !await onActivityEnd('completed_local')) return;
+        cancelListening();
+        setActiveExercise(null);
+        setActiveSession(null);
+        setMessages([]);
+        messagesRef.current = [];
+        offlineEyeContactBaselineRef.current = null;
+        activeOfflineClientSessionIdRef.current = null;
+        introTranscriptRef.current = '';
+        setIntroTranscript('');
+        setConnectionState('idle');
+        setNotice(`${activeExercise.title} completed locally and is pending sync.`);
+        onSessionModeChange(false);
+      } catch (completionError) {
+        setError(completionError instanceof Error ? completionError.message : `Unable to complete ${activeExercise.title}.`);
+      } finally {
+        completionInFlightRef.current = false;
         setCompleting(false);
-        return;
       }
-      cancelListening();
-      setActiveExercise(null);
-      setActiveSession(null);
-      setMessages([]);
-      messagesRef.current = [];
-      offlineEyeContactBaselineRef.current = null;
-      activeOfflineClientSessionIdRef.current = null;
-      introTranscriptRef.current = '';
-      setIntroTranscript('');
-      setConnectionState('idle');
-      setNotice(`${activeExercise.title} completed locally and is pending sync.`);
-      onSessionModeChange(false);
-      setCompleting(false);
       return;
     }
     const token = localStorage.getItem('token');
-    if (!token) return;
+    if (!token) {
+      setError(PRE_TEST_AUTH_RECOVERY_ERROR);
+      return;
+    }
     const lifecycleGeneration = lifecycleGenerationRef.current;
+    completionInFlightRef.current = true;
     setCompleting(true);
     setError(null);
     setNotice(null);
@@ -989,18 +1059,20 @@ export function PreTestPage({
         throw new Error(normalizeApiError(body, `Unable to complete ${activeExercise.title}.`));
       }
       cancelListening();
+      clearActiveListeningTimeout();
+      resetActiveListeningTurnState();
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      setIsVoiceSpeaking(false);
       connectionAttemptRef.current += 1;
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
       wsRef.current?.close(1000, 'Exercise completed.');
       wsRef.current = null;
       initialActiveListeningReplayRef.current = null;
-      answerSubmissionInFlightRef.current = false;
       offlineEyeContactBaselineRef.current = null;
       activeOfflineClientSessionIdRef.current = null;
       introTranscriptRef.current = '';
       introPersistenceInFlightRef.current = false;
-      setIsSubmittingAnswer(false);
       setIsPersistingIntro(false);
       setConnectionState('idle');
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
@@ -1016,11 +1088,20 @@ export function PreTestPage({
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
       setError(err instanceof Error ? err.message : `Unable to complete ${activeExercise.title}.`);
     } finally {
+      completionInFlightRef.current = false;
       if (lifecycleGenerationRef.current === lifecycleGeneration) setCompleting(false);
     }
   };
 
   const visibleActiveListeningMessages = getVisibleActiveListeningMessages(messages);
+  const activeListeningCompletionDisabled = isActiveListeningCompletionDisabled({
+    completing,
+    isSubmittingAnswer,
+    isAiResponding,
+    isListening,
+    isFinalizing,
+    hasUserResponse: messages.some(message => message.sender === 'user'),
+  });
 
   if (activeExercise && activeSession) {
     return (
@@ -1038,7 +1119,7 @@ export function PreTestPage({
               onClick={completeActiveExercise}
               disabled={completing || (activeExercise.kind === 'intro'
                 ? isPersistingIntro || !introTranscript.trim()
-                : isSubmittingAnswer || isAiResponding || !messages.some(message => message.sender === 'user'))}
+                : activeListeningCompletionDisabled)}
               className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
@@ -1211,95 +1292,7 @@ export function PreTestPage({
         </div>
       )}
 
-      {activeExercise && activeSession ? (
-        <section className="rounded-lg border border-line bg-card p-5">
-          <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
-            <div>
-              <h2 className="text-xl font-bold text-ink">{activeExercise.kind === 'active-listening' ? 'Active Listening' : activeExercise.title}</h2>
-              <p className="mt-1 text-sm text-muted">
-                {activeExercise.kind === 'intro'
-                  ? 'Introduce yourself clearly, completely, and concisely.'
-                  : 'Listen first, then summarize the story or instructions accurately.'}
-              </p>
-            </div>
-            <button
-              onClick={completeActiveExercise}
-              disabled={completing || (activeExercise.kind === 'intro'
-                ? isPersistingIntro || !introTranscript.trim()
-                : isSubmittingAnswer || isAiResponding || !messages.some(message => message.sender === 'user'))}
-              className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
-              {completing ? 'Completing…' : 'Complete Exercise'}
-            </button>
-          </div>
-
-          {activeExercise.kind === 'intro' ? (
-            <div>
-              <div className="rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
-                <p className="text-program-accent font-bold">Prompt</p>
-                <p className="mt-1">
-                  {PRETEST_WHO_AM_I_PROMPT}
-                </p>
-              </div>
-              <div className="mt-4 min-h-48 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
-                {introTranscript || <span className="text-muted">Press the mic and speak your self-introduction.</span>}
-              </div>
-              <div className="mt-4 flex justify-center">
-                <button
-                  onClick={isListening ? stopListening : recordIntro}
-                  disabled={isPersistingIntro || isFinalizing || isVoiceSpeaking}
-                  className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
-                >
-                  {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-                  {isListening ? 'Stop Recording' : 'Speak Answer'}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="h-48 overflow-y-auto rounded-lg border border-line bg-background p-4 sm:h-56">
-                {visibleActiveListeningMessages.length === 0 && error ? (
-                  <div className="flex h-full items-center justify-center text-center text-sm leading-relaxed text-rose-700">
-                    {error}
-                  </div>
-                ) : visibleActiveListeningMessages.length === 0 ? (
-                  <div className="flex h-full items-center justify-center gap-2 text-center text-muted">
-                    {messages.length === 0 ? (
-                      <>
-                        <LoaderCircle className="h-5 w-5 animate-spin" /> Preparing audio prompt...
-                      </>
-                    ) : (
-                      'Listen to the audio prompt, then speak your answer.'
-                    )}
-                  </div>
-                ) : visibleActiveListeningMessages.map((message, index) => (
-                  <div key={message.id ?? index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'program-accent-fill' : 'border border-line bg-card text-ink'}`}>
-                      <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">
-                        {message.sender === 'user' ? 'You' : 'Professor Maxiel'}
-                      </p>
-                      {message.text}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-4 flex justify-center">
-                <button
-                  onClick={isListening ? stopListening : recordAndSendReply}
-                  disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking || isSubmittingAnswer || isFinalizing}
-                  className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
-                >
-                  {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-                  {isListening ? 'Stop Recording' : 'Speak Answer'}
-                </button>
-              </div>
-            </>
-          )}
-        </section>
-      ) : (
-        <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {exercises.map(exercise => (
             <article key={exercise.endpoint} className="flex flex-col justify-between rounded-lg border border-line bg-card p-5">
               <div>
@@ -1319,8 +1312,7 @@ export function PreTestPage({
               </button>
             </article>
           ))}
-        </section>
-      )}
+      </section>
 
       <section className="mt-6">
         <div className="mb-2 flex items-center justify-between">

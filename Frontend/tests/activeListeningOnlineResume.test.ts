@@ -129,4 +129,5 @@ test('PreTestPage hydrates server history before connecting and guards one onlin
   assert.match(source, /if \(initialActiveListeningReplayRef\.current !== null\) return;/);
   assert.match(source, /answerSubmissionInFlightRef\.current/);
   assert.match(source, /disabled=\{connectionState !== 'ready' \|\| isAiResponding \|\| isVoiceSpeaking \|\| isSubmittingAnswer\}/);
+  assert.match(source, /activeListeningCompletionDisabled/);
 });

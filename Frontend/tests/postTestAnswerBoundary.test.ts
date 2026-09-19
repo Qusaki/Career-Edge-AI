@@ -121,5 +121,8 @@ test('PostTestPage applies the answer boundary before microphone, checkpoint, co
   assert.match(source, /appendPostTestUserAnswer\(currentMessages, text\)/);
   assert.match(source, /requireExactPostTestAnswerCount\(currentMessages\)/);
   assert.match(source, /!answerBoundary\.canAcceptAnswer/);
-  assert.match(source, /wsRef\.current\?\.send\(JSON\.stringify\(\{ text \}\)\)/);
+  assert.match(source, /const intendedSocket = sessionMode === 'offline' \? null : wsRef\.current/);
+  assert.match(source, /const socket = wsRef\.current/);
+  assert.match(source, /socket !== intendedSocket/);
+  assert.match(source, /socket\.send\(JSON\.stringify\(\{ text \}\)\)/);
 });
