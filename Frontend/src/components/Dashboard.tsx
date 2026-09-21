@@ -53,6 +53,7 @@ import {
 } from '../offline/sessionFoundation';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME, getClearSpeechTimeoutMs } from '../utils/speech';
 import { API_URL } from '../config/api';
+import { isPostTestUnlocked, postTestAccessForUser, readPostTestAccess, requestPostTestNavigation, retainPostTestVerificationForUser, UNKNOWN_POST_TEST_VERIFICATION, verifyPostTestAccess, type PostTestAccess, type PostTestVerificationState } from '../utils/postTestProgress';
 import { getProgramAccentTheme } from '../config/programTheme';
 import {
   buildActivityComparison,
@@ -296,6 +297,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const [communicationHistory, setCommunicationHistory] = useState<any[]>([]);
   const [authenticatedUserId, setAuthenticatedUserId] = useState<number | null>(null);
   const authenticatedUserIdRef = React.useRef<number | null>(null);
+  const [postTestVerification, setPostTestVerification] = useState<PostTestVerificationState>(UNKNOWN_POST_TEST_VERIFICATION);
+  const [postTestProgressChecking, setPostTestProgressChecking] = useState(false);
+  const [postTestProgressError, setPostTestProgressError] = useState<string | null>(null);
+  const [postTestLockNotice, setPostTestLockNotice] = useState(false);
+  const postTestProgressRequestRef = React.useRef(0);
+  const postTestAccess = postTestAccessForUser(postTestVerification, authenticatedUserId);
+  const postTestLockGuidance = postTestAccess
+    ? 'Complete all Drills to unlock.'
+    : postTestProgressError || 'Drill progress has not been verified yet.';
   const [activeActivityCheckpoint, setActiveActivityCheckpoint] = useState<AccountOfflineSession | null>(null);
   const activeActivityCheckpointRef = React.useRef<AccountOfflineSession | null>(null);
   const [showConnectionLossPrompt, setShowConnectionLossPrompt] = useState(false);
@@ -1071,6 +1081,64 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     };
   }, [API_URL, onLogout]);
 
+  const refreshPostTestProgress = React.useCallback(async (userId: number) => {
+    if (authenticatedUserIdRef.current !== userId) return;
+    const requestId = ++postTestProgressRequestRef.current;
+    const token = localStorage.getItem('token');
+    setPostTestProgressChecking(true);
+    setPostTestProgressError(null);
+    if (!token) {
+      setPostTestVerification(UNKNOWN_POST_TEST_VERIFICATION);
+      setPostTestProgressChecking(false);
+      return;
+    }
+    try {
+      const response = await fetch(`${API_URL}/drills/progress`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error('Unable to verify Drill progress.');
+      const access = readPostTestAccess(await response.json());
+      if (!access) throw new Error('Drill progress response is incomplete.');
+      if (authenticatedUserIdRef.current !== userId || postTestProgressRequestRef.current !== requestId) return;
+      setPostTestVerification(verifyPostTestAccess(userId, access));
+      setPostTestProgressError(null);
+    } catch (error) {
+      if (authenticatedUserIdRef.current !== userId || postTestProgressRequestRef.current !== requestId) return;
+      console.warn('Post-Test access could not be verified.', error);
+      setPostTestVerification(current => retainPostTestVerificationForUser(current, userId));
+      setPostTestProgressError('Unable to refresh Drill progress. Check your connection and try again.');
+    } finally {
+      if (authenticatedUserIdRef.current === userId && postTestProgressRequestRef.current === requestId) {
+        setPostTestProgressChecking(false);
+      }
+    }
+  }, []);
+
+  const handleDrillProgressChange = React.useCallback((progress: PostTestAccess) => {
+    const userId = authenticatedUserId;
+    if (!userId || authenticatedUserIdRef.current !== userId) return;
+    postTestProgressRequestRef.current += 1;
+    setPostTestVerification(verifyPostTestAccess(userId, progress));
+    setPostTestProgressError(null);
+    setPostTestProgressChecking(false);
+    setPostTestLockNotice(false);
+  }, [authenticatedUserId]);
+
+  useEffect(() => {
+    if (!authenticatedUserId) {
+      postTestProgressRequestRef.current += 1;
+      setPostTestVerification(UNKNOWN_POST_TEST_VERIFICATION);
+      setPostTestProgressError(null);
+      setPostTestLockNotice(false);
+      setPostTestProgressChecking(false);
+      return;
+    }
+    setPostTestVerification(current => retainPostTestVerificationForUser(current, authenticatedUserId));
+    setPostTestProgressError(null);
+    setPostTestLockNotice(false);
+    if (connectivity.effectiveOnline) void refreshPostTestProgress(authenticatedUserId);
+  }, [authenticatedUserId, connectivity.effectiveOnline, refreshPostTestProgress]);
+
   useEffect(() => {
     if (!authenticatedUserId) return;
     void fetchHistory(authenticatedUserId, profile.department);
@@ -1162,6 +1230,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         fetchHistory(authenticatedUserId, profile.department),
         fetchThesisHistory(authenticatedUserId, profile.department),
         fetchCommunicationHistory(authenticatedUserId),
+        refreshPostTestProgress(authenticatedUserId),
       ]);
     }).catch(error => {
       console.warn('Bounded offline synchronization stopped safely.', error);
@@ -1176,6 +1245,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     fetchCommunicationHistory,
     fetchHistory,
     fetchThesisHistory,
+    refreshPostTestProgress,
     applySyncQueueUpdate,
     profile.department,
   ]);
@@ -1202,6 +1272,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         fetchHistory(authenticatedUserId, profile.department),
         fetchThesisHistory(authenticatedUserId, profile.department),
         fetchCommunicationHistory(authenticatedUserId),
+        refreshPostTestProgress(authenticatedUserId),
       ]);
     } catch (error) {
       setOfflineFoundationError(
@@ -1215,6 +1286,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     fetchCommunicationHistory,
     fetchHistory,
     fetchThesisHistory,
+    refreshPostTestProgress,
     profile.department,
   ]);
 
@@ -3291,6 +3363,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const resumeOwnedOfflineActivity = async () => {
     const resumable = resumableOfflineSession;
     if (!resumable || resumable.userId !== authenticatedUserIdRef.current) return;
+    if (resumable.type === 'post_test' && !isPostTestUnlocked(postTestAccess)) {
+      setOfflineFoundationError('Post-Test is locked. Complete all Drill activities before resuming it.');
+      return;
+    }
     if (!hasCurrentQuestionPack(resumable.type, resumable.questionPackVersion)) {
       setOfflineFoundationError(
         'This saved offline activity uses an older question version. It has been preserved and cannot be resumed automatically.',
@@ -3622,12 +3698,23 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                 Drills
               </button>
               <button
-                onClick={() => setActiveTab('post-test')}
-                className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'post-test' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
+                onClick={() => {
+                  requestPostTestNavigation(
+                    postTestAccess,
+                    () => { setPostTestLockNotice(false); setActiveTab('post-test'); },
+                    () => setPostTestLockNotice(true),
+                  );
+                }}
+                aria-disabled={!isPostTestUnlocked(postTestAccess)}
+                title={isPostTestUnlocked(postTestAccess) ? 'Post-Test' : postTestLockGuidance}
+                className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${isPostTestUnlocked(postTestAccess) ? activeTab === 'post-test' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink' : 'cursor-not-allowed text-muted opacity-60'}`}
               >
-                <ClipboardCheck className="w-5 h-5" />
+                {isPostTestUnlocked(postTestAccess) ? <ClipboardCheck className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
                 Post-Test
               </button>
+              {postTestLockNotice && !isPostTestUnlocked(postTestAccess) && (
+                <p role="status" className="px-2 text-xs text-muted">{postTestAccess ? 'Post-Test is locked. Complete all Drill activities first.' : postTestLockGuidance}</p>
+              )}
               <button
                 onClick={() => setActiveTab('history')}
                 className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'history' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
@@ -3825,6 +3912,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
               <DrillsPage
                 apiUrl={API_URL}
                 onSessionModeChange={setIsModuleSessionMode}
+                onProgressChange={handleDrillProgressChange}
                 effectiveOnline={connectivity.effectiveOnline}
                 sessionMode={getActiveActivityMode('drill')}
                 resumeSession={activeActivityCheckpoint?.type === 'drill' ? activeActivityCheckpoint : null}
@@ -3838,6 +3926,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
             {activeTab === 'post-test' && (
               <PostTestPage
                 apiUrl={API_URL}
+                postTestAccess={postTestAccess}
+                progressChecking={postTestProgressChecking}
+                progressFetchError={postTestProgressError}
+                onGoToDrills={() => { setIsModuleSessionMode(false); setActiveTab('drills'); }}
                 onSessionModeChange={setIsModuleSessionMode}
                 effectiveOnline={connectivity.effectiveOnline}
                 sessionMode={getActiveActivityMode('post_test')}

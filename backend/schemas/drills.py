@@ -50,6 +50,9 @@ class DrillProgressResponse(BaseModel):
     easy: DrillLevelProgress
     medium: DrillLevelProgress
     hard: DrillLevelProgress
+    post_test_unlocked: bool
+    completed_drill_count: int = Field(ge=0)
+    required_drill_count: int = Field(ge=0)
 
 class DrillCompleteRequest(BaseModel):
     score: Optional[float] = None

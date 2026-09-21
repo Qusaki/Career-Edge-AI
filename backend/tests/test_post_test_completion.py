@@ -9,7 +9,9 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from core.deps import get_current_user
+from core.drill_progression import DRILL_LEVEL_BY_TYPE
 from database import Base, get_db
+from models.drills import DrillSession
 from models.post_test_interview import PostTestInterviewMessage, PostTestInterviewSession
 from models.user import User
 from routers import post_test_interview
@@ -43,6 +45,10 @@ class PostTestCompletionTests(unittest.TestCase):
             db.add_all([
                 User(id=1, email="post-owner@example.com", hashed_password="x", firstname="Post", lastname="Owner", department="CCIT"),
                 User(id=2, email="post-other@example.com", hashed_password="x", firstname="Other", lastname="User", department="CCIT"),
+            ])
+            db.add_all([
+                DrillSession(user_id=1, drill_level=level, drill_type=drill_type, status="completed")
+                for drill_type, level in DRILL_LEVEL_BY_TYPE.items()
             ])
             db.commit()
 

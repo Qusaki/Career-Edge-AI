@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, LoaderCircle, Mic, MicOff, RefreshCw, Volume2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, LoaderCircle, Lock, Mic, MicOff, RefreshCw, Volume2 } from 'lucide-react';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
@@ -12,6 +12,7 @@ import { evaluatePostTest } from '../offline/localEvaluation';
 import { getPostTestQuestions, hasCurrentQuestionPack, POST_TEST_VERSION } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
 import { resolveSessionExecution } from '../utils/sessionExecution';
+import { isPostTestUnlocked, type PostTestAccess } from '../utils/postTestProgress';
 import {
   appendOfflinePostTestAnswer,
   appendPostTestUserAnswer,
@@ -105,13 +106,43 @@ export const isPostTestCompletionDisabled = ({
   || !canComplete
 );
 
-type PostTestPageProps = OfflineActivityBridgeProps & {
+type PostTestActivityProps = OfflineActivityBridgeProps & {
   apiUrl: string;
   userDepartment: string;
   onSessionModeChange?: (isSessionMode: boolean) => void;
 };
 
-export function PostTestPage({
+type PostTestPageProps = PostTestActivityProps & {
+  postTestAccess: PostTestAccess | null;
+  progressChecking: boolean;
+  progressFetchError: string | null;
+  onGoToDrills: () => void;
+};
+
+export function PostTestPage({ postTestAccess, progressChecking, progressFetchError, onGoToDrills, ...activityProps }: PostTestPageProps) {
+  if (!isPostTestUnlocked(postTestAccess)) {
+    return (
+      <section className="mx-auto max-w-2xl rounded-lg border border-line bg-card p-8 text-center text-ink">
+        <Lock className="mx-auto mb-4 h-10 w-10 text-muted" aria-hidden="true" />
+        <h1 className="text-2xl font-bold">{postTestAccess ? 'Post-Test Locked' : 'Post-Test Access Unverified'}</h1>
+        <p className="mt-3 text-muted">{postTestAccess
+          ? 'Complete all Drill activities before taking your final assessment.'
+          : 'Your Drill progress must be verified before starting the Post-Test.'}</p>
+        {postTestAccess && (
+          <p className="mt-2 text-sm text-muted">Drills completed: {postTestAccess.completed_drill_count} / {postTestAccess.required_drill_count}</p>
+        )}
+        {progressChecking && <p className="mt-2 text-sm text-muted">Checking your Drill progress…</p>}
+        {progressFetchError && <p role="status" className="mt-2 text-sm text-muted">{progressFetchError}</p>}
+        <button type="button" onClick={onGoToDrills} className="program-accent-button mt-6 rounded-lg px-5 py-2.5 font-semibold">
+          Go to Drills
+        </button>
+      </section>
+    );
+  }
+  return <PostTestActivity {...activityProps} />;
+}
+
+function PostTestActivity({
   apiUrl,
   onSessionModeChange = () => {},
   effectiveOnline,
@@ -122,7 +153,7 @@ export function PostTestPage({
   onActivityEnd,
   onOfflineAudioCaptured,
   userDepartment,
-}: PostTestPageProps) {
+}: PostTestActivityProps) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);

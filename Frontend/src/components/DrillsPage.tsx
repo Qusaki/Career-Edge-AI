@@ -12,6 +12,7 @@ import { evaluateDrill, getOfflineNegotiationTurn } from '../offline/localEvalua
 import { DRILLS_VERSION, getOfflineDrillPrompt, hasCurrentQuestionPack, NEGOTIATION_OPENING_PROMPT } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
 import { resolveDrillSessionExecution } from '../utils/drillSessionExecution';
+import { readPostTestAccess, type PostTestAccess } from '../utils/postTestProgress';
 import {
   createDrillTimerState,
   formatDrillTimer,
@@ -321,11 +322,13 @@ const formatPrompt = (prompt: Record<string, unknown>) => {
 type DrillsPageProps = OfflineActivityBridgeProps & {
   apiUrl: string;
   onSessionModeChange?: (isSessionMode: boolean) => void;
+  onProgressChange?: (progress: PostTestAccess) => void;
 };
 
 export function DrillsPage({
   apiUrl,
   onSessionModeChange = () => {},
+  onProgressChange,
   effectiveOnline,
   sessionMode,
   resumeSession,
@@ -544,14 +547,17 @@ export function DrillsPage({
         sessionsResponse.json(),
         progressResponse.json(),
       ]);
+      const postTestAccess = readPostTestAccess(progressData);
+      if (!postTestAccess) throw new Error('Unable to verify Post-Test access from Drill progress.');
       setSessions(sessionData);
       setProgress(progressData);
+      onProgressChange?.(postTestAccess);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load drill sessions.');
     } finally {
       setLoading(false);
     }
-  }, [apiUrl, effectiveOnline]);
+  }, [apiUrl, effectiveOnline, onProgressChange]);
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
 

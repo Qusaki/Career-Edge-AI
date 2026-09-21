@@ -53,6 +53,15 @@ class DrillTypeProgressData(TypedDict):
     prerequisite_type: str | None
 
 
+class DrillProgressData(TypedDict):
+    easy: DrillLevelProgressData
+    medium: DrillLevelProgressData
+    hard: DrillLevelProgressData
+    post_test_unlocked: bool
+    completed_drill_count: int
+    required_drill_count: int
+
+
 def get_completed_drill_types(db: Session, user_id: int) -> set[str]:
     rows = (
         db.query(DrillSession.drill_type)
@@ -68,6 +77,10 @@ def get_completed_drill_types(db: Session, user_id: int) -> set[str]:
         for (drill_type,) in rows
         if drill_type in DRILL_LEVEL_BY_TYPE
     }
+
+
+def all_drills_completed(db: Session, user_id: int) -> bool:
+    return set(DRILL_LEVEL_BY_TYPE).issubset(get_completed_drill_types(db, user_id))
 
 
 def is_drill_level_unlocked(
@@ -106,7 +119,7 @@ def is_drill_type_unlocked(
     return previous_type is None or previous_type in completed_types
 
 
-def build_drill_progress(db: Session, user_id: int) -> dict[str, DrillLevelProgressData]:
+def build_drill_progress(db: Session, user_id: int) -> DrillProgressData:
     completed_types = get_completed_drill_types(db, user_id)
     progress: dict[str, DrillLevelProgressData] = {}
     for level, required_types in DRILL_TYPES_BY_LEVEL.items():
@@ -128,7 +141,14 @@ def build_drill_progress(db: Session, user_id: int) -> dict[str, DrillLevelProgr
                 for drill_type in required_types
             ],
         }
-    return progress
+    return {
+        "easy": progress["easy"],
+        "medium": progress["medium"],
+        "hard": progress["hard"],
+        "post_test_unlocked": set(DRILL_LEVEL_BY_TYPE).issubset(completed_types),
+        "completed_drill_count": len(completed_types),
+        "required_drill_count": len(DRILL_LEVEL_BY_TYPE),
+    }
 
 
 def get_drill_lock_message(drill_level: str) -> str:

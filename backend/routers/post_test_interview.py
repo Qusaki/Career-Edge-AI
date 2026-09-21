@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from core.deps import get_current_user, get_current_user_ws
+from core.drill_progression import all_drills_completed
 from core.scoring import bounded_integer_score
 from models.user import User
 from models.post_test_interview import PostTestInterviewSession, PostTestInterviewMessage
@@ -62,6 +63,8 @@ def start_session(db: Session = Depends(get_db), current_user: User = Depends(ge
     """Starts or resumes the active Post-test Interview session."""
     if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
         raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT, CTE, and CBAPA students.")
+    if not all_drills_completed(db, current_user.id):
+        raise HTTPException(status_code=403, detail="Complete all Drill activities before starting the Post-Test.")
 
     active_session = db.query(PostTestInterviewSession).filter(
         PostTestInterviewSession.user_id == current_user.id,
@@ -122,6 +125,9 @@ async def post_test_chat_ws(
 
     if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Forbidden: Department not authorized.")
+        return
+    if not all_drills_completed(db, current_user.id):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Complete all Drill activities before starting the Post-Test.")
         return
 
     session = db.query(PostTestInterviewSession).filter(PostTestInterviewSession.id == session_id, PostTestInterviewSession.user_id == current_user.id).first()
@@ -265,6 +271,8 @@ def complete_session(session_id: int, request: PostTestInterviewCompleteRequest,
             status_code=409,
             detail=f"Only active Post-Test sessions can be completed; this session is {session.status}.",
         )
+    if not all_drills_completed(db, current_user.id):
+        raise HTTPException(status_code=403, detail="Complete all Drill activities before finishing the Post-Test.")
 
     if not request.evaluation:
         raise HTTPException(status_code=400, detail="Missing frontend evaluation data.")
@@ -333,4 +341,6 @@ def get_session(session_id: int, db: Session = Depends(get_db), current_user: Us
     session = db.query(PostTestInterviewSession).filter(PostTestInterviewSession.id == session_id, PostTestInterviewSession.user_id == current_user.id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
+    if session.status == "active" and not all_drills_completed(db, current_user.id):
+        raise HTTPException(status_code=403, detail="Complete all Drill activities before resuming the Post-Test.")
     return session

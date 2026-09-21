@@ -1,7 +1,7 @@
 import datetime
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from routers import drills, post_test_interview, pre_test_active_listening
 
@@ -57,10 +57,11 @@ class ExerciseSessionStartTests(unittest.TestCase):
         )
         db = make_db_with_active_session(stale_session)
 
-        new_session = post_test_interview.start_session(
-            db=db,
-            current_user=SimpleNamespace(id=7, department="CCIT"),
-        )
+        with patch("routers.post_test_interview.all_drills_completed", return_value=True):
+            new_session = post_test_interview.start_session(
+                db=db,
+                current_user=SimpleNamespace(id=7, department="CCIT"),
+            )
 
         self.assertEqual(stale_session.status, "expired")
         self.assertIsNotNone(stale_session.end_time)

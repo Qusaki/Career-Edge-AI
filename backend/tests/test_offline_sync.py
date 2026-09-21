@@ -12,15 +12,17 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from core.deps import get_current_user
+from core.drill_progression import DRILL_LEVEL_BY_TYPE
 from database import Base, get_db
 import models  # noqa: F401 - register complete metadata
 from models.drills import DrillSession
 from models.offline_sync import OfflineSyncReceipt
+from models.post_test_interview import PostTestInterviewSession
 from models.pre_test_active_listening import PreTestActiveListeningSession
 from models.pre_test_intro import PreTestIntroSession
 from models.upcoming_student_interview import UpcomingStudentInterviewSession
 from models.user import User
-from routers import offline_sync
+from routers import offline_sync, post_test_interview
 from routers.pre_test_active_listening import ACTIVE_LISTENING_PROMPTS
 from routers.post_test_interview import get_post_test_questions
 from services.ai_provider import AIProviderUnavailableError
@@ -78,6 +80,35 @@ def who_payload(**updates):
     return payload
 
 
+def post_test_payload(**updates):
+    questions = get_post_test_questions("CCIT")
+    payload = {
+        "client_session_id": "post-client",
+        "activity_type": "post_test",
+        "question_pack_version": "posttest-v1",
+        "answers": [{"step": i, "text": f"Answer {i}"} for i in range(1, 6)],
+        "conversation_log": sum(([
+            {"sender": "ai", "text": question},
+            {"sender": "user", "text": f"Answer {index}"},
+        ] for index, question in enumerate(questions, 1)), []),
+        "activity_state": {"department": "CCIT"},
+        "local_score": 1,
+    }
+    payload.update(updates)
+    return payload
+
+
+def final_drill_payload():
+    return {
+        "client_session_id": "crisis-client",
+        "activity_type": "drill",
+        "question_pack_version": "drills-v1",
+        "answers": [{"step": 1, "text": "I would calmly assess the situation, listen to everyone involved, explain the immediate priorities, coordinate a practical response, and communicate clear updates to the team."}],
+        "conversation_log": [],
+        "activity_state": {"drillType": "crisis", "drillLevel": "hard"},
+    }
+
+
 class OfflineSyncEndpointTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine(
@@ -94,8 +125,10 @@ class OfflineSyncEndpointTests(unittest.TestCase):
             ])
             db.commit()
 
+        self.current_user_id = 1
         self.app = FastAPI()
         self.app.include_router(offline_sync.router, prefix="/offline-sync")
+        self.app.include_router(post_test_interview.router, prefix="/post-test-interview")
 
         def override_db():
             db = self.Session()
@@ -106,7 +139,7 @@ class OfflineSyncEndpointTests(unittest.TestCase):
 
         def override_user():
             with self.Session() as db:
-                return db.get(User, 1)
+                return db.get(User, self.current_user_id)
 
         self.app.dependency_overrides[get_db] = override_db
         self.app.dependency_overrides[get_current_user] = override_user
@@ -116,14 +149,14 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         self.client.close()
         self.engine.dispose()
 
-    def add_completed_drills(self, *drill_types: str) -> None:
+    def add_completed_drills(self, *drill_types: str, user_id: int = 1, status: str = "completed") -> None:
         with self.Session() as db:
             db.add_all([
                 DrillSession(
-                    user_id=1,
+                    user_id=user_id,
                     drill_type=drill_type,
-                    drill_level="easy" if drill_type in {"jam", "fast_word"} else "medium",
-                    status="completed",
+                    drill_level=DRILL_LEVEL_BY_TYPE.get(drill_type, "hard"),
+                    status=status,
                 )
                 for drill_type in drill_types
             ])
@@ -441,22 +474,120 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         self.assertEqual(result["eye_contact_samples"], 0)
 
     def test_post_test_is_recomputed_from_canonical_five_question_contract(self):
-        questions = get_post_test_questions("CCIT")
-        payload = {
-            "client_session_id": "post-client",
-            "activity_type": "post_test",
-            "question_pack_version": "posttest-v1",
-            "answers": [{"step": i, "text": f"Answer {i}"} for i in range(1, 6)],
-            "conversation_log": sum(([
-                {"sender": "ai", "text": question},
-                {"sender": "user", "text": f"Answer {index}"},
-            ] for index, question in enumerate(questions, 1)), []),
-            "activity_state": {"department": "CCIT"},
-            "local_score": 1,
-        }
-        response = self.client.post("/offline-sync", json=payload)
+        self.add_completed_drills(*DRILL_LEVEL_BY_TYPE)
+        response = self.client.post("/offline-sync", json=post_test_payload())
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["authoritative_result"]["total_score"], 20)
+
+    def test_locked_post_test_sync_creates_no_result_receipt_or_session_mutation(self):
+        with self.Session() as db:
+            active = PostTestInterviewSession(user_id=1, status="active")
+            db.add(active)
+            db.commit()
+            active_id = active.id
+
+        response = self.client.post("/offline-sync", json=post_test_payload(server_session_id=active_id))
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["detail"], {
+            "code": "post_test_locked",
+            "message": "Complete all Drill activities before syncing the Post-Test.",
+            "retryable": True,
+        })
+        with self.Session() as db:
+            self.assertEqual(db.query(OfflineSyncReceipt).count(), 0)
+            self.assertEqual(db.query(PostTestInterviewSession).count(), 1)
+            self.assertEqual(db.get(PostTestInterviewSession, active_id).status, "active")
+
+    def test_eleven_unique_duplicate_unknown_and_pending_drills_remain_locked(self):
+        canonical = tuple(DRILL_LEVEL_BY_TYPE)
+        self.add_completed_drills(*canonical[:-1], "jam", "jam", "unknown_historical_type")
+        self.add_completed_drills(canonical[-1], status="active")
+        self.add_completed_drills(canonical[-1], status="pending_sync")
+
+        response = self.client.post("/offline-sync", json=post_test_payload())
+        self.assertEqual(response.status_code, 403, response.text)
+        with self.Session() as db:
+            self.assertEqual(db.query(PostTestInterviewSession).count(), 0)
+            self.assertEqual(db.query(OfflineSyncReceipt).count(), 0)
+
+    def test_other_users_completed_drills_do_not_authorize_post_test_sync(self):
+        self.add_completed_drills(*DRILL_LEVEL_BY_TYPE, user_id=2)
+        self.assertEqual(self.client.post("/offline-sync", json=post_test_payload()).status_code, 403)
+        self.current_user_id = 2
+        allowed = self.client.post("/offline-sync", json=post_test_payload())
+        self.assertEqual(allowed.status_code, 200, allowed.text)
+        with self.Session() as db:
+            self.assertEqual(db.query(PostTestInterviewSession).filter_by(user_id=1).count(), 0)
+            self.assertEqual(db.query(PostTestInterviewSession).filter_by(user_id=2, status="completed").count(), 1)
+
+    def test_rejected_post_test_payload_can_retry_after_final_drill_completion(self):
+        canonical = tuple(DRILL_LEVEL_BY_TYPE)
+        self.add_completed_drills(*canonical[:-1])
+        payload = post_test_payload()
+        self.assertEqual(self.client.post("/offline-sync", json=payload).status_code, 403)
+        self.add_completed_drills(canonical[-1])
+
+        accepted = self.client.post("/offline-sync", json=payload)
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+        self.assertFalse(accepted.json()["idempotent_replay"])
+        with self.Session() as db:
+            self.assertEqual(db.query(OfflineSyncReceipt).filter_by(activity_type="post_test", status="completed").count(), 1)
+
+    def test_existing_failed_receipt_is_not_poisoned_by_locked_rejection(self):
+        from schemas.offline_sync import OfflineSyncRequest
+
+        payload = post_test_payload()
+        digest = offline_sync.payload_digest(OfflineSyncRequest.model_validate(payload))
+        with self.Session() as db:
+            db.add(OfflineSyncReceipt(
+                user_id=1, activity_type="post_test", client_session_id="post-client",
+                payload_hash=digest, status="failed",
+            ))
+            db.commit()
+
+        self.assertEqual(self.client.post("/offline-sync", json=payload).status_code, 403)
+        with self.Session() as db:
+            self.assertEqual(db.query(OfflineSyncReceipt).one().status, "failed")
+        self.add_completed_drills(*DRILL_LEVEL_BY_TYPE)
+        accepted = self.client.post("/offline-sync", json=payload)
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+
+    def test_final_drill_sync_first_allows_subsequent_post_test_sync(self):
+        self.add_completed_drills(*tuple(DRILL_LEVEL_BY_TYPE)[:-1])
+        final_drill = self.client.post("/offline-sync", json=final_drill_payload())
+        self.assertEqual(final_drill.status_code, 200, final_drill.text)
+        post_test = self.client.post("/offline-sync", json=post_test_payload())
+        self.assertEqual(post_test.status_code, 200, post_test.text)
+
+    def test_post_test_sync_first_rejects_then_succeeds_after_final_drill_sync(self):
+        self.add_completed_drills(*tuple(DRILL_LEVEL_BY_TYPE)[:-1])
+        payload = post_test_payload()
+        self.assertEqual(self.client.post("/offline-sync", json=payload).status_code, 403)
+        final_drill = self.client.post("/offline-sync", json=final_drill_payload())
+        self.assertEqual(final_drill.status_code, 200, final_drill.text)
+        accepted = self.client.post("/offline-sync", json=payload)
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+        with self.Session() as db:
+            self.assertEqual(db.query(PostTestInterviewSession).filter_by(user_id=1, status="completed").count(), 1)
+
+    def test_successful_post_test_receipt_replays_even_if_progress_later_missing(self):
+        self.add_completed_drills(*DRILL_LEVEL_BY_TYPE)
+        payload = post_test_payload()
+        first = self.client.post("/offline-sync", json=payload)
+        self.assertEqual(first.status_code, 200, first.text)
+        session_id = first.json()["server_session_id"]
+        with self.Session() as db:
+            db.query(DrillSession).filter_by(user_id=1).delete()
+            db.commit()
+
+        replay = self.client.post("/offline-sync", json=payload)
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertTrue(replay.json()["idempotent_replay"])
+        self.assertEqual(replay.json()["server_session_id"], session_id)
+        self.assertEqual(self.client.get(f"/post-test-interview/{session_id}").status_code, 200)
+        self.assertEqual(self.client.post("/offline-sync", json=post_test_payload(client_session_id="new-post-client")).status_code, 403)
+        with self.Session() as db:
+            self.assertEqual(db.query(PostTestInterviewSession).filter_by(user_id=1).count(), 1)
 
     def test_active_listening_uses_provider_and_provider_failure_is_retryable(self):
         payload = {

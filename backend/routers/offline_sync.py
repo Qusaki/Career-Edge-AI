@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from core.config import settings
 from core.deps import get_current_user
 from core.drill_progression import (
+    all_drills_completed,
     get_completed_drill_types,
     get_drill_lock_message,
     get_drill_type_lock_message,
@@ -163,6 +164,15 @@ async def sync_offline_session(
                     retryable=True,
                     retry_after=PROCESSING_RETRY_AFTER_SECONDS,
                 )
+    # Completed receipts replay above; only new or unfinished Post-Test syncs need this gate.
+    if payload.activity_type == "post_test" and not all_drills_completed(db, current_user.id):
+        raise sync_error(
+            403,
+            "post_test_locked",
+            "Complete all Drill activities before syncing the Post-Test.",
+            retryable=True,
+        )
+    if receipt:
         receipt.status = "processing"
         receipt.processing_token = attempt_token
         receipt.processing_started_at = now
