@@ -42,9 +42,9 @@ test('Enrollment uses its existing Mic while listening and MicOff otherwise', ()
 });
 
 test('finalizing renders the inactive icon and prevents a new microphone start', () => {
-  assert.match(preTestSource, /disabled=\{isPersistingIntro \|\| isFinalizing \|\| isVoiceSpeaking\}/);
+  assert.match(preTestSource, /disabled=\{isPersistingIntro \|\| isFinalizing \|\| isVoiceSpeaking \|\| isProcessingAudio \|\| Boolean\(pendingOnlineAudio\)\}/);
   assert.match(postTestSource, /isSubmittingAnswer \|\| isFinalizing \|\| !answerBoundary\.canAcceptAnswer/);
-  assert.match(drillsSource, /disabled=\{isVoiceSpeaking \|\| isFinalizing \|\| drillTimer\?\.phase === 'expired'\}/);
+  assert.match(drillsSource, /disabled=\{isVoiceSpeaking \|\| isFinalizing \|\| isSavingSpokenResponse \|\| drillTimer\?\.phase === 'expired' \|\| isProcessingAudio \|\| Boolean\(pendingOnlineAudio\)\}/);
   assert.match(dashboardSource, /const isEnrollmentMicDisabled = isMicTransitioning \|\| isAiSpeaking \|\| isSubmittingOfflineAnswer \|\| enrollmentResponseCount >= 5/);
   assert.match(enrollmentControls, /disabled=\{isEnrollmentMicDisabled\}/);
 });
@@ -71,7 +71,7 @@ test('live transcripts remain visible in each original activity UI', () => {
 
 test('stop still exits listening before canonical final-only delivery', () => {
   assert.match(speechInputSource, /const stopListening = useCallback\(\(\) => \{[\s\S]*?setIsListening\(false\);[\s\S]*?setIsFinalizing\(true\)/);
-  assert.match(speechInputSource, /claimCanonicalTranscript\(\)[\s\S]*?if \(canonicalTranscript\) session\.onTranscript\(canonicalTranscript\)/);
+  assert.match(speechInputSource, /claimCanonicalTranscript\(\)[\s\S]*?if \(canonicalTranscript \|\| fallbackTranscript\)[\s\S]*?session\.onTranscript\(canonicalTranscript \|\| fallbackTranscript\)/);
   assert.doesNotMatch(speechInputSource, /session\.onTranscript\([^\n]*interimTranscript/);
 });
 

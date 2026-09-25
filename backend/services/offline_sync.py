@@ -1,6 +1,5 @@
 import datetime
 import json
-import re
 from typing import Any
 
 from fastapi import HTTPException
@@ -8,7 +7,7 @@ from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from core.drill_progression import DRILL_LEVEL_BY_TYPE
-from core.drill_scoring import calculate_drill_score
+from core.offline_drill_prompt import format_offline_drill_prompt, get_offline_drill_prompt
 from core.scoring import bounded_integer_score, bounded_score
 from models.drills import DrillSession
 from models.post_test_interview import PostTestInterviewMessage, PostTestInterviewSession
@@ -24,6 +23,7 @@ from routers.post_test_interview import get_post_test_questions
 from schemas.offline_sync import OfflineSyncRequest
 from services.ai_provider import AIProvider, get_ai_provider
 from services.interview_ai import collect_ai_response, parse_evaluation_response
+from services.assessment_scoring import score_drill, score_intro, score_listening, score_post_test
 
 
 SUPPORTED_PACK_VERSIONS = {
@@ -100,6 +100,10 @@ def validate_sync_payload(payload: OfflineSyncRequest, department: str) -> None:
             raise HTTPException(status_code=422, detail="Drill level is required.")
         if DRILL_LEVEL_BY_TYPE.get(drill_type) != drill_level:
             raise HTTPException(status_code=422, detail="Unsupported Drill level/type combination.")
+        if payload.server_session_id is None and "prompt" in payload.activity_state:
+            expected_prompt = format_offline_drill_prompt(get_offline_drill_prompt(drill_type, payload.client_session_id))
+            if payload.activity_state["prompt"] != expected_prompt:
+                raise HTTPException(status_code=409, detail="The offline Drill prompt does not match the canonical pack.")
     pending_audio_steps = {
         item.answer_index for item in payload.audio_manifest if item.transcript_status == "pending"
     }
@@ -139,60 +143,6 @@ def serialize_session(session: Any) -> dict[str, Any]:
     return result
 
 
-def _word_metrics(text: str) -> tuple[int, int]:
-    words = re.findall(r"[a-z]+(?:'[a-z]+)?", text.lower())
-    return len(words), len(set(words))
-
-
-def _who_am_i_evaluation(text: str) -> dict[str, Any]:
-    word_count, unique_count = _word_metrics(text)
-    score = 3 if word_count >= 60 else 2 if word_count >= 30 else 1
-    return {
-        "score_clarity": score,
-        "score_completeness": score,
-        "score_courtesy": 3,
-        "score_correctness": score,
-        "score_conciseness": 3 if word_count <= 140 else 2,
-        "score_vocabulary": 5 if unique_count >= 45 else 4 if unique_count >= 32 else 3 if unique_count >= 20 else 2 if unique_count >= 10 else 1,
-        "score_grammar": 5 if word_count >= 60 else 4 if word_count >= 45 else 3 if word_count >= 30 else 2 if word_count >= 15 else 1,
-        "feedback_summary": "Introduction evaluated server-side from the submitted transcript.",
-    }
-
-
-def _post_test_evaluation(payload: OfflineSyncRequest) -> dict[str, Any]:
-    turns = len(payload.answers)
-    score = 4 if turns >= 5 else 3 if turns >= 3 else 2
-    return {
-        "score_vocabulary": score,
-        "score_clarity": score,
-        "score_grammar": score,
-        "score_courtesy": 4,
-        "score_conciseness": score,
-        "feedback_summary": "Post-test evaluated server-side from all five submitted responses.",
-    }
-
-
-async def _active_listening_evaluation(payload: OfflineSyncRequest, provider: AIProvider) -> dict[str, Any]:
-    transcript = "\n".join(
-        f"{'PROFESSOR' if turn.sender == 'ai' else 'STUDENT'}: {turn.text}"
-        for turn in payload.conversation_log
-    ) or "\n".join(f"STUDENT: {answer.text}" for answer in payload.answers)
-    response = await collect_ai_response(provider, [
-        {
-            "role": "system",
-            "content": (
-                "Evaluate this Active Listening response. Return strict JSON with numeric scores from 1 to 5 "
-                "for score_vocabulary, score_clarity, score_grammar, score_courtesy, score_conciseness, "
-                "plus a non-empty feedback_summary. Judge summary accuracy and communication quality."
-            ),
-        },
-        {"role": "user", "content": transcript},
-    ], workload="active_listening_evaluation")
-    return parse_evaluation_response(response, [
-        "score_vocabulary", "score_clarity", "score_grammar", "score_courtesy", "score_conciseness",
-    ])
-
-
 async def _interview_evaluation(payload: OfflineSyncRequest, user: User, provider: AIProvider) -> dict[str, Any]:
     transcript = "\n".join(
         f"{'PROFESSOR' if turn.sender == 'ai' else 'STUDENT'}: {turn.text}"
@@ -216,24 +166,44 @@ async def _interview_evaluation(payload: OfflineSyncRequest, user: User, provide
     return parse_evaluation_response(response, keys)
 
 
-async def evaluate_payload(payload: OfflineSyncRequest, user: User, provider: AIProvider | None = None) -> dict[str, Any]:
+def _scoring_provider(provider: AIProvider | None) -> AIProvider | None:
+    if provider is not None:
+        return provider
+    try:
+        return get_ai_provider()
+    except Exception:
+        # The scoring service converts an unavailable configuration/provider to
+        # an explicit conservative fallback without failing synchronization.
+        return None
+
+
+async def evaluate_payload(payload: OfflineSyncRequest, user: User, provider: AIProvider | None = None,
+                           *, drill_prompt: dict[str, Any] | None = None) -> dict[str, Any]:
     if payload.activity_type == "pre_test_intro":
-        return _who_am_i_evaluation(payload.answers[0].text)
+        return await score_intro(payload.answers[0].text, _scoring_provider(provider))
     if payload.activity_type == "post_test":
-        return _post_test_evaluation(payload)
+        return await score_post_test(get_post_test_questions(user.department), [answer.text for answer in payload.answers], _scoring_provider(provider))
     if payload.activity_type == "drill":
         drill_type = str(payload.activity_state["drillType"])
+        prompt = drill_prompt or get_offline_drill_prompt(drill_type, payload.client_session_id)
+        if drill_type == "negotiation":
+            prompt = {
+                **prompt,
+                "employer_turns": [turn.text for turn in payload.conversation_log if turn.sender == "ai"],
+            }
         evaluation_data = {
             "spoken_response": payload.answers[0].text if drill_type != "negotiation" else "",
             "negotiation_messages": [
-                {"sender": "bot" if turn.sender == "ai" else "user", "text": turn.text}
-                for turn in payload.conversation_log
-            ],
+                {"sender": "user", "text": answer.text} for answer in payload.answers
+            ] if drill_type == "negotiation" else [],
+            "prompt": prompt,
         }
-        return calculate_drill_score(drill_type, evaluation_data)
-    resolved_provider = provider or get_ai_provider()
+        return await score_drill(drill_type, evaluation_data, _scoring_provider(provider))
     if payload.activity_type == "pre_test_active_listening":
-        return await _active_listening_evaluation(payload, resolved_provider)
+        story = next((turn.text for turn in payload.conversation_log if turn.sender == "ai"), "")
+        summary = " ".join(answer.text for answer in payload.answers)
+        return await score_listening(story, summary, _scoring_provider(provider))
+    resolved_provider = provider or get_ai_provider()
     return await _interview_evaluation(payload, user, resolved_provider)
 
 

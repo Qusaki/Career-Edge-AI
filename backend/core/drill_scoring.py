@@ -1,6 +1,8 @@
 import re
 from typing import Any, Dict, Tuple
 
+from core.response_quality import repetition_dominated, words
+
 
 DRILL_WORD_THRESHOLDS: Dict[str, Tuple[int, int]] = {
     "jam": (30, 60),
@@ -49,19 +51,32 @@ def calculate_drill_score(drill_type: str, evaluation_data: Dict[str, Any]) -> D
     # This mirrors the current Active Listening and Post-Test calculation:
     # proficient=4, developing=3, beginning=2 for response-based criteria.
     base_score = 4 if measured_value >= proficient_threshold else 3 if measured_value >= developing_threshold else 2
+    quality_issue = None
+    if repetition_dominated(response):
+        base_score = min(base_score, 2)
+        quality_issue = "The response repeated the same fragments instead of developing the task."
+    elif drill_type == "jam":
+        prompt = evaluation_data.get("prompt")
+        topic = str(prompt.get("topic", "")) if isinstance(prompt, dict) else ""
+        topic_terms = {word for word in words(topic) if len(word) > 3 and word not in {"important", "favorite", "future"}}
+        if measured_value >= developing_threshold and topic_terms and not topic_terms.intersection(words(response)):
+            base_score = min(base_score, 2)
+            quality_issue = "The response did not address the assigned speaking topic directly."
     criteria = {
         "vocabulary": base_score,
         "clarity": base_score,
         "grammar": base_score,
         "conciseness": base_score,
-        "task_completion": 3,
+        "task_completion": 1 if quality_issue else 3,
         "courtesy": 4,
     }
     raw_score = sum(criteria.values())
     percentage = round((raw_score / 30) * 100, 2)
     passed = raw_score >= 20
 
-    if passed:
+    if quality_issue:
+        feedback = quality_issue
+    elif passed:
         feedback = (
             f"Drill completed successfully with {measured_value} {measurement.replace('_', ' ')}. "
             "The response met the expected participation threshold."

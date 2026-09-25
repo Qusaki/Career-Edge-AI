@@ -11,13 +11,16 @@ const createSpeechHarness = () => {
   const listeners = new Set<EventListener>();
   const voices: SpeechSynthesisVoice[] = [];
   let cancellations = 0;
+  let resumes = 0;
+  let paused = false;
   let speakBehavior: (utterance: FakeUtterance, attempt: number) => void = () => {};
   const synthesis = {
     getVoices: () => voices,
     addEventListener: (_type: string, listener: EventListener) => { listeners.add(listener); },
     removeEventListener: (_type: string, listener: EventListener) => { listeners.delete(listener); },
     cancel: () => { cancellations += 1; },
-    resume: () => {},
+    get paused() { return paused; },
+    resume: () => { resumes += 1; paused = false; },
     speak: (utterance: FakeUtterance) => {
       utterances.push(utterance);
       speakBehavior(utterance, utterances.length);
@@ -29,6 +32,8 @@ const createSpeechHarness = () => {
     voices,
     utterances,
     get cancellations() { return cancellations; },
+    get resumes() { return resumes; },
+    setPaused: (value: boolean) => { paused = value; },
     setBehavior: (behavior: typeof speakBehavior) => { speakBehavior = behavior; },
     fireVoicesChanged: () => listeners.forEach(listener => listener(new Event('voiceschanged'))),
     createUtterance,
@@ -73,6 +78,57 @@ test('empty voices use the default browser voice after a bounded wait', async ()
   });
   assert.equal(harness.utterances.length, 1);
   assert.equal(harness.utterances[0].voice, undefined);
+});
+
+test('available voices start immediately and a paused synthesis is resumed', async () => {
+  const harness = createSpeechHarness();
+  harness.voices.push({ lang: 'en-US', name: 'Chrome voice' } as SpeechSynthesisVoice);
+  harness.setPaused(true);
+  harness.setBehavior(utterance => { start(utterance); end(utterance); });
+  assert.equal(await speakBrowserText('Ready', { synthesis: harness.synthesis, createUtterance: harness.createUtterance }), 'ended');
+  assert.equal(harness.utterances.length, 1);
+  assert.equal(harness.resumes, 1);
+});
+
+test('cancel and speak are separated by a browser task', async () => {
+  let drainingCancel = false;
+  const harness = createSpeechHarness();
+  const originalCancel = harness.synthesis.cancel.bind(harness.synthesis);
+  harness.synthesis.cancel = () => {
+    drainingCancel = true;
+    setTimeout(() => { drainingCancel = false; }, 0);
+    originalCancel();
+  };
+  harness.setBehavior(utterance => {
+    assert.equal(drainingCancel, false);
+    start(utterance);
+    end(utterance);
+  });
+  assert.equal(await speakBrowserText('After cancel', { synthesis: harness.synthesis, createUtterance: harness.createUtterance, voiceWaitMs: 0 }), 'ended');
+});
+
+test('an utterance error gets exactly one controlled retry of identical text', async () => {
+  const harness = createSpeechHarness();
+  harness.setBehavior((utterance, attempt) => {
+    if (attempt === 1) fail(utterance);
+    else { start(utterance); end(utterance); }
+  });
+  assert.equal(await speakBrowserText('Same story', { synthesis: harness.synthesis, createUtterance: harness.createUtterance, voiceWaitMs: 0 }), 'ended');
+  assert.deepEqual(harness.utterances.map(utterance => utterance.text), ['Same story', 'Same story']);
+});
+
+test('an end event without a start event never counts as delivered audio', async () => {
+  const harness = createSpeechHarness();
+  harness.setBehavior(end);
+  assert.equal(await speakBrowserText('Silent story', { synthesis: harness.synthesis, createUtterance: harness.createUtterance, voiceWaitMs: 0 }), 'error');
+  assert.equal(harness.utterances.length, 2);
+});
+
+test('a valid delayed start beats the watchdog without retrying', async () => {
+  const harness = createSpeechHarness();
+  harness.setBehavior(utterance => setTimeout(() => { start(utterance); end(utterance); }, 10));
+  assert.equal(await speakBrowserText('Delayed', { synthesis: harness.synthesis, createUtterance: harness.createUtterance, voiceWaitMs: 0, startTimeoutMs: 40 }), 'ended');
+  assert.equal(harness.utterances.length, 1);
 });
 
 test('speech-start timeout cancels stale audio and retries once', async () => {
@@ -151,6 +207,9 @@ test('all activity TTS paths keep the AI text independent of browser audio succe
   assert.match(preTest, /setMessages\(nextMessages\)/);
   assert.match(postTest, /setMessages\(checkpointMessages\)/);
   assert.match(drills, /setNegotiationMessages\(nextMessages\)/);
-  assert.match(preTest, /result !== 'ended' && result !== 'cancelled'[\s\S]*?setSpeechFallbackPrompt\(text\)/);
-  assert.match(preTest, /Audio playback is unavailable\. Professor Maxiel asks:/);
+  assert.match(preTest, /result === 'ended'[\s\S]*?else if \(result !== 'cancelled'\)[\s\S]*?setSpeechFallbackPrompt\(text\)/);
+  assert.match(preTest, /speechPlaybackFailed \? 'Audio playback is unavailable\.' : 'Play the listening story before answering\.'/);
+  assert.match(preTest, /onClick=\{\(\) => speakText\(speechFallbackPrompt, !messages\.some\(message => message\.sender === 'user'\)\)\}/);
+  assert.match(preTest, /result === 'ended'[\s\S]*?setInitialStoryAudioDelivered\(true\)/);
+  assert.match(preTest, /!initialStoryAudioDelivered[\s\S]*?Play the listening story before answering/);
 });

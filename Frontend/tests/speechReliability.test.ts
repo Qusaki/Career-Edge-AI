@@ -66,6 +66,28 @@ test('a late final result remains canonical while interim-only speech cannot sil
   assert.equal(accumulator.claimCanonicalTranscript(), null);
 });
 
+test('resultIndex and recognition epochs preserve finals without replaying historical results', () => {
+  const accumulator = new SpeechTranscriptAccumulator();
+  const firstEpoch = accumulator.beginRecognitionAttempt();
+  const first = result('very very important', true);
+  assert.equal(accumulator.applyResults({ resultIndex: 0, results: [first] }, firstEpoch).finalTranscript, 'very very important');
+  assert.equal(accumulator.applyResults({ resultIndex: 0, results: [first] }, firstEpoch).finalTranscript, 'very very important');
+  const second = result('final phrase', true);
+  assert.equal(accumulator.applyResults({ resultIndex: 1, results: [first, second] }, firstEpoch).finalTranscript, 'very very important final phrase');
+  const nextEpoch = accumulator.beginRecognitionAttempt();
+  assert.equal(accumulator.applyResults({ resultIndex: 0, results: [first] }, firstEpoch).finalTranscript, 'very very important final phrase');
+  assert.equal(accumulator.applyResults({ resultIndex: 0, results: [result('new phrase', true)] }, nextEpoch).finalTranscript, 'very very important final phrase new phrase');
+  assert.equal(accumulator.claimCanonicalTranscript(), 'very very important final phrase new phrase');
+  assert.match(hookSource, /recognition\.onresult = event => \{\s*if \(session\.cancelled \|\| recognitionRef\.current !== recognition\) return/);
+});
+
+test('interim speech remains visible but never becomes a canonical answer', () => {
+  const accumulator = new SpeechTranscriptAccumulator();
+  const epoch = accumulator.beginRecognitionAttempt();
+  assert.equal(accumulator.applyResults({ resultIndex: 0, results: [result('in progress', false)] }, epoch).liveTranscript, 'in progress');
+  assert.equal(accumulator.claimCanonicalTranscript(), '');
+});
+
 test('No speech detected is reserved for a started recognition session with no final or failure', () => {
   assert.match(hookSource, /else if \(session\.failureMessage\)/);
   assert.match(hookSource, /else if \(!session\.recognitionReadyEver\)/);
@@ -73,15 +95,44 @@ test('No speech detected is reserved for a started recognition session with no f
   assert.match(hookSource, /Speech recognition is unavailable in this browser/);
 });
 
-test('typed fallback remains available online across all six activity flows', () => {
-  assert.match(preTestSource, /const saveTypedIntro = async \(\) => \{[\s\S]*?sessionMode !== 'offline'[\s\S]*?method: 'PUT'/);
-  assert.match(preTestSource, /Or type your summary if the microphone is unavailable/);
+test('Pre-Test and Drills use speech-only input while other flows retain their scoped typed fallback', () => {
+  assert.doesNotMatch(preTestSource, /<textarea|saveTypedIntro|Or type your summary if the microphone is unavailable/);
+  assert.doesNotMatch(drillsSource, /<textarea|saveTypedDrillResponse|negotiationReply/);
+  assert.doesNotMatch(preTestSource, /Save Typed Answer|onClick=\{\(\) => void sendReply\(\)\}/);
+  assert.doesNotMatch(drillsSource, /onClick=\{\(\) => void sendNegotiationReply\(\)\}|onClick=\{\(\) => void saveTypedDrillResponse\(\)\}/);
   assert.match(postTestSource, /Or type your answer if the microphone is unavailable/);
-  assert.match(drillsSource, /Or type your negotiation reply if the microphone is unavailable/);
-  assert.match(drillsSource, /Or type your Drill response if the microphone is unavailable/);
   assert.match(dashboardSource, /Typed answer fallback/);
   assert.match(dashboardSource, /renderOfflineInterviewInput\('thesis'\)/);
   assert.match(dashboardSource, /renderOfflineInterviewInput\('upcoming'\)/);
+});
+
+test('Who Am I, Active Listening, normal Drills, and negotiation retain their microphone controls', () => {
+  assert.match(preTestSource, /onClick=\{isListening \? stopListening : recordIntro\}/);
+  assert.match(preTestSource, /onClick=\{isListening \? stopListening : recordAndSendReply\}/);
+  assert.match(drillsSource, /onClick=\{isListening \? stopListening : recordNegotiationReply\}/);
+  assert.match(drillsSource, /onClick=\{isListening \? stopDrillResponse : recordDrillResponse\}/);
+  assert.equal(preTestSource.match(/isListening \? <Mic className="h-5 w-5" \/> : <MicOff className="h-5 w-5" \/>/g)?.length, 2);
+  assert.equal(drillsSource.match(/isListening \? <Mic className="h-5 w-5" \/> : <MicOff className="h-5 w-5" \/>/g)?.length, 2);
+});
+
+test('only final recognized or validated transcribed speech reaches answer paths and completion gates', () => {
+  assert.match(preTestSource, /const commitIntroTranscript = async \(transcript: string\) => \{[\s\S]*?const nextTranscript = \[introTranscriptRef\.current, transcript\]/);
+  assert.match(preTestSource, /startListening\(transcript => void sendReply\(transcript\)/);
+  assert.match(drillsSource, /const commitDrillResponse = async \(transcript: string\) => \{[\s\S]*?const nextResponse = \[spokenResponse, transcript\]/);
+  assert.match(drillsSource, /startListening\(transcript => void sendNegotiationReply\(transcript\)/);
+  assert.match(preTestSource, /!introTranscript\.trim\(\)/);
+  assert.match(preTestSource, /!messages\.some\(message => message\.sender === 'user'\)/);
+  assert.match(drillsSource, /!spokenResponse\.trim\(\)/);
+  assert.match(drillsSource, /!negotiationMessages\.some\(message => message\.sender === 'user'\)/);
+  assert.match(drillsSource, /if \(isProcessingAudio \|\| pendingOnlineAudio\) return/);
+  assert.match(drillsSource, /if \(!activeSession \|\| isListening \|\| isFinalizing \|\| savingSpokenResponseRef\.current \|\| negotiationLoading\) return/);
+});
+
+test('speech errors in speech-only activities do not direct users to removed typing controls', () => {
+  for (const source of [preTestSource, drillsSource]) {
+    assert.match(source, /const speechOnlyErrorMessage = \(message: string\)/);
+    assert.equal(source.match(/message => setError\(speechOnlyErrorMessage\(message\)\)/g)?.length, 2);
+  }
 });
 
 test('speech and TTS exclusion remains enforced at the shared hook and activity handlers', () => {

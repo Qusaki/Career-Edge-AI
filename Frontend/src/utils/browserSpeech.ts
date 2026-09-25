@@ -67,6 +67,10 @@ export async function speakBrowserText(text: string, options: BrowserSpeechOptio
     if (currentGeneration !== generation) return 'cancelled';
     const language = options.language ?? 'en-US';
     for (let attempt = 0; attempt < 2 && currentGeneration === generation; attempt += 1) {
+      // Chrome can still be draining cancel() in the current task. Give its
+      // queue one turn before enqueueing a replacement utterance.
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      if (currentGeneration !== generation) return 'cancelled';
       const utterance = createUtterance(text);
       utterance.lang = language;
       utterance.rate = options.rate ?? 1;
@@ -94,27 +98,28 @@ export async function speakBrowserText(text: string, options: BrowserSpeechOptio
           clearTimeout(startTimer);
           options.onStart?.();
         };
-        utterance.onend = () => settle('ended');
+        utterance.onend = () => settle(started ? 'ended' : 'error');
         utterance.onerror = () => settle('error');
         const startTimer = setTimeout(() => {
           if (!started) {
             settle('start-timeout');
             synthesis.cancel();
           }
-        }, options.startTimeoutMs ?? 2500);
+        }, options.startTimeoutMs ?? 5000);
         const durationTimer = setTimeout(() => {
           settle('duration-timeout');
           synthesis.cancel();
         }, options.maxDurationMs ?? Math.min(120000, Math.max(10000, text.length * 90)));
         try {
-          synthesis.resume();
+          if (synthesis.paused) synthesis.resume();
           synthesis.speak(utterance);
         } catch {
           settle('error');
         }
       });
       result = outcome;
-      if (outcome !== 'start-timeout') break;
+      if (outcome !== 'start-timeout' && outcome !== 'error') break;
+      if (outcome === 'error') synthesis.cancel();
     }
   } catch {
     if (currentGeneration === generation) synthesis.cancel();

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from core.deps import get_current_user
 from core.scoring import bounded_integer_score
+from services.assessment_scoring import score_intro
 from models.user import User
 from models.pre_test_intro import PreTestIntroSession
 from schemas.pre_test_intro import PreTestIntroCompleteRequest, PreTestIntroResponseRequest, PreTestIntroSessionResponse
@@ -70,7 +71,7 @@ def get_user_intro_sessions(db: Session = Depends(get_db), current_user: User = 
     return sessions
 
 @router.post("/{session_id}/complete", response_model=PreTestIntroSessionResponse)
-def complete_intro_session(session_id: int, request: PreTestIntroCompleteRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def complete_intro_session(session_id: int, request: PreTestIntroCompleteRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Completes and grades the pre-test introduction session."""
     session = (
         db.query(PreTestIntroSession)
@@ -91,13 +92,12 @@ def complete_intro_session(session_id: int, request: PreTestIntroCompleteRequest
         raise HTTPException(status_code=400, detail="Missing frontend evaluation data.")
 
     persisted_transcript = session.transcript.strip() if session.transcript else ""
-    submitted_transcript = request.transcript.strip() if request.transcript else ""
-    canonical_transcript = persisted_transcript or submitted_transcript
+    canonical_transcript = persisted_transcript
     if not canonical_transcript:
-        raise HTTPException(status_code=400, detail="A non-empty introduction response is required.")
+        raise HTTPException(status_code=409, detail="A saved final introduction response is required before scoring.")
         
     try:
-        evaluation = request.evaluation
+        evaluation = await score_intro(canonical_transcript)
         
         session.score_clarity = bounded_integer_score(evaluation, "score_clarity", minimum=1, maximum=3, default=1)
         session.score_completeness = bounded_integer_score(evaluation, "score_completeness", minimum=1, maximum=3, default=1)
@@ -107,11 +107,11 @@ def complete_intro_session(session_id: int, request: PreTestIntroCompleteRequest
         session.score_vocabulary = bounded_integer_score(evaluation, "score_vocabulary", minimum=1, maximum=5, default=1)
         session.score_grammar = bounded_integer_score(evaluation, "score_grammar", minimum=1, maximum=5, default=1)
         session.eye_contact_samples = bounded_integer_score(
-            evaluation, "eye_contact_samples", minimum=0, maximum=10_000_000, default=0
+            request.evaluation, "eye_contact_samples", minimum=0, maximum=10_000_000, default=0
         )
-        eye_contact_score = evaluation.get("eye_contact_score")
+        eye_contact_score = request.evaluation.get("eye_contact_score")
         session.score_eye_contact = (
-            bounded_integer_score(evaluation, "eye_contact_score", minimum=0, maximum=100, default=0)
+            bounded_integer_score(request.evaluation, "eye_contact_score", minimum=0, maximum=100, default=0)
             if session.eye_contact_samples > 0 and eye_contact_score is not None
             else None
         )

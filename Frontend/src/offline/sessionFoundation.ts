@@ -58,7 +58,7 @@ export type ActivityCheckpointUpdate = Partial<Pick<
   | 'syncState'
 >>;
 
-export type ActivitySessionEnd = 'cloud_completed' | 'abandoned' | 'completed_local';
+export type ActivitySessionEnd = 'cloud_completed' | 'abandoned' | 'completed_local' | 'recorded_local';
 
 export interface OfflineActivityBridgeProps {
   effectiveOnline: boolean;

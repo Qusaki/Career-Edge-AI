@@ -82,6 +82,7 @@ export class SpeechTranscriptAccumulator {
   private interimTranscript = '';
   private committedResultIndexes = new Set<number>();
   private deliveryClaimed = false;
+  private recognitionEpoch = 0;
 
   resetWindow() {
     this.finalParts = [];
@@ -91,11 +92,14 @@ export class SpeechTranscriptAccumulator {
   }
 
   beginRecognitionAttempt() {
+    this.recognitionEpoch += 1;
     this.interimTranscript = '';
     this.committedResultIndexes.clear();
+    return this.recognitionEpoch;
   }
 
-  applyResults(event: SpeechRecognitionResultEventLike) {
+  applyResults(event: SpeechRecognitionResultEventLike, epoch = this.recognitionEpoch) {
+    if (epoch !== this.recognitionEpoch) return this.snapshot();
     const firstChangedIndex = Math.max(0, event.resultIndex);
     for (let index = firstChangedIndex; index < event.results.length; index += 1) {
       const result = event.results[index];
@@ -134,6 +138,7 @@ export class SpeechTranscriptAccumulator {
 
 export interface OfflineSpeechAudioOptions {
   enabled: boolean;
+  speechOnlyFallback?: true;
   activityType: OfflineActivityType;
   turnId: string;
   answerIndex: number;
@@ -145,7 +150,61 @@ export interface OfflineSpeechAudioOptions {
     transcriptText?: string;
   }) => Promise<boolean>;
   onAudioCaptured?: (capture: OfflineAudioCapture) => void;
+  onPendingAudio?: () => void;
 }
+
+export interface OnlineFallbackAudioOptions {
+  enabled: true;
+  transcribeCapture: (capture: OfflineAudioCapture) => Promise<string | null>;
+}
+
+type SpeechAudioOptions = OfflineSpeechAudioOptions | OnlineFallbackAudioOptions;
+
+const isOfflineAudio = (value: SpeechAudioOptions): value is OfflineSpeechAudioOptions =>
+  'persistAudio' in value;
+
+const isSpeechOnlyFallback = (value: SpeechAudioOptions) =>
+  !isOfflineAudio(value) || value.speechOnlyFallback === true;
+
+// Only reject recordings that are effectively digital silence. A missing or
+// suspended Web Audio analyser is inconclusive, not proof that speech is absent.
+export const isClearlySilentAudio = (samples: number, peakRms: number) =>
+  samples >= 2 && peakRms < 0.001;
+
+type AudioEvidenceMonitor = { isClearlySilent: () => boolean; stop: () => void };
+
+const monitorAudioEvidence = (stream: MediaStream): AudioEvidenceMonitor | null => {
+  if (typeof AudioContext === 'undefined') return null;
+  try {
+    const context = new AudioContext();
+    const source = context.createMediaStreamSource(stream);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser);
+    const values = new Float32Array(analyser.fftSize);
+    let samples = 0;
+    let peakRms = 0;
+    const timer = setInterval(() => {
+      if (context.state !== 'running') return;
+      analyser.getFloatTimeDomainData(values);
+      let energy = 0;
+      for (const value of values) energy += value * value;
+      peakRms = Math.max(peakRms, Math.sqrt(energy / values.length));
+      samples += 1;
+    }, 100);
+    void context.resume().catch(() => undefined);
+    return {
+      isClearlySilent: () => isClearlySilentAudio(samples, peakRms),
+      stop: () => {
+        clearInterval(timer);
+        source.disconnect();
+        void context.close().catch(() => undefined);
+      },
+    };
+  } catch {
+    return null;
+  }
+};
 
 export type SpeechInputStreamHandlers = {
   onStreamReady?: (stream: MediaStream) => void;
@@ -162,7 +221,7 @@ type RecognitionSession = {
   recognitionReadyEver: boolean;
   resolvingPermission: boolean;
   cancelled: boolean;
-  offlineAudio?: OfflineSpeechAudioOptions;
+  offlineAudio?: SpeechAudioOptions;
 };
 
 export const MAX_RECOGNITION_RESTARTS = 3;
@@ -250,6 +309,7 @@ export function useSpeechInput() {
   const microphoneStreamRef = useRef<MediaStream | null>(null);
   const streamHandlersRef = useRef<SpeechInputStreamHandlers | null>(null);
   const offlineRecorderRef = useRef<OfflineAudioRecorderController | null>(null);
+  const audioEvidenceRef = useRef<AudioEvidenceMonitor | null>(null);
   const listeningRef = useRef(false);
   const startingRef = useRef(false);
   const sessionRef = useRef<RecognitionSession | null>(null);
@@ -296,6 +356,7 @@ export function useSpeechInput() {
     }
     const session = sessionRef.current;
     if (!session || session.cancelled) return;
+    const deliveryGeneration = requestGenerationRef.current;
     const canonicalTranscript = session.accumulator.claimCanonicalTranscript();
     if (canonicalTranscript === null) return;
 
@@ -307,44 +368,79 @@ export function useSpeechInput() {
     setIsRecognitionReady(false);
 
     let audioWasSaved = false;
+    let fallbackTranscript = '';
+    let fallbackAttempted = false;
+    const speechOnlyFallback = session.offlineAudio ? isSpeechOnlyFallback(session.offlineAudio) : false;
+    const clearlySilent = audioEvidenceRef.current?.isClearlySilent() ?? false;
+    audioEvidenceRef.current?.stop();
+    audioEvidenceRef.current = null;
     if (session.offlineAudio) {
       const capture = await offlineRecorderRef.current?.stopRecording() ?? null;
-      if (capture) {
-        const persisted = await session.offlineAudio.persistAudio({
-          activityType: session.offlineAudio.activityType,
-          turnId: session.offlineAudio.turnId,
-          answerIndex: session.offlineAudio.answerIndex,
-          capture,
-          transcriptText: canonicalTranscript || undefined,
-        });
-        if (!persisted) {
-          session.onError?.('The recording could not be saved locally. Your answer was not advanced; retry or use the typed answer.');
-          offlineRecorderRef.current?.releaseRecorder();
-          offlineRecorderRef.current = null;
+      if (capture && (!speechOnlyFallback || canonicalTranscript
+        || (!clearlySilent && capture.sizeBytes >= 256 && capture.durationMs >= 200))) {
+        if (isOfflineAudio(session.offlineAudio)) {
+          const persisted = await session.offlineAudio.persistAudio({
+            activityType: session.offlineAudio.activityType,
+            turnId: session.offlineAudio.turnId,
+            answerIndex: session.offlineAudio.answerIndex,
+            capture,
+            transcriptText: canonicalTranscript || undefined,
+          });
+          if (!persisted) {
+            session.onError?.(speechOnlyFallback
+              ? 'The recording could not be saved locally. Your answer has not advanced; please record again.'
+              : 'The recording could not be saved locally. Your answer was not advanced; retry or use the typed answer.');
+            offlineRecorderRef.current?.releaseRecorder();
+            offlineRecorderRef.current = null;
+            releaseMicrophone();
+            setIsFinalizing(false);
+            return;
+          }
+          audioWasSaved = true;
+          session.offlineAudio.onAudioCaptured?.(capture);
+          if (!canonicalTranscript) session.offlineAudio.onPendingAudio?.();
+        } else if (!canonicalTranscript) {
           releaseMicrophone();
-          setIsFinalizing(false);
-          return;
+          fallbackAttempted = true;
+          try {
+            fallbackTranscript = normalizeSpeechWhitespace(await session.offlineAudio.transcribeCapture(capture) ?? '');
+          } catch {
+            session.onError?.('Speech processing failed. Your recording is retained; retry processing.');
+          }
         }
-        audioWasSaved = true;
-        session.offlineAudio.onAudioCaptured?.(capture);
       }
     }
     offlineRecorderRef.current?.releaseRecorder();
     offlineRecorderRef.current = null;
     releaseMicrophone();
     setIsFinalizing(false);
+    if (deliveryGeneration !== requestGenerationRef.current) return;
 
-    if (canonicalTranscript) session.onTranscript(canonicalTranscript);
-    else if (snapshot.interimTranscript) {
+    if (canonicalTranscript || fallbackTranscript) {
+      if (fallbackTranscript) {
+        setTranscriptState({ finalTranscript: fallbackTranscript, interimTranscript: '', liveTranscript: fallbackTranscript });
+        setHasUnfinalizedTranscript(false);
+      }
+      session.onTranscript(canonicalTranscript || fallbackTranscript);
+    }
+    else if (audioWasSaved && speechOnlyFallback) {
+      session.onError?.('Answer saved on this device. It will be processed when you are back online.');
+    } else if (clearlySilent) {
+      session.onError?.('No speech was detected. Please speak and try again.');
+    } else if (snapshot.interimTranscript) {
       session.onError?.("We couldn't finalize that speech. Review it below, then try speaking again or use the typed answer.");
     } else if (session.failureMessage) {
       session.onError?.(session.failureMessage);
     } else if (!session.recognitionReadyEver) {
       session.onError?.('Speech recognition did not start. Try again or use the typed answer.');
+    } else if (session.offlineAudio && !isOfflineAudio(session.offlineAudio) && fallbackAttempted) {
+      // The online fallback callback owns retry state and its user-facing error.
     } else if (session.offlineAudio) {
-      session.onError?.(audioWasSaved
-        ? 'No speech was detected. Your audio was saved locally; try again or type an answer.'
-        : 'No speech was detected. No audio file was saved; try again or type an answer.');
+      session.onError?.(speechOnlyFallback
+        ? 'No speech was detected. Please speak and try again.'
+        : audioWasSaved
+          ? 'No speech was detected. Your audio was saved locally; try again or type an answer.'
+          : 'No speech was detected. No audio file was saved; try again or type an answer.');
     } else session.onError?.('No speech was detected. Please try again.');
   }, [releaseMicrophone]);
 
@@ -394,6 +490,8 @@ export function useSpeechInput() {
     sessionRef.current = null;
     offlineRecorderRef.current?.cancelRecording();
     offlineRecorderRef.current = null;
+    audioEvidenceRef.current?.stop();
+    audioEvidenceRef.current = null;
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
     try { recognition?.abort(); } catch { /* Chrome can throw when recognition already ended. */ }
@@ -426,6 +524,8 @@ export function useSpeechInput() {
       sessionRef.current = null;
       offlineRecorderRef.current?.cancelRecording();
       offlineRecorderRef.current = null;
+      audioEvidenceRef.current?.stop();
+      audioEvidenceRef.current = null;
       try { recognitionRef.current?.abort(); } catch { /* Chrome can throw when recognition already ended. */ }
       recognitionRef.current = null;
       releaseMicrophone();
@@ -435,7 +535,7 @@ export function useSpeechInput() {
   const startListening = useCallback(async (
     onTranscript: TranscriptHandler,
     onError?: ErrorHandler,
-    offlineAudio?: OfflineSpeechAudioOptions,
+    offlineAudio?: SpeechAudioOptions,
     streamHandlers?: SpeechInputStreamHandlers,
   ) => {
     const supportMessage = getSpeechSupportMessage();
@@ -445,7 +545,7 @@ export function useSpeechInput() {
       return false;
     }
     if (offlineAudio?.enabled && typeof MediaRecorder === 'undefined') {
-      onError?.('This browser cannot record audio locally. Use the typed answer instead.');
+      onError?.('This browser cannot record audio locally. Try another supported browser.');
       return false;
     }
     if (listeningRef.current || startingRef.current || isFinalizing) return false;
@@ -492,7 +592,9 @@ export function useSpeechInput() {
       accumulator,
       retryCount: 0,
       fatalError: false,
-      failureMessage: SpeechRecognition ? null : 'Speech recognition is unavailable in this browser. Audio can be saved locally; type your answer to continue.',
+      failureMessage: SpeechRecognition ? null : offlineAudio && isSpeechOnlyFallback(offlineAudio)
+        ? 'Browser speech recognition is unavailable. Your recorded answer can still be processed.'
+        : 'Speech recognition is unavailable in this browser. Audio can be saved locally; type your answer to continue.',
       recognitionReadyEver: false,
       resolvingPermission: false,
       cancelled: false,
@@ -501,27 +603,38 @@ export function useSpeechInput() {
     microphoneStreamRef.current = microphoneStream;
     streamHandlersRef.current = streamHandlers ?? null;
     if (microphoneStream) streamHandlers?.onStreamReady?.(microphoneStream);
+    if (microphoneStream && offlineAudio?.enabled && isSpeechOnlyFallback(offlineAudio)) {
+      audioEvidenceRef.current = monitorAudioEvidence(microphoneStream);
+    }
 
     if (offlineAudio?.enabled) {
       if (!microphoneStream) {
         startingRef.current = false;
         sessionRef.current = null;
-        onError?.('Local audio recording could not start. Use the typed answer instead.');
+        onError?.('Local audio recording could not start. Please retry.');
         return false;
       }
       offlineRecorderRef.current = createOfflineAudioRecorder({
         stream: microphoneStream,
+        maxSizeBytes: isSpeechOnlyFallback(offlineAudio) ? 13 * 1024 * 1024 : undefined,
         onLimitReached: reason => onError?.(
-          reason === 'duration'
-            ? 'The five-minute recording limit was reached. Stop the mic to save it, then type an answer if needed.'
-            : 'The 25 MB recording limit was reached. Stop the mic to save it, then type an answer if needed.',
+          isSpeechOnlyFallback(offlineAudio)
+            ? reason === 'duration'
+              ? 'The five-minute recording limit was reached. Your answer is being finalized.'
+              : 'The recording size limit was reached. Your answer is being finalized.'
+            : reason === 'duration'
+              ? 'The five-minute recording limit was reached. Stop the mic to save it, then type an answer if needed.'
+              : 'The 25 MB recording limit was reached. Stop the mic to save it, then type an answer if needed.',
         ),
+        onAutoStopped: isSpeechOnlyFallback(offlineAudio) ? stopListening : undefined,
       });
       try {
         if (!await offlineRecorderRef.current.startRecording()) {
           startingRef.current = false;
           sessionRef.current = null;
           offlineRecorderRef.current = null;
+          audioEvidenceRef.current?.stop();
+          audioEvidenceRef.current = null;
           releaseMicrophone();
           onError?.('Local audio recording is unavailable. Use the typed answer instead.');
           return false;
@@ -530,6 +643,8 @@ export function useSpeechInput() {
         startingRef.current = false;
         sessionRef.current = null;
         offlineRecorderRef.current = null;
+        audioEvidenceRef.current?.stop();
+        audioEvidenceRef.current = null;
         releaseMicrophone();
         onError?.(error instanceof Error ? error.message : 'Local audio recording could not start. Use the typed answer instead.');
         return false;
@@ -538,6 +653,8 @@ export function useSpeechInput() {
     if (requestGenerationRef.current !== requestGeneration) {
       offlineRecorderRef.current?.cancelRecording();
       offlineRecorderRef.current = null;
+      audioEvidenceRef.current?.stop();
+      audioEvidenceRef.current = null;
       sessionRef.current = null;
       releaseMicrophone();
       return false;
@@ -589,7 +706,7 @@ export function useSpeechInput() {
         finishRecognitionFailure(session, 'Wait for the audio prompt to finish before starting the microphone.');
         return;
       }
-      session.accumulator.beginRecognitionAttempt();
+      const recognitionEpoch = session.accumulator.beginRecognitionAttempt();
       setTranscriptState(session.accumulator.snapshot());
       let recognition: BrowserSpeechRecognition;
       try {
@@ -611,12 +728,13 @@ export function useSpeechInput() {
         }
       };
       recognition.onresult = event => {
-        if (session.cancelled) return;
+        if (session.cancelled || recognitionRef.current !== recognition) return;
         clearStartTimeout();
         session.recognitionReadyEver = true;
-        setTranscriptState(session.accumulator.applyResults(event));
+        setTranscriptState(session.accumulator.applyResults(event, recognitionEpoch));
       };
       recognition.onerror = event => {
+        if (session.cancelled || recognitionRef.current !== recognition) return;
         clearStartTimeout();
         setIsRecognitionReady(false);
         if (event.error === 'not-allowed') {
@@ -650,10 +768,11 @@ export function useSpeechInput() {
         finishRecognitionFailure(session, getSpeechErrorMessage(event));
       };
       recognition.onend = () => {
+        if (session.cancelled || recognitionRef.current !== recognition) return;
         clearStartTimeout();
-        if (recognitionRef.current === recognition) recognitionRef.current = null;
+        recognitionRef.current = null;
         setIsRecognitionReady(false);
-        if (session.cancelled || session.resolvingPermission) return;
+        if (session.resolvingPermission) return;
         if (listeningRef.current && !session.fatalError) {
           scheduleRestart(session, 250, 'Speech recognition stopped unexpectedly. Please try the mic again or use the typed answer.');
           return;
@@ -678,9 +797,11 @@ export function useSpeechInput() {
 
     startRecognitionRef.current = startRecognition;
     if (SpeechRecognition) startRecognition();
-    else onError?.('Speech recognition is unavailable offline. Audio will still be saved; type your answer to continue.');
+    else onError?.(offlineAudio && isSpeechOnlyFallback(offlineAudio)
+      ? 'Browser speech recognition is unavailable. Speak your answer; the recording will be processed after you stop.'
+      : 'Speech recognition is unavailable offline. Audio will still be saved; type your answer to continue.');
     return true;
-  }, [clearRestart, clearStartTimeout, deliverTranscript, isFinalizing, releaseMicrophone]);
+  }, [clearRestart, clearStartTimeout, deliverTranscript, isFinalizing, releaseMicrophone, stopListening]);
 
   const enableOfflineRecording = useCallback(async (offlineAudio: OfflineSpeechAudioOptions) => {
     const session = sessionRef.current;

@@ -10,6 +10,7 @@ from database import get_db
 from core.deps import get_current_user, get_current_user_ws
 from core.drill_progression import all_drills_completed
 from core.scoring import bounded_integer_score
+from services.assessment_scoring import score_post_test
 from models.user import User
 from models.post_test_interview import PostTestInterviewSession, PostTestInterviewMessage
 from schemas.post_test_interview import PostTestInterviewSessionResponse, PostTestInterviewSessionWithMessagesResponse, PostTestInterviewCompleteRequest
@@ -249,7 +250,7 @@ async def post_test_chat_ws(
             pass
 
 @router.post("/{session_id}/complete", response_model=PostTestInterviewSessionResponse)
-def complete_session(session_id: int, request: PostTestInterviewCompleteRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def complete_session(session_id: int, request: PostTestInterviewCompleteRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Completes and grades the post-test interview session."""
     session = (
         db.query(PostTestInterviewSession)
@@ -293,16 +294,22 @@ def complete_session(session_id: int, request: PostTestInterviewCompleteRequest,
         )
         
     try:
-        evaluation = request.evaluation
+        persisted_history = db.query(PostTestInterviewMessage).filter(
+            PostTestInterviewMessage.session_id == session.id,
+        ).order_by(PostTestInterviewMessage.timestamp.asc(), PostTestInterviewMessage.id.asc()).all()
+        persisted_answers = [message.content for message in persisted_history if message.role == "user"]
+        delivered_questions = [message.content for message in persisted_history if message.role == "ai"][:5]
+        canonical_questions = delivered_questions if len(delivered_questions) == 5 else get_post_test_questions(current_user.department)
+        evaluation = await score_post_test(canonical_questions, persisted_answers)
         
         session.score_vocabulary = bounded_integer_score(evaluation, "score_vocabulary", minimum=1, maximum=5, default=1)
         session.score_clarity = bounded_integer_score(evaluation, "score_clarity", minimum=1, maximum=5, default=1)
         session.eye_contact_samples = bounded_integer_score(
-            evaluation, "eye_contact_samples", minimum=0, maximum=10_000_000, default=0
+            request.evaluation, "eye_contact_samples", minimum=0, maximum=10_000_000, default=0
         )
-        eye_contact_score = evaluation.get("eye_contact_score")
+        eye_contact_score = request.evaluation.get("eye_contact_score")
         session.score_eye_contact = (
-            bounded_integer_score(evaluation, "eye_contact_score", minimum=0, maximum=100, default=0)
+            bounded_integer_score(request.evaluation, "eye_contact_score", minimum=0, maximum=100, default=0)
             if session.eye_contact_samples > 0 and eye_contact_score is not None
             else None
         )

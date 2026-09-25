@@ -128,6 +128,6 @@ test('PreTestPage hydrates server history before connecting and guards one onlin
   assert.match(source, /initialActiveListeningReplayRef\.current = getInitialActiveListeningReplay/);
   assert.match(source, /if \(initialActiveListeningReplayRef\.current !== null\) return;/);
   assert.match(source, /answerSubmissionInFlightRef\.current/);
-  assert.match(source, /disabled=\{connectionState !== 'ready' \|\| isAiResponding \|\| isVoiceSpeaking \|\| isSubmittingAnswer\}/);
+  assert.match(source, /disabled=\{connectionState !== 'ready' \|\| isAiResponding \|\| isVoiceSpeaking \|\| isSubmittingAnswer \|\| !initialStoryAudioDelivered \|\| isProcessingAudio \|\| Boolean\(pendingOnlineAudio\)\}/);
   assert.match(source, /activeListeningCompletionDisabled/);
 });

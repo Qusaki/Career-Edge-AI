@@ -251,12 +251,12 @@ class ActiveListeningPersistenceTests(unittest.TestCase):
             },
         )
 
-        result = pre_test_active_listening.complete_session(
+        result = asyncio.run(pre_test_active_listening.complete_session(
             session_id=session.id,
             request=request,
             db=self.db,
             current_user=SimpleNamespace(id=7),
-        )
+        ))
 
         self.assertEqual(
             [message.id for message in self.ordered_messages(session.id)],

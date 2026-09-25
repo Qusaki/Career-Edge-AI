@@ -12,6 +12,7 @@ export type OfflineActivityType =
 export type OfflineSessionMode = 'online' | 'offline';
 export type OfflineSyncStatus =
   | 'in_progress'
+  | 'pending_transcription'
   | 'completed_local'
   | 'pending_sync'
   | 'syncing'
@@ -273,13 +274,14 @@ export const accountStorage = {
 
   async getPendingOfflineSessions(userId: number) {
     const verifiedUserId = requireVerifiedUserId(userId);
-    const [pending, syncing, failed] = await Promise.all([
+    const [transcription, pending, syncing, failed] = await Promise.all([
+      db.accountOfflineSessions.where('[userId+status]').equals([verifiedUserId, 'pending_transcription']).toArray(),
       db.accountOfflineSessions.where('[userId+status]').equals([verifiedUserId, 'pending_sync']).toArray(),
       db.accountOfflineSessions.where('[userId+status]').equals([verifiedUserId, 'syncing']).toArray(),
       db.accountOfflineSessions.where('[userId+status]').equals([verifiedUserId, 'sync_failed']).toArray(),
     ]);
     return selectOwnedSyncQueue(
-      [...pending, ...syncing, ...failed].map(normalizeOfflineSession),
+      [...transcription, ...pending, ...syncing, ...failed].map(normalizeOfflineSession),
       verifiedUserId,
     );
   },

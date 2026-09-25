@@ -37,6 +37,7 @@ DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1"
 DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+DEFAULT_GEMINI_TRANSCRIPTION_MODEL = "gemini-3.5-transcribe"
 DEFAULT_AI_TIMEOUT_SECONDS = 180.0
 
 
@@ -47,6 +48,7 @@ class AISettings:
     base_url: str
     model: str
     timeout_seconds: float
+    transcription_model: str = DEFAULT_GEMINI_TRANSCRIPTION_MODEL
 
 
 def _first_configured_value(
@@ -116,6 +118,7 @@ def resolve_ai_settings(
         base_url=base_url,
         model=model,
         timeout_seconds=timeout_seconds,
+        transcription_model=source.get("AI_TRANSCRIPTION_MODEL", "").strip() or DEFAULT_GEMINI_TRANSCRIPTION_MODEL,
     )
 
 
@@ -136,6 +139,7 @@ class Settings:
     AI_BASE_URL: str = _ai_settings.base_url
     AI_MODEL: str = _ai_settings.model
     AI_TIMEOUT_SECONDS: float = _ai_settings.timeout_seconds
+    AI_TRANSCRIPTION_MODEL: str = _ai_settings.transcription_model
 
 
 settings = Settings()

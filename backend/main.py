@@ -14,6 +14,7 @@ from routers import (
     drills,
     custom_skills,
     offline_sync,
+    speech,
 )
 from database import engine, Base
 import models.user
@@ -62,6 +63,7 @@ api.include_router(post_test_interview.router, prefix="/post-test-interview", ta
 api.include_router(drills.router, prefix="/drills", tags=["Drills"])
 api.include_router(custom_skills.router, prefix="/custom-skills", tags=["Custom Skills AI Session"])
 api.include_router(offline_sync.router, prefix="/offline-sync", tags=["Offline Synchronization"])
+api.include_router(speech.router, prefix="/speech", tags=["Speech"])
 
 
 @api.get("/")

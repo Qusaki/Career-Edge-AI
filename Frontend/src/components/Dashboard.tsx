@@ -783,6 +783,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const endActivityCheckpoint = React.useCallback(async (outcome: ActivitySessionEnd) => {
     const current = activeActivityCheckpointRef.current;
     if (!current) return false;
+    if (outcome === 'recorded_local') {
+      if (current.mode !== 'offline' || !current.audioReferences.some(item => item.transcriptStatus === 'pending')) return false;
+      const awaiting = mergeActivityCheckpoint(current, {
+        status: 'pending_transcription', syncState: 'not_ready', completedAt: Date.now(),
+        pendingEvaluation: { reason: 'Recorded speech awaits canonical transcription before evaluation.' },
+      });
+      if (!await persistActivityCheckpoint(awaiting)) return false;
+      activeActivityCheckpointRef.current = null;
+      setActiveActivityCheckpoint(null);
+      setShowConnectionLossPrompt(false);
+      return true;
+    }
     if (outcome === 'completed_local') {
       const completed = createCompletedLocalCheckpoint(current);
       activeActivityCheckpointRef.current = completed;
@@ -3788,6 +3800,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const syncingSessions = syncQueueSessions.filter(session => session.status === 'syncing');
   const failedSyncSession = syncQueueSessions.find(session => session.status === 'sync_failed');
   const queuedSyncSessions = syncQueueSessions.filter(session => session.status === 'pending_sync');
+  const awaitingTranscriptionSessions = syncQueueSessions.filter(session => session.status === 'pending_transcription');
   const updateBlockReason: UpdateBlockReason = updateSessionActive
     ? 'active-session'
     : updateHasUnsyncedWork === null
@@ -3867,6 +3880,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
               ? `Syncing ${syncingSessions.length} saved ${syncingSessions.length === 1 ? 'activity' : 'activities'}...`
               : failedSyncSession
                 ? 'Sync Failed'
+                : awaitingTranscriptionSessions.length > 0
+                  ? `${awaitingTranscriptionSessions.length} recorded ${awaitingTranscriptionSessions.length === 1 ? 'answer awaits' : 'answers await'} speech processing`
                 : `${queuedSyncSessions.length} ${queuedSyncSessions.length === 1 ? 'activity' : 'activities'} Pending Sync`}
           </p>
           {failedSyncSession ? (
@@ -3885,6 +3900,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <p className="mt-1 text-slate-300">
               {syncingSessions.length > 0
                 ? 'Your local copy will be retained after authoritative synchronization.'
+                : awaitingTranscriptionSessions.length > 0
+                  ? 'Your audio is saved on this device. It will be transcribed and scored when Career Edge is available.'
                 : 'Synchronization will begin when the Career Edge cloud is available.'}
             </p>
           )}

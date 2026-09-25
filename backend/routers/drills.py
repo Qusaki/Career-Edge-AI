@@ -19,6 +19,7 @@ from core.drill_progression import (
     is_drill_type_unlocked,
 )
 from core.drill_scoring import calculate_drill_score
+from services.assessment_scoring import score_drill
 from models.user import User
 from models.drills import DrillSession
 from schemas.drills import DrillCompleteRequest, DrillProgressResponse, DrillPrompt, DrillSessionResponse, DrillStartRequest, NegotiationTurnRequest
@@ -337,7 +338,7 @@ def get_user_drill_sessions(db: Session = Depends(get_db), current_user: User = 
     return sessions
 
 @router.post("/{session_id}/complete", response_model=DrillSessionResponse)
-def complete_drill_session(session_id: int, request: DrillCompleteRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def complete_drill_session(session_id: int, request: DrillCompleteRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Completes the drill session and saves evaluation data."""
     session = (
         db.query(DrillSession)
@@ -360,7 +361,11 @@ def complete_drill_session(session_id: int, request: DrillCompleteRequest, db: S
     evaluation_data["prompt"] = session.canonical_prompt
 
     try:
-        apply_drill_score(session, evaluation_data)
+        calculation = await score_drill(session.drill_type, evaluation_data)
+        session.score = calculation["score"]
+        session.passed = calculation["passed"]
+        session.feedback_summary = calculation["feedback_summary"]
+        session.evaluation_data = json.dumps({**evaluation_data, "scoring": calculation["scoring"]})
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 

@@ -226,7 +226,8 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         }
         provider = BlockingProvider({
             "score_vocabulary": 4, "score_clarity": 4, "score_grammar": 4,
-            "score_courtesy": 5, "score_conciseness": 4, "feedback_summary": "Accurate.",
+            "score_courtesy": 5, "score_conciseness": 4, "task_alignment": 4,
+            "total_score": 21, "feedback_summary": "Accurate.",
         })
         first_response = []
 
@@ -347,7 +348,7 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         }
         response = self.client.post("/offline-sync", json=payload)
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["authoritative_result"]["score"], 76.67)
+        self.assertEqual(response.json()["authoritative_result"]["score"], 40.0)
 
     def test_locked_offline_drill_cannot_bypass_server_progression(self):
         payload = {
@@ -477,7 +478,7 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         self.add_completed_drills(*DRILL_LEVEL_BY_TYPE)
         response = self.client.post("/offline-sync", json=post_test_payload())
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["authoritative_result"]["total_score"], 20)
+        self.assertEqual(response.json()["authoritative_result"]["total_score"], 5)
 
     def test_locked_post_test_sync_creates_no_result_receipt_or_session_mutation(self):
         with self.Session() as db:
@@ -589,7 +590,7 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         with self.Session() as db:
             self.assertEqual(db.query(PostTestInterviewSession).filter_by(user_id=1).count(), 1)
 
-    def test_active_listening_uses_provider_and_provider_failure_is_retryable(self):
+    def test_active_listening_provider_failure_uses_conservative_replayable_fallback(self):
         payload = {
             "client_session_id": "listening-client",
             "activity_type": "pre_test_active_listening",
@@ -600,12 +601,14 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         }
         with patch("services.offline_sync.get_ai_provider", return_value=FailingProvider()):
             failed = self.client.post("/offline-sync", json=payload)
-        self.assertEqual(failed.status_code, 503)
+        self.assertEqual(failed.status_code, 200, failed.text)
+        self.assertEqual(failed.json()["authoritative_result"]["total_score"], 5)
+        self.assertIn("Deterministic fallback", failed.json()["authoritative_result"]["feedback_summary"])
         with self.Session() as db:
             receipt = db.query(OfflineSyncReceipt).filter_by(client_session_id="listening-client").one()
             receipt_id = receipt.id
-            self.assertEqual(receipt.status, "failed")
-            self.assertEqual(db.query(PreTestActiveListeningSession).count(), 0)
+            self.assertEqual(receipt.status, "completed")
+            self.assertEqual(db.query(PreTestActiveListeningSession).count(), 1)
 
         provider = FakeProvider({
             "score_vocabulary": 4, "score_clarity": 4, "score_grammar": 4,
@@ -614,7 +617,8 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         with patch("services.offline_sync.get_ai_provider", return_value=provider):
             retried = self.client.post("/offline-sync", json=payload)
         self.assertEqual(retried.status_code, 200, retried.text)
-        self.assertEqual(provider.calls, 1)
+        self.assertTrue(retried.json()["idempotent_replay"])
+        self.assertEqual(provider.calls, 0)
         with self.Session() as db:
             receipt = db.query(OfflineSyncReceipt).filter_by(client_session_id="listening-client").one()
             self.assertEqual(receipt.id, receipt_id)

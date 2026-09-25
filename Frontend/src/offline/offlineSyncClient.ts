@@ -1,9 +1,12 @@
 import {
   accountStorage,
+  type AccountOfflineAudio,
   type AccountOfflineSession,
   type OfflineAudioReference,
+  type OfflineActivityType,
 } from '../db';
 import { isOfflineClientSessionId, isPositiveServerSessionId } from '../utils/sessionIdentity';
+import { SpeechTranscriptionError, transcribeAudioWithToken } from '../utils/transcribeAnswer';
 
 interface OfflineSyncResponse {
   synchronized: true;
@@ -23,7 +26,13 @@ interface OfflineSyncErrorDetail {
   retryable?: boolean;
 }
 
-type SyncStorage = Pick<typeof accountStorage, 'updateOfflineSession' | 'getPendingOfflineSessions'>;
+type SyncStorage = {
+  updateOfflineSession: (userId: number, type: OfflineActivityType, localId: string,
+    update: Partial<AccountOfflineSession>) => Promise<AccountOfflineSession | undefined>;
+  getPendingOfflineSessions: (userId: number) => Promise<AccountOfflineSession[]>;
+  getOfflineAudio?: (userId: number, audioId: string) => Promise<AccountOfflineAudio | undefined>;
+  putOfflineAudio?: (record: AccountOfflineAudio) => Promise<unknown>;
+};
 
 export interface OfflineSyncDependencies {
   apiUrl: string;
@@ -34,6 +43,7 @@ export interface OfflineSyncDependencies {
   now?: () => number;
   requestTimeoutMs?: number;
   onSessionUpdated?: (session: AccountOfflineSession) => void;
+  isCurrentUser?: () => boolean;
 }
 
 export interface OfflineSyncWorkerOptions extends OfflineSyncDependencies {
@@ -73,6 +83,58 @@ const toAudioManifest = (references: OfflineAudioReference[]) => references.map(
   duration_ms: reference.durationMs,
   transcript_status: reference.transcriptStatus,
 }));
+
+export const prepareRecordedAnswers = async (
+  session: AccountOfflineSession, dependencies: OfflineSyncDependencies,
+  storage: SyncStorage,
+): Promise<AccountOfflineSession> => {
+  const pending = session.audioReferences.filter(reference => reference.transcriptStatus === 'pending');
+  if (!pending.length) return session;
+  if (!storage.getOfflineAudio || !storage.putOfflineAudio) {
+    throw new OfflineSyncError('Saved audio is unavailable for speech processing.', 'audio_storage_unavailable', false);
+  }
+  const answers = new Map(session.answers.map(answer => [answer.step, answer]));
+  const references = [...session.audioReferences];
+  for (const reference of pending.sort((a, b) => a.answerIndex - b.answerIndex)) {
+    if (!(dependencies.isCurrentUser?.() ?? true)) throw new OfflineSyncError('The account changed before speech processing completed.', 'account_changed', false);
+    const audio = await storage.getOfflineAudio(dependencies.userId, reference.audioId);
+    if (!audio || audio.userId !== dependencies.userId || audio.clientSessionId !== session.clientSessionId
+      || audio.activityType !== session.type || audio.turnId !== reference.turnId
+      || audio.answerIndex !== reference.answerIndex || audio.blob.size !== audio.sizeBytes) {
+      throw new OfflineSyncError('The saved recording does not match this account and activity.', 'audio_ownership_mismatch', false);
+    }
+    let transcript = audio.transcriptText?.trim() || '';
+    if (!transcript) {
+      transcript = await transcribeAudioWithToken(
+        dependencies.apiUrl, dependencies.token, audio.blob, audio.sizeBytes, dependencies.fetchImpl ?? fetch,
+      );
+      if (!(dependencies.isCurrentUser?.() ?? true)) throw new OfflineSyncError('The account changed before speech processing completed.', 'account_changed', false);
+      await storage.putOfflineAudio({ ...audio, transcriptText: transcript, transcriptStatus: 'available', updatedAt: Date.now() });
+    }
+    answers.set(reference.answerIndex, { step: reference.answerIndex, text: transcript, createdAt: audio.createdAt });
+    const index = references.findIndex(item => item.audioId === reference.audioId);
+    references[index] = { ...reference, transcriptStatus: 'available' };
+  }
+  const sortedAnswers = [...answers.values()].sort((a, b) => a.step - b.step);
+  if (sortedAnswers.some((answer, index) => answer.step !== index + 1 || !answer.text.trim())) {
+    throw new OfflineSyncError('A recorded answer is still awaiting speech processing.', 'incomplete_recorded_answers', false);
+  }
+  const previousUserTurns = session.conversationLog.filter(turn => turn.sender === 'user').length;
+  const conversationLog = session.type === 'pre_test_active_listening' || session.type === 'drill' && session.activityState.drillType === 'negotiation'
+    ? [...session.conversationLog, ...sortedAnswers.slice(previousUserTurns).map(answer => ({ sender: 'user' as const, text: answer.text }))]
+    : session.conversationLog;
+  const activityState = session.type === 'drill' && session.activityState.drillType !== 'negotiation'
+    ? { ...session.activityState, spokenResponse: sortedAnswers[0]?.text || '' }
+    : session.activityState;
+  const prepared = await storage.updateOfflineSession(dependencies.userId, session.type, session.localId, {
+    answers: sortedAnswers, conversationLog, audioReferences: references, activityState,
+    responseCount: sortedAnswers.length, currentStep: sortedAnswers.length,
+    status: 'pending_sync', syncState: 'queued',
+  });
+  if (!prepared) throw new OfflineSyncError('The processed answer could not be saved locally.', 'transcript_persistence_failed', true);
+  dependencies.onSessionUpdated?.(prepared);
+  return prepared;
+};
 
 export const buildOfflineSyncPayload = (session: AccountOfflineSession) => {
   if (!isOfflineClientSessionId(session.clientSessionId) || session.localId !== session.clientSessionId) {
@@ -172,6 +234,9 @@ export const getAutomaticSyncBackoffMs = (failureCount: number) => {
 
 const asSyncError = (error: unknown) => {
   if (error instanceof OfflineSyncError) return error;
+  if (error instanceof SpeechTranscriptionError) {
+    return new OfflineSyncError(error.message, 'speech_transcription_failed', error.retryable);
+  }
   if (error instanceof DOMException && error.name === 'AbortError') {
     return new OfflineSyncError('Synchronization timed out. Career Edge will retry safely.', 'request_timeout', true);
   }
@@ -194,6 +259,22 @@ export const syncOfflineSession = async (
       false,
     );
   }
+  const storage = dependencies.storage ?? accountStorage;
+  if (session.status === 'pending_transcription' || session.audioReferences.some(item => item.transcriptStatus === 'pending')) {
+    try {
+      session = await prepareRecordedAnswers(session, dependencies, storage);
+    } catch (error) {
+      const classified = asSyncError(error);
+      if (classified.code === 'account_changed') throw classified;
+      const failed = await storage.updateOfflineSession(dependencies.userId, session.type, session.localId, {
+        status: 'sync_failed', syncState: 'failed', lastError: classified.message,
+        lastErrorCode: classified.code, retryDisposition: classified.retryable ? 'retryable' : 'manual_attention',
+        nextRetryAt: classified.retryable ? (dependencies.now ?? Date.now)() + 30_000 : null,
+      });
+      if (failed) dependencies.onSessionUpdated?.(failed);
+      throw classified;
+    }
+  }
   const permittedStatuses = options.recoverSyncing
     ? ['pending_sync', 'sync_failed', 'syncing']
     : ['pending_sync', 'sync_failed'];
@@ -203,7 +284,6 @@ export const syncOfflineSession = async (
 
   const now = dependencies.now ?? Date.now;
   const attemptAt = now();
-  const storage = dependencies.storage ?? accountStorage;
   const syncing = await storage.updateOfflineSession(
     dependencies.userId,
     session.type,
@@ -332,7 +412,7 @@ export const syncOfflineQueueWithRetry = (options: OfflineSyncWorkerOptions): Pr
     ) {
       const owned = await storage.getPendingOfflineSessions(options.userId);
       const retryable = owned.filter(session => {
-        if (session.status === 'pending_sync' || session.status === 'syncing') return true;
+        if (session.status === 'pending_transcription' || session.status === 'pending_sync' || session.status === 'syncing') return true;
         return session.status === 'sync_failed' && session.retryDisposition === 'retryable';
       }).filter(session => (userAttempts.get(session.clientSessionId) ?? 0) < MAX_AUTOMATIC_SYNC_ATTEMPTS);
       if (retryable.length === 0) break;

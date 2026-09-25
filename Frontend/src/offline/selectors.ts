@@ -16,7 +16,7 @@ export const selectOwnedSyncQueue = <T extends OwnedOfflineRecord>(records: T[],
   const verifiedUserId = requireUserId(userId);
   return records
     .filter(record =>
-      record.userId === verifiedUserId && ['pending_sync', 'syncing', 'sync_failed'].includes(record.status)
+      record.userId === verifiedUserId && ['pending_transcription', 'pending_sync', 'syncing', 'sync_failed'].includes(record.status)
     )
     .sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0));
 };

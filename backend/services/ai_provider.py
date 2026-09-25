@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import inspect
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import suppress
@@ -14,6 +15,7 @@ from openai import (
     AuthenticationError,
     RateLimitError,
 )
+import httpx
 
 from core.config import AISettings, resolve_ai_settings
 
@@ -62,6 +64,8 @@ class AIProvider(Protocol):
         messages: Sequence[ChatMessage],
         workload: str | None = None,
     ) -> AsyncIterator[str]: ...
+
+    async def transcribe_audio(self, audio: bytes, mime_type: str) -> str: ...
 
 
 def normalize_ollama_base_url(base_url: str) -> str:
@@ -217,6 +221,9 @@ class _OpenAICompatibleAIProvider:
         if not received_content:
             raise AIEmptyResponseError("The AI service returned an empty response.")
 
+    async def transcribe_audio(self, audio: bytes, mime_type: str) -> str:
+        raise AIConfigurationError("Audio transcription is unavailable with the selected AI provider.")
+
 
 class OllamaAIProvider(_OpenAICompatibleAIProvider):
     """Ollama adapter using its OpenAI-compatible chat-completions API."""
@@ -248,6 +255,46 @@ class GeminiAIProvider(_OpenAICompatibleAIProvider):
             normalized_base_url=normalize_gemini_base_url(configuration.base_url),
             client=client,
         )
+        self._api_key = configuration.api_key
+        self._transcription_model = configuration.transcription_model
+
+    async def transcribe_audio(self, audio: bytes, mime_type: str) -> str:
+        # The Interactions API is separate from the OpenAI-compatible chat API.
+        # Inline input avoids retaining a user recording in the Gemini Files API.
+        payload = {
+            "model": self._transcription_model,
+            "store": False,
+            "input": [{"type": "audio", "data": base64.b64encode(audio).decode("ascii"), "mime_type": mime_type}],
+            "generation_config": {"transcription_config": {"mode": {"type": "verbatim"}, "language_codes": []}},
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout_seconds) as http:
+                response = await http.post(
+                    "https://generativelanguage.googleapis.com/v1beta/interactions",
+                    headers={"x-goog-api-key": self._api_key}, json=payload,
+                )
+                response.raise_for_status()
+                result = response.json()
+        except httpx.TimeoutException as error:
+            raise AITimeoutError("The transcription service timed out.") from error
+        except httpx.HTTPError as error:
+            raise AIProviderUnavailableError("The transcription service is unavailable.") from error
+        except ValueError as error:
+            raise AIProviderUnavailableError("The transcription service returned an invalid response.") from error
+        if not isinstance(result, dict) or result.get("status") != "completed":
+            raise AIProviderUnavailableError("The transcription service did not complete.")
+        steps = result.get("steps")
+        if not isinstance(steps, list):
+            raise AIEmptyResponseError("The transcription service returned no speech.")
+        parts = [
+            content.get("text") for step in steps if isinstance(step, dict) and step.get("type") == "model_output"
+            for content in (step.get("content") or []) if isinstance(content, dict) and content.get("type") == "text"
+            and isinstance(content.get("text"), str)
+        ]
+        transcript = " ".join(part.strip() for part in parts if part and part.strip()).strip()
+        if not transcript:
+            raise AIEmptyResponseError("The transcription service returned no speech.")
+        return transcript
 
 
 def get_ai_provider(

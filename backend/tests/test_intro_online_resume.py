@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -122,6 +123,16 @@ class IntroOnlineResumeTests(unittest.TestCase):
         with self.Session() as db:
             self.assertIsNone(db.get(PreTestIntroSession, session_id).transcript)
 
+    def test_completion_does_not_score_uncommitted_request_transcript(self) -> None:
+        session_id = self.start().json()["id"]
+        response = self.client.post(
+            f"/pre-test-intro/{session_id}/complete",
+            json=complete_payload("A transcript that was never saved."),
+        )
+        self.assertEqual(response.status_code, 409, response.text)
+        with self.Session() as db:
+            self.assertEqual(db.get(PreTestIntroSession, session_id).status, "active")
+
     def test_completed_session_cannot_be_rewritten(self) -> None:
         session_id = self.start().json()["id"]
         canonical = "The accepted response."
@@ -148,21 +159,27 @@ class IntroOnlineResumeTests(unittest.TestCase):
         self.assertEqual(persisted.status_code, 404, persisted.text)
         self.assertEqual(fetched.status_code, 404, fetched.text)
 
-    def test_completion_uses_persisted_response_and_preserves_scoring(self) -> None:
+    def test_completion_uses_persisted_response_and_caps_unsupported_high_scoring(self) -> None:
         session_id = self.start().json()["id"]
         canonical = "The server-authoritative accepted introduction."
         self.persist(session_id, canonical)
 
-        response = self.client.post(
-            f"/pre-test-intro/{session_id}/complete",
-            json=complete_payload("A stale conflicting frontend response."),
-        )
+        with patch.object(pre_test_intro, "score_intro", new_callable=AsyncMock, return_value={
+            "score_clarity": 1, "score_completeness": 1, "score_courtesy": 1,
+            "score_correctness": 1, "score_conciseness": 1, "score_vocabulary": 1,
+            "score_grammar": 1, "feedback_summary": "The saved answer lacks details.",
+        }) as scorer:
+            response = self.client.post(
+                f"/pre-test-intro/{session_id}/complete",
+                json=complete_payload("A stale conflicting frontend response."),
+            )
+        scorer.assert_awaited_once_with(canonical)
 
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
         self.assertEqual(body["transcript"], canonical)
-        self.assertEqual(body["total_score"], 15.0)
-        self.assertTrue(body["passed"])
+        self.assertEqual(body["total_score"], 5.0)
+        self.assertFalse(body["passed"])
         self.assertEqual(body["score_eye_contact"], 80)
         self.assertEqual(body["eye_contact_samples"], 20)
 

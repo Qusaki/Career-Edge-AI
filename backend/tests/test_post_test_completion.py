@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -104,7 +104,7 @@ class PostTestCompletionTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 409, response.text)
                 self.assertIn("all five", response.json()["detail"])
 
-    def test_exactly_five_persisted_answers_complete_with_unchanged_scoring(self) -> None:
+    def test_exactly_five_sparse_persisted_answers_complete_with_quality_cap(self) -> None:
         session_id = self.create_session(5)
 
         response = self.complete(session_id)
@@ -112,10 +112,28 @@ class PostTestCompletionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         result = response.json()
         self.assertEqual(result["status"], "completed")
-        self.assertEqual(result["total_score"], 20.0)
-        self.assertTrue(result["passed"])
+        self.assertEqual(result["total_score"], 5.0)
+        self.assertFalse(result["passed"])
         self.assertEqual(result["score_eye_contact"], 80)
         self.assertEqual(result["eye_contact_samples"], 20)
+
+    def test_scoring_uses_delivered_questions_and_saved_answers(self) -> None:
+        session_id = self.create_session(5)
+        with self.SessionLocal() as db:
+            for number in range(2, 6):
+                db.add(PostTestInterviewMessage(session_id=session_id, role="ai", content=f"Saved question {number}"))
+            db.commit()
+        with patch.object(post_test_interview, "score_post_test", new_callable=AsyncMock, return_value={
+            "score_vocabulary": 1, "score_clarity": 1, "score_grammar": 1,
+            "score_courtesy": 1, "score_conciseness": 1,
+            "feedback_summary": "These answers need more detail.",
+        }) as scorer:
+            response = self.complete(session_id)
+        self.assertEqual(response.status_code, 200, response.text)
+        scorer.assert_awaited_once_with(
+            ["Question 1", "Saved question 2", "Saved question 3", "Saved question 4", "Saved question 5"],
+            [f"Persisted answer {number}" for number in range(1, 6)],
+        )
 
     def test_more_than_five_persisted_answers_require_manual_recovery(self) -> None:
         response = self.complete(self.create_session(6))

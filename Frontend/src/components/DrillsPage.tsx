@@ -15,6 +15,8 @@ import { normalizeApiError } from '../utils/httpError';
 import { resolveDrillSessionExecution } from '../utils/drillSessionExecution';
 import { hasRestorableOfflineIdentity } from '../utils/sessionIdentity';
 import { readPostTestAccess, type PostTestAccess } from '../utils/postTestProgress';
+import { transcribeAnswer } from '../utils/transcribeAnswer';
+import type { OfflineAudioCapture } from '../offline/offlineAudioRecorder';
 import {
   createDrillTimerState,
   formatDrillTimer,
@@ -92,6 +94,13 @@ type NegotiationMessage = {
   sender: 'user' | 'bot';
   text: string;
 };
+
+const speechOnlyErrorMessage = (message: string): string => message
+  .replace(/Use the typed answer or clear local site data/gi, 'Clear local site data')
+  .replace(/(?:,?\s+or\s+|,\s+then\s+|;\s*)(?:use the typed answer(?: instead)?|type (?:your|an) answer(?: to continue| if needed)?)/gi, '')
+  .replace(/Use the typed answer instead\.?/gi, '')
+  .replace(/,\s*\./g, '.')
+  .trim();
 
 const drills: Drill[] = [
   {
@@ -347,8 +356,9 @@ export function DrillsPage({
   const [activeSession, setActiveSession] = useState<DrillSession | null>(null);
   const [activePrompt, setActivePrompt] = useState('');
   const [spokenResponse, setSpokenResponse] = useState('');
+  const [isSavingSpokenResponse, setIsSavingSpokenResponse] = useState(false);
+  const savingSpokenResponseRef = useRef(false);
   const [negotiationMessages, setNegotiationMessages] = useState<NegotiationMessage[]>([]);
-  const [negotiationReply, setNegotiationReply] = useState('');
   const [negotiationTurn, setNegotiationTurn] = useState(0);
   const [currentOffer, setCurrentOffer] = useState(35000);
   const [negotiationGameOver, setNegotiationGameOver] = useState(false);
@@ -357,6 +367,12 @@ export function DrillsPage({
   const [drillTimer, setDrillTimer] = useState<DrillTimerState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pendingOnlineAudio, setPendingOnlineAudio] = useState<{
+    capture: OfflineAudioCapture;
+    commit: (transcript: string) => void | Promise<void>;
+  } | null>(null);
+  const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+  const [hasPendingOfflineAudio, setHasPendingOfflineAudio] = useState(false);
   const exerciseGenerationRef = useRef(0);
   const resumedSessionRef = useRef<string | null>(null);
   const sessionModeRef = useRef(sessionMode);
@@ -509,6 +525,7 @@ export function DrillsPage({
     });
     setActivePrompt(String(resumeSession.activityState.prompt || resumeSession.currentQuestion));
     setSpokenResponse(String(resumeSession.activityState.spokenResponse || resumeSession.answers[0]?.text || ''));
+    setHasPendingOfflineAudio(resumeSession.audioReferences.some(item => item.transcriptStatus === 'pending'));
     setNegotiationMessages(drill.isNegotiation ? restoredNegotiationMessages : []);
     setNegotiationTurn(Number(resumeSession.activityState.negotiationTurn || 0));
     setCurrentOffer(Number(resumeSession.activityState.currentOffer || 35000));
@@ -578,6 +595,8 @@ export function DrillsPage({
   }, [cancelListening]);
 
   const startDrill = async (drill: Drill) => {
+    setHasPendingOfflineAudio(false);
+    setPendingOnlineAudio(null);
     const levelProgress = progress[drill.drillLevel];
     const drillProgress = levelProgress.drills.find(item => item.type === drill.drillType);
     if (!levelProgress.unlocked) {
@@ -595,7 +614,6 @@ export function DrillsPage({
     setNotice(null);
     setSpokenResponse('');
     setNegotiationMessages([]);
-    setNegotiationReply('');
     setNegotiationTurn(0);
     setCurrentOffer(35000);
     setNegotiationGameOver(false);
@@ -732,6 +750,8 @@ export function DrillsPage({
   };
 
   const quitDrill = () => {
+    setHasPendingOfflineAudio(false);
+    setPendingOnlineAudio(null);
     exerciseGenerationRef.current += 1;
     cancelListening();
     cancelBrowserSpeech();
@@ -741,7 +761,6 @@ export function DrillsPage({
     setActivePrompt('');
     setSpokenResponse('');
     setNegotiationMessages([]);
-    setNegotiationReply('');
     setNegotiationTurn(0);
     setCurrentOffer(35000);
     setNegotiationGameOver(false);
@@ -754,7 +773,8 @@ export function DrillsPage({
     onSessionModeChange(false);
   };
 
-  const sendNegotiationReply = async (spokenText = negotiationReply) => {
+  const sendNegotiationReply = async (spokenText: string) => {
+    setHasPendingOfflineAudio(false);
     const text = spokenText.trim();
     if (!text || negotiationLoading || negotiationGameOver) return;
 
@@ -788,7 +808,6 @@ export function DrillsPage({
       return;
     }
     resetSpeechTranscript();
-    setNegotiationReply('');
     setNegotiationMessages(userMessages);
 
     try {
@@ -852,7 +871,33 @@ export function DrillsPage({
     }
   };
 
+  const processOnlineAudio = async (
+    capture: OfflineAudioCapture,
+    commit: (transcript: string) => void | Promise<void>,
+  ): Promise<string | null> => {
+    setPendingOnlineAudio({ capture, commit });
+    setIsProcessingAudio(true);
+    setError(null);
+    try {
+      const transcript = await transcribeAnswer(apiUrl, capture);
+      setPendingOnlineAudio(null);
+      return transcript;
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Speech processing failed. Retry your saved recording.');
+      return null;
+    } finally {
+      setIsProcessingAudio(false);
+    }
+  };
+
+  const retryOnlineAudio = async () => {
+    if (!pendingOnlineAudio || isProcessingAudio) return;
+    const transcript = await processOnlineAudio(pendingOnlineAudio.capture, pendingOnlineAudio.commit);
+    if (transcript) await pendingOnlineAudio.commit(transcript);
+  };
+
   const recordDrillResponse = () => {
+    if (savingSpokenResponseRef.current) return;
     if (drillTimerRef.current?.phase === 'expired') {
       setError('Time is up for this response. Review your transcript, then mark the Drill complete.');
       return;
@@ -862,36 +907,47 @@ export function DrillsPage({
       return;
     }
     setError(null);
-    startListening(async transcript => {
-        const nextResponse = [spokenResponse, transcript].filter(Boolean).join(' ').trim();
-        const saved = await onActivityCheckpoint({
-          currentQuestion: activePrompt,
-          currentStep: 1,
-          responseCount: nextResponse ? 1 : 0,
-          answers: nextResponse ? [{ step: 1, text: nextResponse, createdAt: Date.now() }] : [],
-          eyeContactSummary: getCheckpointEyeContactSummary(),
-          activityState: {
-            drillType: activeSession?.drill_type,
-            drillLevel: activeSession?.drill_level,
-            prompt: activePrompt,
-            spokenResponse: nextResponse,
-            negotiationTurn,
-            currentOffer,
-            negotiationGameOver,
-            ...serializeDrillTimer(drillTimerRef.current),
-          },
-        });
-        if (saved) {
-          setSpokenResponse(nextResponse);
-          resetSpeechTranscript();
+    const commitDrillResponse = async (transcript: string) => {
+        setHasPendingOfflineAudio(false);
+        savingSpokenResponseRef.current = true;
+        setIsSavingSpokenResponse(true);
+        try {
+          const nextResponse = [spokenResponse, transcript].filter(Boolean).join(' ').trim();
+          const saved = await onActivityCheckpoint({
+            currentQuestion: activePrompt,
+            currentStep: 1,
+            responseCount: nextResponse ? 1 : 0,
+            answers: nextResponse ? [{ step: 1, text: nextResponse, createdAt: Date.now() }] : [],
+            eyeContactSummary: getCheckpointEyeContactSummary(),
+            activityState: {
+              drillType: activeSession?.drill_type,
+              drillLevel: activeSession?.drill_level,
+              prompt: activePrompt,
+              spokenResponse: nextResponse,
+              negotiationTurn,
+              currentOffer,
+              negotiationGameOver,
+              ...serializeDrillTimer(drillTimerRef.current),
+            },
+          });
+          if (saved) {
+            setSpokenResponse(nextResponse);
+            resetSpeechTranscript();
+          }
+        } finally {
+          savingSpokenResponseRef.current = false;
+          setIsSavingSpokenResponse(false);
         }
-    }, setError, sessionMode === 'offline' && activeSession ? {
+    };
+    startListening(commitDrillResponse, message => setError(speechOnlyErrorMessage(message)), sessionMode === 'offline' && activeSession ? {
       enabled: true,
+      speechOnlyFallback: true,
       activityType: 'drill',
       turnId: 'drill-response-1',
       answerIndex: 1,
       persistAudio: onOfflineAudioCaptured,
-    } : undefined);
+      onPendingAudio: () => setHasPendingOfflineAudio(true),
+    } : { enabled: true, transcribeCapture: capture => processOnlineAudio(capture, commitDrillResponse) });
   };
 
   const stopDrillResponse = () => {
@@ -909,39 +965,20 @@ export function DrillsPage({
     }
     setError(null);
     const answerIndex = negotiationMessages.filter(message => message.sender === 'user').length + 1;
-    startListening(transcript => void sendNegotiationReply(transcript), setError, sessionMode === 'offline' && activeSession ? {
+    startListening(transcript => void sendNegotiationReply(transcript), message => setError(speechOnlyErrorMessage(message)), sessionMode === 'offline' && activeSession ? {
       enabled: true,
+      speechOnlyFallback: true,
       activityType: 'drill',
       turnId: `negotiation-${answerIndex}`,
       answerIndex,
       persistAudio: onOfflineAudioCaptured,
-    } : undefined);
-  };
-
-  const saveTypedDrillResponse = async () => {
-    const text = spokenResponse.trim();
-    if (!text) return;
-    await onActivityCheckpoint({
-      currentQuestion: activePrompt,
-      currentStep: 1,
-      responseCount: 1,
-      answers: [{ step: 1, text, createdAt: Date.now() }],
-      eyeContactSummary: getCheckpointEyeContactSummary(),
-      activityState: {
-        drillType: activeSession?.drill_type,
-        drillLevel: activeSession?.drill_level,
-        prompt: activePrompt,
-        spokenResponse: text,
-        negotiationTurn,
-        currentOffer,
-        negotiationGameOver,
-        ...serializeDrillTimer(drillTimerRef.current),
-      },
-    });
+      onPendingAudio: () => setHasPendingOfflineAudio(true),
+    } : { enabled: true, transcribeCapture: capture => processOnlineAudio(capture, sendNegotiationReply) });
   };
 
   const completeDrill = async () => {
-    if (!activeSession) return;
+    if (isProcessingAudio || pendingOnlineAudio) return;
+    if (!activeSession || isListening || isFinalizing || savingSpokenResponseRef.current || negotiationLoading) return;
     const checkpointOfflineClientSessionId = resumeSession?.type === 'drill' && resumeSession.mode === 'offline'
       ? resumeSession.clientSessionId
       : null;
@@ -958,6 +995,15 @@ export function DrillsPage({
       setCompleting(activeSession.id);
       setError(null);
       try {
+        if (hasPendingOfflineAudio) {
+          if (!await onActivityEnd('recorded_local')) throw new Error('The recorded answer could not be queued safely. Please retry.');
+          cancelListening();
+          setActiveSession(null);
+          setHasPendingOfflineAudio(false);
+          onSessionModeChange(false);
+          setNotice('Answer saved on this device. It will be processed when you are back online.');
+          return;
+        }
         const result = evaluateDrill(activeSession.drill_type, { spokenResponse, negotiationMessages });
         const rawAnswers = activeSession.drill_type === 'negotiation'
           ? negotiationMessages.filter(message => message.sender === 'user').map((message, index) => ({ step: index + 1, text: message.text, createdAt: Date.now() }))
@@ -992,7 +1038,6 @@ export function DrillsPage({
         setActivePrompt('');
         setSpokenResponse('');
         setNegotiationMessages([]);
-        setNegotiationReply('');
         setNegotiationTurn(0);
         setCurrentOffer(35000);
         setNegotiationGameOver(false);
@@ -1054,7 +1099,6 @@ export function DrillsPage({
       setActivePrompt('');
       setSpokenResponse('');
       setNegotiationMessages([]);
-      setNegotiationReply('');
       setNegotiationTurn(0);
       setCurrentOffer(35000);
       setNegotiationGameOver(false);
@@ -1113,6 +1157,13 @@ export function DrillsPage({
               <div className={`mb-4 rounded-lg border p-3 text-sm ${error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-success'}`}>
                 {error || notice}
               </div>
+            )}
+
+            {pendingOnlineAudio && (
+              <button type="button" onClick={() => void retryOnlineAudio()} disabled={isProcessingAudio}
+                className="program-accent-focus-ring mb-4 rounded-lg border border-line px-4 py-2 text-sm font-semibold disabled:opacity-60">
+                {isProcessingAudio ? 'Processing speech...' : 'Retry Speech Processing'}
+              </button>
             )}
 
             {drillTimer && (
@@ -1180,20 +1231,14 @@ export function DrillsPage({
                 <div className="mt-4 flex flex-col items-center gap-2">
                   <button
                     onClick={isListening ? stopListening : recordNegotiationReply}
-                    disabled={negotiationLoading || negotiationGameOver || isVoiceSpeaking || isFinalizing}
+                    disabled={negotiationLoading || negotiationGameOver || isVoiceSpeaking || isFinalizing || isProcessingAudio || Boolean(pendingOnlineAudio)}
                     className={`program-accent-focus-ring flex min-h-12 items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : negotiationGameOver ? 'Negotiation Ended' : 'Speak Reply'}
                   </button>
-                  {!negotiationMessages.some(message => message.sender === 'user') && <p className="text-center text-xs text-muted">Submit a reply to enable Mark Complete.</p>}
+                  {!negotiationMessages.some(message => message.sender === 'user') && <p className="text-center text-xs text-muted">Speak a reply to enable Mark Complete.</p>}
                 </div>
-                {!negotiationGameOver && (
-                  <div className="mx-auto mt-4 flex max-w-2xl flex-col gap-2 sm:flex-row">
-                    <textarea value={negotiationReply} onChange={event => setNegotiationReply(event.target.value)} disabled={isListening || isFinalizing || isVoiceSpeaking || negotiationLoading} placeholder="Or type your negotiation reply if the microphone is unavailable." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)] disabled:opacity-60" />
-                    <button type="button" onClick={() => void sendNegotiationReply()} disabled={!negotiationReply.trim() || isListening || isFinalizing || isVoiceSpeaking || negotiationLoading} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Submit</button>
-                  </div>
-                )}
               </>
             ) : (
               <>
@@ -1212,17 +1257,13 @@ export function DrillsPage({
                 <div className="mt-4 flex flex-col items-center gap-2">
                   <button
                     onClick={isListening ? stopDrillResponse : recordDrillResponse}
-                    disabled={isVoiceSpeaking || isFinalizing || drillTimer?.phase === 'expired'}
+                    disabled={isVoiceSpeaking || isFinalizing || isSavingSpokenResponse || drillTimer?.phase === 'expired' || isProcessingAudio || Boolean(pendingOnlineAudio)}
                     className={`program-accent-focus-ring flex min-h-12 items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : drillTimer?.phase === 'expired' ? 'Time Expired' : 'Speak Answer'}
                   </button>
-                  {!spokenResponse.trim() && <p className="text-center text-xs text-muted">Record or save a response to enable Mark Complete.</p>}
-                </div>
-                <div className="mx-auto mt-4 flex max-w-2xl flex-col gap-2 sm:flex-row">
-                  <textarea value={spokenResponse} onChange={event => setSpokenResponse(event.target.value)} disabled={isListening || isFinalizing || isVoiceSpeaking} placeholder="Or type your Drill response if the microphone is unavailable." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)] disabled:opacity-60" />
-                  <button type="button" onClick={() => void saveTypedDrillResponse()} disabled={!spokenResponse.trim() || isListening || isFinalizing || isVoiceSpeaking} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Save</button>
+                  {!spokenResponse.trim() && <p className="text-center text-xs text-muted">Record a response to enable Mark Complete.</p>}
                 </div>
               </>
             )}
@@ -1230,7 +1271,7 @@ export function DrillsPage({
             <div className="mt-5 flex flex-col items-center gap-2 border-t border-line pt-5">
               <button
                 onClick={completeDrill}
-                disabled={completing !== null || (activeSession.drill_type === 'negotiation' ? !negotiationMessages.some(message => message.sender === 'user') : !spokenResponse.trim())}
+                disabled={completing !== null || isListening || isFinalizing || isSavingSpokenResponse || negotiationLoading || isProcessingAudio || Boolean(pendingOnlineAudio) || (activeSession.drill_type === 'negotiation' ? !negotiationMessages.some(message => message.sender === 'user') && !(sessionMode === 'offline' && hasPendingOfflineAudio) : !spokenResponse.trim() && !(sessionMode === 'offline' && hasPendingOfflineAudio))}
                 className="program-accent-button program-accent-focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               >
                 {completing === activeSession.id ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
@@ -1238,8 +1279,8 @@ export function DrillsPage({
               </button>
               <p className="text-center text-xs text-muted">
                 {activeSession.drill_type === 'negotiation'
-                  ? 'Mark Complete becomes available after you submit a reply.'
-                  : 'Mark Complete becomes available after you record or save a response.'}
+                  ? hasPendingOfflineAudio ? 'Recording saved. Mark Complete to process it when online.' : 'Mark Complete becomes available after you speak a reply.'
+                  : hasPendingOfflineAudio ? 'Recording saved. Mark Complete to process it when online.' : 'Mark Complete becomes available after you record a response.'}
               </p>
             </div>
 

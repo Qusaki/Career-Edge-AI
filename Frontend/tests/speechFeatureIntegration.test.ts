@@ -33,7 +33,7 @@ test('stop waits for onend and the timeout never promotes interim text', () => {
 
 test('offline audio persistence remains before canonical activity delivery', () => {
   const persistAudio = hookSource.indexOf('await session.offlineAudio.persistAudio');
-  const deliverAnswer = hookSource.indexOf('session.onTranscript(canonicalTranscript)');
+  const deliverAnswer = hookSource.indexOf('session.onTranscript(canonicalTranscript || fallbackTranscript)');
   assert.ok(persistAudio >= 0);
   assert.ok(deliverAnswer > persistAudio);
 });
@@ -73,9 +73,9 @@ test('TTS is pending before speak and every microphone handler rejects overlap',
     assert.match(source, /speechSynthesis\?\.speaking \|\| window\.speechSynthesis\?\.pending/);
   }
   assert.match(browserSpeechSource, /synthesis\.speak\(utterance\)/);
-  assert.match(browserSpeechSource, /startTimeoutMs \?\? 2500/);
-  assert.match(drillsSource, /disabled=\{negotiationLoading \|\| negotiationGameOver \|\| isVoiceSpeaking \|\| isFinalizing\}/);
-  assert.match(drillsSource, /disabled=\{isVoiceSpeaking \|\| isFinalizing \|\| drillTimer\?\.phase === 'expired'\}/);
+  assert.match(browserSpeechSource, /startTimeoutMs \?\? 5000/);
+  assert.match(drillsSource, /disabled=\{negotiationLoading \|\| negotiationGameOver \|\| isVoiceSpeaking \|\| isFinalizing \|\| isProcessingAudio \|\| Boolean\(pendingOnlineAudio\)\}/);
+  assert.match(drillsSource, /disabled=\{isVoiceSpeaking \|\| isFinalizing \|\| isSavingSpokenResponse \|\| drillTimer\?\.phase === 'expired' \|\| isProcessingAudio \|\| Boolean\(pendingOnlineAudio\)\}/);
   assert.match(dashboardSource, /isAiSpeakingRef\.current \|\| window\.speechSynthesis\?\.speaking \|\| window\.speechSynthesis\?\.pending/);
 });
 
@@ -83,5 +83,5 @@ test('terminal recognition errors end listening and finalize any valid offline r
   assert.match(hookSource, /session\.fatalError = true/);
   assert.match(hookSource, /session\.failureMessage = message;[\s\S]*?listeningRef\.current = false;[\s\S]*?deliverTranscript\(\)/);
   assert.match(hookSource, /await offlineRecorderRef\.current\?\.stopRecording\(\)/);
-  assert.match(hookSource, /if \(canonicalTranscript\) session\.onTranscript\(canonicalTranscript\)/);
+  assert.match(hookSource, /if \(canonicalTranscript \|\| fallbackTranscript\)[\s\S]*?session\.onTranscript\(canonicalTranscript \|\| fallbackTranscript\)/);
 });

@@ -68,15 +68,15 @@ test('offline Post-Test advances from saved progress without restarting or dupli
   assert.equal(next.conversationLog.at(-1)?.text, questions[2]);
 });
 
-test('provisional local evaluators reproduce existing deterministic rules', () => {
+test('provisional local evaluators limit sparse and repetitive answers', () => {
   const intro = evaluateWhoAmI('one two three four five six seven eight nine ten');
-  assert.equal(intro.localScore, 9);
+  assert.equal(intro.localScore, 5);
 
   const listening = evaluateActiveListening([{ sender: 'user', text: Array(40).fill('word').join(' ') }]);
-  assert.equal(listening.localScore, 16);
+  assert.equal(listening.localScore, 10);
 
   const post = evaluatePostTest(Array.from({ length: 5 }, (_, index) => ({ sender: 'user' as const, text: `answer ${index}` })));
-  assert.equal(post.localScore, 20);
+  assert.equal(post.localScore, 15);
 
   const drill = evaluateDrill('fast_word', { spokenResponse: 'one two three four five six seven eight', negotiationMessages: [] });
   assert.equal(drill.localScore, 76.67);

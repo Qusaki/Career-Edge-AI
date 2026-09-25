@@ -235,7 +235,10 @@ async def sync_offline_session(
         if existing_session is not None and existing_session.status == "completed":
             result = serialize_session(existing_session)
         else:
-            evaluation = await evaluate_payload(payload, current_user)
+            evaluation = await evaluate_payload(
+                payload, current_user,
+                drill_prompt=(existing_session.canonical_prompt if payload.activity_type == "drill" and existing_session is not None else None),
+            )
             native_session = persist_authoritative_result(
                 db, payload, current_user, evaluation, existing_session,
             )

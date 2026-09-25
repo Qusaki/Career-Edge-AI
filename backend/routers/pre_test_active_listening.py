@@ -11,6 +11,7 @@ from database import get_db
 from core.ai import close_ai_unavailable
 from core.deps import get_current_user, get_current_user_ws
 from core.scoring import bounded_integer_score
+from services.assessment_scoring import score_listening
 from models.user import User
 from models.pre_test_active_listening import PreTestActiveListeningSession, PreTestActiveListeningMessage
 from schemas.pre_test_active_listening import PreTestActiveListeningSessionResponse, PreTestActiveListeningSessionWithMessagesResponse, PreTestActiveListeningCompleteRequest
@@ -220,7 +221,7 @@ async def active_listening_chat_ws(
             pass
 
 @router.post("/{session_id}/complete", response_model=PreTestActiveListeningSessionResponse)
-def complete_session(session_id: int, request: PreTestActiveListeningCompleteRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def complete_session(session_id: int, request: PreTestActiveListeningCompleteRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Completes and grades the pre-test active listening session."""
     session = db.query(PreTestActiveListeningSession).filter(PreTestActiveListeningSession.id == session_id, PreTestActiveListeningSession.user_id == current_user.id).first()
     if not session:
@@ -229,36 +230,27 @@ def complete_session(session_id: int, request: PreTestActiveListeningCompleteReq
     if session.status == "completed":
         return session
         
-    # Build Transcript
-    history = db.query(PreTestActiveListeningMessage).filter(
-        PreTestActiveListeningMessage.session_id == session.id
-    ).order_by(
-        PreTestActiveListeningMessage.timestamp.asc(),
-        PreTestActiveListeningMessage.id.asc(),
-    ).all()
-    if not history and request.conversation:
-        for item in request.conversation:
-            # Avoid saving the hidden trigger
-            if item.text.strip() == "/start_exercise":
-                item.text = "I am ready. Please share the story or instructions."
-            new_msg = PreTestActiveListeningMessage(session_id=session.id, role=item.sender, content=item.text)
-            db.add(new_msg)
-        db.commit()
-        
     if not request.evaluation:
         raise HTTPException(status_code=400, detail="Missing frontend evaluation data.")
         
     try:
-        evaluation = request.evaluation
+        scored_history = db.query(PreTestActiveListeningMessage).filter(
+            PreTestActiveListeningMessage.session_id == session.id
+        ).order_by(PreTestActiveListeningMessage.timestamp.asc(), PreTestActiveListeningMessage.id.asc()).all()
+        story = next((item.content for item in scored_history if item.role == "ai"), get_active_listening_prompt(session.id))
+        summary = " ".join(item.content for item in scored_history if item.role == "user")
+        if not summary.strip():
+            raise HTTPException(status_code=409, detail="A saved listening response is required before scoring.")
+        evaluation = await score_listening(story, summary)
         
         session.score_vocabulary = bounded_integer_score(evaluation, "score_vocabulary", minimum=1, maximum=5, default=1)
         session.score_clarity = bounded_integer_score(evaluation, "score_clarity", minimum=1, maximum=5, default=1)
         session.eye_contact_samples = bounded_integer_score(
-            evaluation, "eye_contact_samples", minimum=0, maximum=10_000_000, default=0
+            request.evaluation, "eye_contact_samples", minimum=0, maximum=10_000_000, default=0
         )
-        eye_contact_score = evaluation.get("eye_contact_score")
+        eye_contact_score = request.evaluation.get("eye_contact_score")
         session.score_eye_contact = (
-            bounded_integer_score(evaluation, "eye_contact_score", minimum=0, maximum=100, default=0)
+            bounded_integer_score(request.evaluation, "eye_contact_score", minimum=0, maximum=100, default=0)
             if session.eye_contact_samples > 0 and eye_contact_score is not None
             else None
         )
@@ -287,6 +279,8 @@ def complete_session(session_id: int, request: PreTestActiveListeningCompleteReq
         db.refresh(session)
         
         return session
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save evaluation: {e}")
 

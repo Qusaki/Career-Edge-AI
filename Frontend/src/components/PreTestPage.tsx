@@ -22,6 +22,8 @@ import { normalizePreTestApiError } from '../utils/preTestApiError';
 import { hasRestorableOfflineIdentity, isPositiveServerSessionId } from '../utils/sessionIdentity';
 import { resolvePreTestSessionExecution } from '../utils/preTestSessionExecution';
 import { resolveSessionExecution } from '../utils/sessionExecution';
+import { transcribeAnswer } from '../utils/transcribeAnswer';
+import type { OfflineAudioCapture } from '../offline/offlineAudioRecorder';
 
 type Session = {
   id: number | string;
@@ -123,6 +125,13 @@ const ACTIVE_LISTENING_RETRY_BACKOFF_MS = 500;
 const PRE_TEST_SESSION_RECOVERY_ERROR = 'Unable to verify this Pre-Test session. Please reload the activity and try again.';
 const PRE_TEST_AUTH_RECOVERY_ERROR = 'Your session could not be verified. Please sign in again and retry.';
 
+const speechOnlyErrorMessage = (message: string): string => message
+  .replace(/Use the typed answer or clear local site data/gi, 'Clear local site data')
+  .replace(/(?:,?\s+or\s+|,\s+then\s+|;\s*)(?:use the typed answer(?: instead)?|type (?:your|an) answer(?: to continue| if needed)?)/gi, '')
+  .replace(/Use the typed answer instead\.?/gi, '')
+  .replace(/,\s*\./g, '.')
+  .trim();
+
 type ActiveListeningCompletionState = {
   completing: boolean;
   isSubmittingAnswer: boolean;
@@ -172,10 +181,11 @@ export function PreTestPage({
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [introTranscript, setIntroTranscript] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [reply, setReply] = useState('');
   const [isAiResponding, setIsAiResponding] = useState(false);
   const [isVoiceSpeaking, setIsVoiceSpeaking] = useState(false);
   const [speechFallbackPrompt, setSpeechFallbackPrompt] = useState('');
+  const [speechPlaybackFailed, setSpeechPlaybackFailed] = useState(false);
+  const [initialStoryAudioDelivered, setInitialStoryAudioDelivered] = useState(false);
   const [connectionState, setConnectionState] = useState<RealtimeConnectionState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -200,6 +210,12 @@ export function PreTestPage({
   const introPersistenceInFlightRef = useRef(false);
   const [isSubmittingAnswer, setIsSubmittingAnswer] = useState(false);
   const [isPersistingIntro, setIsPersistingIntro] = useState(false);
+  const [pendingOnlineAudio, setPendingOnlineAudio] = useState<{
+    capture: OfflineAudioCapture;
+    commit: (transcript: string) => void | Promise<void>;
+  } | null>(null);
+  const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+  const [hasPendingOfflineAudio, setHasPendingOfflineAudio] = useState(false);
   const {
     isListening,
     isFinalizing,
@@ -281,8 +297,13 @@ export function PreTestPage({
       status: 'active',
     });
     setIntroTranscript(resumeSession.type === 'pre_test_intro' ? (resumeSession.answers[0]?.text || '') : '');
+    setHasPendingOfflineAudio(resumeSession.audioReferences.some(item => item.transcriptStatus === 'pending'));
     messagesRef.current = restoredMessages;
     setMessages(restoredMessages);
+    setInitialStoryAudioDelivered(restoredMessages.some(message => message.sender === 'user'));
+    if (resumeSession.type === 'pre_test_active_listening' && !restoredMessages.some(message => message.sender === 'user')) {
+      setSpeechFallbackPrompt(restoredMessages.find(message => message.sender === 'ai')?.text || '');
+    }
     setConnectionState(resumeSession.type === 'pre_test_active_listening' ? 'ready' : 'idle');
     setNotice('Your saved offline Pre-Test activity has been restored from its last checkpoint.');
     onSessionModeChange(true);
@@ -306,6 +327,7 @@ export function PreTestPage({
           if (!saved) return;
           messagesRef.current = alignedMessages;
           setMessages(alignedMessages);
+          setSpeechFallbackPrompt(canonicalPrompt);
         });
       }
     }
@@ -401,18 +423,25 @@ export function PreTestPage({
     }, ACTIVE_LISTENING_TURN_TIMEOUT_MS);
   };
 
-  const speakText = useCallback((text: string) => {
+  const speakText = useCallback((text: string, isInitialStory = false) => {
     void speakBrowserText(text, {
       rate: CLEAR_AI_SPEECH_RATE,
       pitch: CLEAR_AI_SPEECH_PITCH,
       volume: CLEAR_AI_SPEECH_VOLUME,
       onPending: () => {
         setSpeechFallbackPrompt('');
+        setSpeechPlaybackFailed(false);
         setIsVoiceSpeaking(true);
       },
       onFinish: () => setIsVoiceSpeaking(false),
     }).then(result => {
-      if (result !== 'ended' && result !== 'cancelled') setSpeechFallbackPrompt(text);
+      if (result === 'ended') {
+        if (isInitialStory) setInitialStoryAudioDelivered(true);
+      } else if (result !== 'cancelled') {
+        setSpeechFallbackPrompt(text);
+        setSpeechPlaybackFailed(true);
+        if (isInitialStory) setInitialStoryAudioDelivered(false);
+      }
     });
   }, []);
 
@@ -511,7 +540,7 @@ export function PreTestPage({
           }
         }
         if (completedQuestion) {
-          speakText(completedQuestion);
+          speakText(completedQuestion, !messagesRef.current.some(message => message.sender === 'user'));
           onActivityCheckpoint({
             conversationLog: messagesRef.current,
             currentQuestion: completedQuestion,
@@ -593,6 +622,8 @@ export function PreTestPage({
     const lifecycleGeneration = lifecycleGenerationRef.current + 1;
     lifecycleGenerationRef.current = lifecycleGeneration;
     setStarting(exercise.endpoint);
+    setHasPendingOfflineAudio(false);
+    setPendingOnlineAudio(null);
     setError(null);
     setNotice(null);
     setIntroTranscript('');
@@ -601,7 +632,8 @@ export function PreTestPage({
     setIsPersistingIntro(false);
     setMessages([]);
     setSpeechFallbackPrompt('');
-    setReply('');
+    setSpeechPlaybackFailed(false);
+    setInitialStoryAudioDelivered(false);
     setConnectionState('idle');
     cancelListening();
     try {
@@ -641,7 +673,7 @@ export function PreTestPage({
         setConnectionState(exercise.kind === 'active-listening' ? 'ready' : 'idle');
         setNotice(`${exercise.title} started offline. Your progress will be saved on this device.`);
         onSessionModeChange(true);
-        if (exercise.kind === 'active-listening') speakText(prompt);
+        if (exercise.kind === 'active-listening') speakText(prompt, true);
         return;
       }
 
@@ -703,6 +735,7 @@ export function PreTestPage({
         });
         messagesRef.current = restoredMessages;
         setMessages(restoredMessages);
+        setInitialStoryAudioDelivered(restoredMessages.some(message => message.sender === 'user'));
       }
       setActiveExercise(exercise);
       setActiveSession(exercise.kind === 'active-listening'
@@ -753,6 +786,8 @@ export function PreTestPage({
   };
 
   const quitSession = () => {
+    setHasPendingOfflineAudio(false);
+    setPendingOnlineAudio(null);
     lifecycleGenerationRef.current += 1;
     cancelBrowserSpeech();
     cancelListening();
@@ -774,7 +809,6 @@ export function PreTestPage({
     setIntroTranscript('');
     setMessages([]);
     setSpeechFallbackPrompt('');
-    setReply('');
     setIsAiResponding(false);
     setIsVoiceSpeaking(false);
     setConnectionState('idle');
@@ -783,9 +817,13 @@ export function PreTestPage({
     onSessionModeChange(false);
   };
 
-  const sendReply = async (spokenText = reply) => {
+  const sendReply = async (spokenText: string) => {
     const text = spokenText.trim();
     if (!text || isAiResponding) return;
+    if (!initialStoryAudioDelivered && !messagesRef.current.some(message => message.sender === 'user')) {
+      setError('Play the listening story before answering. Use Retry Audio if playback failed.');
+      return;
+    }
     if (sessionMode !== 'offline' && (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)) {
       setError('The audio interviewer is disconnected. Reconnect before submitting another response.');
       return;
@@ -817,7 +855,6 @@ export function PreTestPage({
       resetSpeechTranscript();
       messagesRef.current = nextMessages;
       setMessages(nextMessages);
-      setReply('');
       if (sessionMode === 'offline') {
         setNotice('Response saved locally. Detailed AI feedback is pending until this activity is synchronized.');
         return;
@@ -840,6 +877,31 @@ export function PreTestPage({
     }
   };
 
+  const processOnlineAudio = async (
+    capture: OfflineAudioCapture,
+    commit: (transcript: string) => void | Promise<void>,
+  ): Promise<string | null> => {
+    setPendingOnlineAudio({ capture, commit });
+    setIsProcessingAudio(true);
+    setError(null);
+    try {
+      const transcript = await transcribeAnswer(apiUrl, capture);
+      setPendingOnlineAudio(null);
+      return transcript;
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Speech processing failed. Retry your saved recording.');
+      return null;
+    } finally {
+      setIsProcessingAudio(false);
+    }
+  };
+
+  const retryOnlineAudio = async () => {
+    if (!pendingOnlineAudio || isProcessingAudio) return;
+    const transcript = await processOnlineAudio(pendingOnlineAudio.capture, pendingOnlineAudio.commit);
+    if (transcript) await pendingOnlineAudio.commit(transcript);
+  };
+
   const recordIntro = () => {
     if (!activeExercise || !activeSession) return;
     if (isVoiceSpeaking || window.speechSynthesis?.speaking || window.speechSynthesis?.pending) {
@@ -847,7 +909,8 @@ export function PreTestPage({
       return;
     }
     setError(null);
-    startListening(async transcript => {
+    const commitIntroTranscript = async (transcript: string) => {
+      setHasPendingOfflineAudio(false);
       const nextTranscript = [introTranscriptRef.current, transcript].filter(Boolean).join(' ').trim();
       if (!nextTranscript) return;
       const execution = resolvePreTestSessionExecution({
@@ -917,99 +980,43 @@ export function PreTestPage({
         setIntroTranscript(nextTranscript);
         resetSpeechTranscript();
       }
-    }, setError, sessionMode === 'offline' && activeSession ? {
+    };
+    startListening(commitIntroTranscript, message => setError(speechOnlyErrorMessage(message)), sessionMode === 'offline' && activeSession ? {
       enabled: true,
+      speechOnlyFallback: true,
       activityType: activeExercise.kind === 'intro' ? 'pre_test_intro' : 'pre_test_active_listening',
       turnId: 'intro-1',
       answerIndex: 1,
       persistAudio: onOfflineAudioCaptured,
-    } : undefined);
-  };
-
-  const saveTypedIntro = async () => {
-    const text = introTranscript.trim();
-    if (!text) return;
-    if (sessionMode !== 'offline') {
-      if (!activeExercise || !activeSession || introPersistenceInFlightRef.current) return;
-      const execution = resolvePreTestSessionExecution({
-        sessionMode,
-        activeSessionId: activeSession.id,
-        knownOfflineClientSessionId: activeOfflineClientSessionIdRef.current,
-      });
-      if (execution.mode !== 'online') {
-        setError(PRE_TEST_SESSION_RECOVERY_ERROR);
-        return;
-      }
-      const token = localStorage.getItem('token');
-      if (!token) {
-        setError('Your session is no longer authenticated. Please sign in again.');
-        return;
-      }
-      introPersistenceInFlightRef.current = true;
-      setIsPersistingIntro(true);
-      const lifecycleGeneration = lifecycleGenerationRef.current;
-      try {
-        const response = await fetch(`${apiUrl}${activeExercise.endpoint}/${execution.serverSessionId}/response`, {
-          method: 'PUT',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transcript: text }),
-        });
-        if (!response.ok) {
-          const body = await response.json().catch(() => null);
-          throw new Error(normalizePreTestApiError(body, 'Unable to save your Who Am I? response.'));
-        }
-        const persistedSession: Session = await response.json();
-        if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
-        const canonicalTranscript = persistedSession.transcript?.trim() || text;
-        introTranscriptRef.current = canonicalTranscript;
-        setIntroTranscript(canonicalTranscript);
-        resetSpeechTranscript();
-        await onActivityCheckpoint({
-          currentStep: 1,
-          responseCount: 1,
-          answers: [{ step: 1, text: canonicalTranscript, createdAt: Date.now() }],
-          eyeContactSummary: getCheckpointEyeContactSummary(),
-        });
-        if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
-        setNotice('Your Who Am I? response is saved. You can complete the exercise when ready.');
-      } catch (persistenceError) {
-        if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
-        setError(persistenceError instanceof Error ? persistenceError.message : 'Unable to save your Who Am I? response.');
-      } finally {
-        if (lifecycleGenerationRef.current === lifecycleGeneration) {
-          introPersistenceInFlightRef.current = false;
-          setIsPersistingIntro(false);
-        }
-      }
-      return;
-    }
-    const saved = await onActivityCheckpoint({
-      currentStep: 1,
-      responseCount: 1,
-      answers: [{ step: 1, text, createdAt: Date.now() }],
-      eyeContactSummary: getCheckpointEyeContactSummary(),
-    });
-    if (saved) resetSpeechTranscript();
+      onPendingAudio: () => setHasPendingOfflineAudio(true),
+    } : { enabled: true, transcribeCapture: capture => processOnlineAudio(capture, commitIntroTranscript) });
   };
 
   const recordAndSendReply = () => {
+    if (!initialStoryAudioDelivered && !messagesRef.current.some(message => message.sender === 'user')) {
+      setError('Play the listening story before answering. Use Retry Audio if playback failed.');
+      return;
+    }
     if (isVoiceSpeaking || isAiResponding || window.speechSynthesis?.speaking || window.speechSynthesis?.pending) {
       setError('Wait for the audio interviewer to finish before starting the microphone.');
       return;
     }
     setError(null);
     const answerIndex = messagesRef.current.filter(message => message.sender === 'user').length + 1;
-    startListening(transcript => void sendReply(transcript), setError, sessionMode === 'offline' && activeSession ? {
+    startListening(transcript => void sendReply(transcript), message => setError(speechOnlyErrorMessage(message)), sessionMode === 'offline' && activeSession ? {
       enabled: true,
+      speechOnlyFallback: true,
       activityType: 'pre_test_active_listening',
       turnId: `active-listening-${answerIndex}`,
       answerIndex,
       persistAudio: onOfflineAudioCaptured,
-    } : undefined);
+      onPendingAudio: () => setHasPendingOfflineAudio(true),
+    } : { enabled: true, transcribeCapture: capture => processOnlineAudio(capture, sendReply) });
   };
 
   const completeActiveExercise = async () => {
     if (!activeSession || !activeExercise) return;
+    if (isProcessingAudio || pendingOnlineAudio) return;
     if (completing || completionInFlightRef.current) return;
     if (activeExercise.kind === 'intro' && introPersistenceInFlightRef.current) return;
     if (
@@ -1043,6 +1050,16 @@ export function PreTestPage({
       setCompleting(true);
       setError(null);
       try {
+        if (hasPendingOfflineAudio) {
+          if (!await onActivityEnd('recorded_local')) throw new Error('The recorded answer could not be queued safely. Please retry.');
+          cancelListening();
+          setActiveExercise(null);
+          setActiveSession(null);
+          setHasPendingOfflineAudio(false);
+          onSessionModeChange(false);
+          setNotice('Answer saved on this device. It will be processed when you are back online.');
+          return;
+        }
         const isIntro = activeExercise.kind === 'intro';
         const result = isIntro ? evaluateWhoAmI(introTranscript) : evaluateActiveListening(messages);
         const checkpointSaved = await onActivityCheckpoint({
@@ -1174,7 +1191,7 @@ export function PreTestPage({
     isAiResponding,
     isListening,
     isFinalizing,
-    hasUserResponse: messages.some(message => message.sender === 'user'),
+    hasUserResponse: messages.some(message => message.sender === 'user') || (sessionMode === 'offline' && hasPendingOfflineAudio),
   });
 
   if (activeExercise && activeSession) {
@@ -1191,8 +1208,8 @@ export function PreTestPage({
             </button>
             <button
               onClick={completeActiveExercise}
-              disabled={completing || (activeExercise.kind === 'intro'
-                ? isPersistingIntro || !introTranscript.trim()
+              disabled={completing || isProcessingAudio || Boolean(pendingOnlineAudio) || (activeExercise.kind === 'intro'
+                ? isPersistingIntro || (!introTranscript.trim() && !(sessionMode === 'offline' && hasPendingOfflineAudio))
                 : activeListeningCompletionDisabled)}
               className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -1230,6 +1247,13 @@ export function PreTestPage({
               </div>
             )}
 
+            {pendingOnlineAudio && (
+              <button type="button" onClick={() => void retryOnlineAudio()} disabled={isProcessingAudio}
+                className="program-accent-focus-ring mb-4 rounded-lg border border-line px-4 py-2 text-sm font-semibold disabled:opacity-60">
+                {isProcessingAudio ? 'Processing speech...' : 'Retry Speech Processing'}
+              </button>
+            )}
+
             {activeExercise.kind === 'intro' ? (
               <div>
                 <div className="rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
@@ -1239,13 +1263,7 @@ export function PreTestPage({
                   </p>
                 </div>
                 <div className="mt-4 min-h-36 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink sm:min-h-44">
-                  <textarea
-                    value={introTranscript}
-                    onChange={event => setIntroTranscript(event.target.value)}
-                    disabled={isListening || isFinalizing || isPersistingIntro}
-                    placeholder="Speak with the mic or type your self-introduction here."
-                    className="min-h-28 max-h-64 w-full resize-y bg-transparent text-ink outline-none placeholder:text-muted focus-visible:ring-2 focus-visible:ring-[var(--program-accent)] disabled:opacity-60"
-                  />
+                  {introTranscript || <span className="text-muted">Press the mic and speak your self-introduction.</span>}
                 </div>
                 {(isListening || isFinalizing || hasUnfinalizedTranscript) && (
                   <div className="mt-3 rounded-lg border border-line bg-card p-3 text-sm leading-relaxed text-ink" aria-live="polite">
@@ -1255,19 +1273,16 @@ export function PreTestPage({
                     {liveTranscript || <span className="text-muted">Start speaking when you are ready.</span>}
                   </div>
                 )}
-                <div className="mt-3 flex justify-end">
-                  <button type="button" onClick={() => void saveTypedIntro()} disabled={!introTranscript.trim() || isListening || isFinalizing || isPersistingIntro} className="program-accent-focus-ring rounded-lg border border-line px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">Save Typed Answer</button>
-                </div>
                 <div className="mt-4 flex flex-col items-center gap-2">
                   <button
                     onClick={isListening ? stopListening : recordIntro}
-                    disabled={isPersistingIntro || isFinalizing || isVoiceSpeaking}
+                    disabled={isPersistingIntro || isFinalizing || isVoiceSpeaking || isProcessingAudio || Boolean(pendingOnlineAudio)}
                     className={`program-accent-focus-ring flex min-h-12 items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : 'Speak Answer'}
                   </button>
-                  {!introTranscript.trim() && <p className="text-center text-xs text-muted">Record or save your introduction to enable completion.</p>}
+                  {!introTranscript.trim() && <p className="text-center text-xs text-muted">{hasPendingOfflineAudio ? 'Recording saved. Complete to process it when online.' : 'Record your introduction to enable completion.'}</p>}
                 </div>
               </div>
             ) : (
@@ -1288,9 +1303,10 @@ export function PreTestPage({
                               : 'Preparing exercise...'
                   }
                 />
-                {speechFallbackPrompt && !visibleActiveListeningMessages.some(message => message.text === speechFallbackPrompt) && (
+                {speechFallbackPrompt && (
                   <p role="alert" className="mt-3 rounded-lg border border-amber-400/50 bg-amber-50 p-3 text-sm leading-relaxed text-amber-900">
-                    Audio playback is unavailable. Professor Maxiel asks: {speechFallbackPrompt}
+                    {speechPlaybackFailed ? 'Audio playback is unavailable.' : 'Play the listening story before answering.'} Professor Maxiel asks: {speechFallbackPrompt}
+                    <button type="button" onClick={() => speakText(speechFallbackPrompt, !messages.some(message => message.sender === 'user'))} disabled={isVoiceSpeaking} className="program-accent-focus-ring mt-2 block rounded-lg border border-current px-3 py-2 font-semibold disabled:opacity-60">Retry Audio</button>
                   </p>
                 )}
                 <div className="mt-3 min-h-32 max-h-52 overflow-y-auto rounded-lg border border-line bg-background p-4 sm:min-h-36">
@@ -1332,17 +1348,13 @@ export function PreTestPage({
                 <div className="mt-3 flex flex-col items-center gap-2">
                   <button
                     onClick={isListening ? stopListening : recordAndSendReply}
-                    disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking || isSubmittingAnswer}
+                    disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking || isSubmittingAnswer || !initialStoryAudioDelivered || isProcessingAudio || Boolean(pendingOnlineAudio)}
                     className={`program-accent-focus-ring flex min-h-12 items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : 'Speak Answer'}
                   </button>
-                  {!messages.some(message => message.sender === 'user') && <p className="text-center text-xs text-muted">Submit one response to enable completion.</p>}
-                </div>
-                <div className="mx-auto mt-4 flex max-w-2xl gap-2">
-                  <textarea value={reply} onChange={event => setReply(event.target.value)} disabled={isListening || isFinalizing || isSubmittingAnswer || isAiResponding} placeholder="Or type your summary if the microphone is unavailable." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)] disabled:opacity-60" />
-                  <button type="button" onClick={() => void sendReply()} disabled={!reply.trim() || isListening || isFinalizing || isSubmittingAnswer || isAiResponding} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Submit</button>
+                  {!messages.some(message => message.sender === 'user') && <p className="text-center text-xs text-muted">Speak one response to enable completion.</p>}
                 </div>
               </>
             )}

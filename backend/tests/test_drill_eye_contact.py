@@ -89,7 +89,7 @@ class DrillEyeContactTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["score_eye_contact"], 80)
         self.assertEqual(response.json()["eye_contact_samples"], 20)
-        self.assertEqual(response.json()["score"], 50.0)
+        self.assertEqual(response.json()["score"], 20.0)
         self.assertEqual(response.json()["canonical_prompt"], {"topic": "Stable camera prompt"})
         with self.Session() as db:
             stored = db.get(DrillSession, session.id)
