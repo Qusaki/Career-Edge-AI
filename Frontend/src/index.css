@@ -6,11 +6,11 @@
   --color-card: #fbfaf7;
   --color-line: #e3e0d6;
   --color-ink: #2e2812;
-  --color-muted: #8a8470;
+  --color-muted: #756f5d;
   --color-accent: #c99a3b;
   --color-accent-ink: #3c2e0f;
   --color-gold-text: #b8862e;
-  --color-success: #5e8c5a;
+  --color-success: #176d48;
   --color-active: #efeae0;
   --color-brand-black: #02040a;
   --color-brand-navy: #071225;
@@ -26,8 +26,8 @@
   --color-slate-800: #efeae0;
   --color-slate-700: #e3e0d6;
   --color-slate-600: #aaa38e;
-  --color-slate-500: #8a8470;
-  --color-slate-400: #8a8470;
+  --color-slate-500: #756f5d;
+  --color-slate-400: #756f5d;
   --color-slate-300: #4f4933;
   --color-slate-200: #2e2812;
   --color-slate-100: #2e2812;
@@ -167,6 +167,7 @@ body {
   --color-muted: #9aa6b7;
   --color-active: #1b2431;
   --color-gold-text: #f7d774;
+  --color-success: #8ae0b7;
   --color-slate-950: #0b0f16;
   --color-slate-900: #111822;
   --color-slate-800: #1b2431;
@@ -178,6 +179,49 @@ body {
   --color-slate-200: #e2e8f0;
   --color-slate-100: #f1f5f9;
   --color-slate-50: #f8fafc;
+}
+
+.status-success-text {
+  color: #176d48;
+}
+
+.status-warning-text {
+  color: #6d520d;
+}
+
+.status-failure-text,
+.status-thesis-text {
+  color: #7d1f2d;
+}
+
+.dashboard-theme-dark .status-success-text {
+  color: #8ae0b7;
+}
+
+.dashboard-theme-dark .status-warning-text {
+  color: #ffe9a6;
+}
+
+.dashboard-theme-dark .status-failure-text,
+.dashboard-theme-dark .status-thesis-text {
+  color: #f6c5cd;
+}
+
+/* Authentication and floating system notices intentionally use dark surfaces. */
+.auth-theme-dark,
+.status-surface-dark {
+  --color-slate-950: #0b0f16;
+  --color-slate-900: #111822;
+  --color-slate-800: #1b2431;
+  --color-slate-700: #293241;
+  --color-slate-600: #465366;
+  --color-slate-500: #7f8a9b;
+  --color-slate-400: #a7b1c2;
+  --color-slate-300: #cbd5e1;
+  --color-slate-200: #e2e8f0;
+  --color-slate-100: #f1f5f9;
+  --color-slate-50: #f8fafc;
+  --color-ink: #f1f5f9;
 }
 
 .dashboard-theme-dark .program-accent-button {
@@ -373,4 +417,19 @@ body {
 @keyframes pulse {
   0%, 100% { opacity: 0.3; transform: scale(0.8); }
   50% { opacity: 1; transform: scale(1.1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

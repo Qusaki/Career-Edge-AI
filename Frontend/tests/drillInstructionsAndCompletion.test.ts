@@ -42,37 +42,38 @@ test('only an explicitly offline checkpoint can restore a local Drill identity',
   assert.match(source, /activeOfflineClientSessionIdRef\.current = resumeSession\.clientSessionId/);
 });
 
-test('the active Drill shows one vertical responsive instruction hierarchy', () => {
-  assert.match(source, /aria-label="Drill instructions"/);
+test('the active Drill shows prompt and task before secondary guidance', () => {
+  assert.match(source, /aria-label="Drill supporting instructions"/);
   assert.match(source, />Task<\/p>/);
   assert.match(source, />How to answer<\/p>/);
   assert.match(source, />Answer format<\/p>/);
   assert.match(source, /divide-y divide-line/);
-  const instructionsStart = source.indexOf('aria-label="Drill instructions"');
-  const instructionsEnd = source.indexOf("activeSession.drill_type === 'negotiation'", instructionsStart);
-  assert.doesNotMatch(source.slice(instructionsStart, instructionsEnd), /grid-cols|col-span/);
+  const guidanceStart = source.indexOf('aria-label="Drill supporting instructions"');
+  const guidanceEnd = source.indexOf('</section>', guidanceStart);
+  assert.doesNotMatch(source.slice(guidanceStart, guidanceEnd), /grid-cols|col-span/);
 });
 
-test('session status, timer, instructions, and prompt details follow the intended order', () => {
+test('timer, prompt, task, response flow, completion, and supporting guidance follow the intended order', () => {
   const activeSessionStart = source.indexOf('if (activeSession)');
-  const statusIndex = source.indexOf('<SoundWaveInterviewer', activeSessionStart);
-  const timerIndex = source.indexOf('role="timer"', statusIndex);
-  const instructionsIndex = source.indexOf('aria-label="Drill instructions"', timerIndex);
-  const promptIndex = source.indexOf('Prompt details', instructionsIndex);
-  assert.ok(statusIndex >= 0 && timerIndex > statusIndex && instructionsIndex > timerIndex && promptIndex > instructionsIndex);
-  assert.ok(source.indexOf('>Prompt</p>', instructionsIndex) > instructionsIndex);
+  const timerIndex = source.indexOf('role="timer"', activeSessionStart);
+  const promptIndex = source.indexOf('>Prompt</p>', timerIndex);
+  const taskIndex = source.indexOf('>Task</p>', promptIndex);
+  const statusIndex = source.indexOf('<SoundWaveInterviewer', taskIndex);
+  const responseIndex = source.indexOf("activeSession.drill_type === 'negotiation'", statusIndex);
+  const completeIndex = source.indexOf('onClick={completeDrill}', responseIndex);
+  const guidanceIndex = source.indexOf('aria-label="Drill supporting instructions"', completeIndex);
+  assert.ok(timerIndex >= 0 && promptIndex > timerIndex && taskIndex > promptIndex && statusIndex > taskIndex);
+  assert.ok(responseIndex > statusIndex && completeIndex > responseIndex && guidanceIndex > completeIndex);
 });
 
-test('instruction sections read Task, How to answer, Answer format, then Automatic scoring', () => {
-  const instructionsStart = source.indexOf('aria-label="Drill instructions"');
-  const instructionsEnd = source.indexOf("activeSession.drill_type === 'negotiation'", instructionsStart);
-  const instructionMarkup = source.slice(instructionsStart, instructionsEnd);
-  const taskIndex = instructionMarkup.indexOf('>Task</p>');
+test('supporting guidance reads How to answer, Answer format, then Automatic scoring', () => {
+  const instructionsStart = source.indexOf('aria-label="Drill supporting instructions"');
+  const instructionMarkup = source.slice(instructionsStart);
   const howIndex = instructionMarkup.indexOf('>How to answer</p>');
   const formatIndex = instructionMarkup.indexOf('>Answer format</p>');
   const scoringIndex = instructionMarkup.indexOf('>Automatic scoring</p>');
-  assert.ok(taskIndex >= 0 && howIndex > taskIndex && formatIndex > howIndex && scoringIndex > formatIndex);
-  assert.match(instructionMarkup, /bg-card\/50 px-4 py-3/);
+  assert.ok(howIndex >= 0 && formatIndex > howIndex && scoringIndex > formatIndex);
+  assert.match(instructionMarkup, /bg-card\/50 px-4 py-2\.5/);
   assert.doesNotMatch(instructionMarkup, /w-\[[^\]]+\]|min-w-\[[^\]]+\]/);
 });
 

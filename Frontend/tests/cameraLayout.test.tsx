@@ -23,7 +23,7 @@ const renderCamera = (status: 'tracking' | 'unavailable' | 'blocked') => renderT
 
 test('the shared camera block is inline and compact instead of fixed to the viewport', () => {
   assert.doesNotMatch(cameraSource, /fixed|right-4|top-20|z-\[90\]/);
-  assert.match(cameraSource, /w-full max-w-40 shrink-0/);
+  assert.match(cameraSource, /w-full max-w-44 shrink-0/);
   assert.match(cameraSource, /aspect-video w-full/);
 });
 
@@ -35,15 +35,25 @@ test('camera unavailable stays in the same compact preview slot with non-blockin
   assert.match(markup, /role="status"/);
 });
 
+test('camera off is distinct from camera loading and essential status text remains readable', () => {
+  const markup = renderToStaticMarkup(
+    <CameraTrackingNotice videoRef={{ current: null }} status="off" score={0} samples={0} />,
+  );
+  assert.match(markup, /Camera off/);
+  assert.match(markup, /Eye-contact tracking is not active/);
+  assert.match(cameraSource, /text-xs font-bold/);
+  assert.match(cameraSource, /text-\[11px\]/);
+});
+
 test('Who Am I and Active Listening place the shared camera inside the activity header', () => {
-  const sectionStart = preTestSource.indexOf('<section className="flex-1 rounded-lg border border-line bg-card p-5">');
+  const sectionStart = preTestSource.indexOf('<section className="flex-1 rounded-xl border border-line bg-card p-4 sm:p-5">');
   const cameraPlacement = preTestSource.indexOf('<CameraTrackingNotice {...eyeTracker} />', sectionStart);
   const contentStart = preTestSource.indexOf('{(error || notice)', sectionStart);
   assert.ok(sectionStart >= 0 && cameraPlacement > sectionStart && cameraPlacement < contentStart);
 });
 
 test('Post-Test places the shared camera inside the activity header', () => {
-  const sectionStart = postTestSource.indexOf('<section className="flex-1 rounded-lg border border-line bg-card p-5">');
+  const sectionStart = postTestSource.indexOf('<section className="flex-1 rounded-xl border border-line bg-card p-4 sm:p-5">');
   const cameraPlacement = postTestSource.indexOf('<CameraTrackingNotice {...eyeTracker} />', sectionStart);
   const contentStart = postTestSource.indexOf('{(error || notice)', sectionStart);
   assert.ok(sectionStart >= 0 && cameraPlacement > sectionStart && cameraPlacement < contentStart);

@@ -59,6 +59,7 @@ import {
   buildActivityComparison,
   getCommunicationSkillScore,
   getNormalizedActivityScore,
+  hasCompletedTotalScore,
   isCompletedActivity,
 } from '../utils/analytics';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -84,8 +85,6 @@ import {
   Paperclip,
   GraduationCap,
   Briefcase,
-  Cloud,
-  Folder,
   Lock,
   FileText,
   Upload,
@@ -99,7 +98,10 @@ import {
   ClipboardCheck,
   Sun,
   Moon,
-  CircleHelp
+  CircleHelp,
+  LoaderCircle,
+  Menu,
+  X
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -178,6 +180,79 @@ const getCustomProfileImageUrl = (imageUrl?: string | null) => {
 const getProfileAvatarInitial = (name?: string | null) => {
   const firstName = name?.trim().split(/\s+/).find(Boolean) || '';
   return Array.from(firstName)[0]?.toLocaleUpperCase() || 'U';
+};
+
+const useDialogFocus = (open: boolean, onClose: () => void) => {
+  const dialogRef = React.useRef<HTMLDivElement>(null);
+  const closeRef = React.useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    if (!open) return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const getFocusable = () => Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ));
+    const inertedSiblings: Array<{ element: HTMLElement; inert: boolean; ariaHidden: string | null }> = [];
+    let activeBranch: HTMLElement = dialog;
+    while (activeBranch.parentElement && activeBranch.parentElement !== document.body) {
+      const parent = activeBranch.parentElement;
+      Array.from(parent.children).forEach(sibling => {
+        if (sibling === activeBranch || !(sibling instanceof HTMLElement)) return;
+        inertedSiblings.push({
+          element: sibling,
+          inert: sibling.inert,
+          ariaHidden: sibling.getAttribute('aria-hidden'),
+        });
+        sibling.inert = true;
+        sibling.setAttribute('aria-hidden', 'true');
+      });
+      activeBranch = parent;
+    }
+    const frame = window.requestAnimationFrame(() => (getFocusable()[0] || dialog).focus());
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = getFocusable();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    const handleFocusIn = (event: FocusEvent) => {
+      if (!dialog.contains(event.target as Node)) (getFocusable()[0] || dialog).focus();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('focusin', handleFocusIn);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('focusin', handleFocusIn);
+      inertedSiblings.forEach(({ element, inert, ariaHidden }) => {
+        element.inert = inert;
+        if (ariaHidden == null) element.removeAttribute('aria-hidden');
+        else element.setAttribute('aria-hidden', ariaHidden);
+      });
+      previouslyFocused?.focus();
+    };
+  }, [open]);
+
+  return dialogRef;
 };
 
 const ProfileAvatar: React.FC<ProfileAvatarProps> = ({ name, imageUrl, className, initialClassName }) => {
@@ -266,12 +341,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const [prevTab, setPrevTab] = useState<string>('dashboard');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [appTheme, setAppTheme] = useState<AppTheme>(() => {
     const savedTheme = localStorage.getItem(APP_THEME_STORAGE_KEY);
     return savedTheme === 'dark' ? 'dark' : 'light';
   });
   const accountMenuRef = React.useRef<HTMLDivElement>(null);
   const accountTriggerRef = React.useRef<HTMLButtonElement>(null);
+  const mobileNavTriggerRef = React.useRef<HTMLButtonElement>(null);
+  const mobileNavRef = React.useRef<HTMLElement>(null);
+  const profilePictureInputRef = React.useRef<HTMLInputElement>(null);
   const [selectedCompanyType, setSelectedCompanyType] = useState('');
   const [position, setPosition] = useState('');
   const [isSaved, setIsSaved] = useState(false);
@@ -293,6 +372,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const [interviewResult, setInterviewResult] = useState<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [interviewHistory, setInterviewHistory] = useState<any[]>([]);
+  const [interviewHistoryState, setInterviewHistoryState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [interviewHistoryError, setInterviewHistoryError] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [communicationHistory, setCommunicationHistory] = useState<any[]>([]);
   const [authenticatedUserId, setAuthenticatedUserId] = useState<number | null>(null);
@@ -392,6 +473,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
 
   useEffect(() => {
     if (!isAccountMenuOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      accountMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    });
 
     const handlePointerDown = (event: PointerEvent) => {
       if (!accountMenuRef.current?.contains(event.target as Node)) {
@@ -403,7 +487,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       if (event.key === 'Escape') {
         setIsAccountMenuOpen(false);
         accountTriggerRef.current?.focus();
+        return;
       }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      const items = Array.from(accountMenuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+      if (items.length === 0) return;
+      event.preventDefault();
+      const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+      const nextIndex = event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? items.length - 1
+          : event.key === 'ArrowDown'
+            ? (currentIndex + 1) % items.length
+            : (currentIndex - 1 + items.length) % items.length;
+      items[nextIndex].focus();
     };
 
     document.addEventListener('pointerdown', handlePointerDown);
@@ -414,6 +512,65 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [isAccountMenuOpen]);
+
+  useEffect(() => {
+    if (!isMobileNavOpen) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const drawer = mobileNavRef.current;
+    if (!drawer) return;
+    const getFocusable = () => Array.from(drawer.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+    ));
+    const frame = window.requestAnimationFrame(() => (getFocusable()[0] || drawer).focus());
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsMobileNavOpen(false);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = getFocusable();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        drawer.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === drawer)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !drawer.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    const handleFocusIn = (event: FocusEvent) => {
+      if (!drawer.contains(event.target as Node)) (getFocusable()[0] || drawer).focus();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('focusin', handleFocusIn);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('focusin', handleFocusIn);
+      (previouslyFocused || mobileNavTriggerRef.current)?.focus();
+    };
+  }, [isMobileNavOpen]);
+
+  useEffect(() => {
+    if (!isMobileNavOpen) return;
+    const desktopQuery = window.matchMedia('(min-width: 1024px)');
+    const closeDrawerAtDesktop = (event: MediaQueryListEvent | MediaQueryList) => {
+      if (!event.matches) return;
+      setIsMobileNavOpen(false);
+      window.requestAnimationFrame(() => {
+        mobileNavRef.current?.querySelector<HTMLElement>('button:not([disabled])')?.focus();
+      });
+    };
+    closeDrawerAtDesktop(desktopQuery);
+    desktopQuery.addEventListener('change', closeDrawerAtDesktop);
+    return () => desktopQuery.removeEventListener('change', closeDrawerAtDesktop);
+  }, [isMobileNavOpen]);
 
   // Thesis Interview State
   const [thesisSessionId, setThesisSessionId] = useState<number | null>(null);
@@ -429,6 +586,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const thesisConversationLogRef = React.useRef(thesisConversationLog);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [thesisHistory, setThesisHistory] = useState<any[]>([]);
+  const [thesisHistoryState, setThesisHistoryState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [thesisHistoryError, setThesisHistoryError] = useState<string | null>(null);
   const [thesisElapsedSeconds, setThesisElapsedSeconds] = useState(0);
   const thesisTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
   const [thesisIsLeaveModalOpen, setThesisIsLeaveModalOpen] = useState(false);
@@ -825,12 +984,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   ) => {
     if (!userId) {
       setInterviewHistory([]);
+      setInterviewHistoryState('idle');
+      setInterviewHistoryError(null);
       return;
     }
+    setInterviewHistoryState('loading');
+    setInterviewHistoryError(null);
 
     try {
       const token = localStorage.getItem('token');
-      if (!token) return;
+      if (!token) throw new Error('Authentication is unavailable.');
       const res = await fetch(`${API_URL}/upcoming-student-interview/`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -839,6 +1002,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       const data = Array.isArray(responseData) ? responseData : [];
       if (authenticatedUserIdRef.current !== userId) return;
       setInterviewHistory(data);
+      setInterviewHistoryState('ready');
       accountStorage.putCachedHistory({
         userId,
         type: 'upcoming',
@@ -847,10 +1011,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       }).catch(console.error);
     } catch (e) {
       console.warn("Offline: loading interview history from cache");
-      const cached = await accountStorage.getCachedHistory(userId, 'upcoming');
+      const [cachedResult, offlineResult] = await Promise.allSettled([
+        accountStorage.getCachedHistory(userId, 'upcoming'),
+        accountStorage.getOfflineSessions(userId, 'upcoming'),
+      ]);
+      const cached = cachedResult.status === 'fulfilled' ? cachedResult.value : null;
       const data = cached ? cached.data : [];
-
-      const offlineSessions = await accountStorage.getOfflineSessions(userId, 'upcoming');
+      const offlineSessions = offlineResult.status === 'fulfilled' ? offlineResult.value : [];
       const offlineUpcoming = offlineSessions
         .filter(s => ['completed_local', 'pending_sync', 'sync_failed'].includes(s.status))
         .map(s => ({
@@ -865,6 +1032,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
 
       if (authenticatedUserIdRef.current !== userId) return;
       setInterviewHistory([...offlineUpcoming, ...data]);
+      if (cached || offlineUpcoming.length > 0) {
+        setInterviewHistoryState('ready');
+      } else {
+        setInterviewHistoryState('error');
+        setInterviewHistoryError('Interview history could not be loaded. Check your connection and try again.');
+      }
     }
   }, [API_URL, profile.department]);
 
@@ -874,12 +1047,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   ) => {
     if (!userId) {
       setThesisHistory([]);
+      setThesisHistoryState('idle');
+      setThesisHistoryError(null);
       return;
     }
+    setThesisHistoryState('loading');
+    setThesisHistoryError(null);
 
     try {
       const token = localStorage.getItem('token');
-      if (!token) return;
+      if (!token) throw new Error('Authentication is unavailable.');
       const res = await fetch(`${API_URL}/thesis-interview/`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -888,6 +1065,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       const data = Array.isArray(responseData) ? responseData : [];
       if (authenticatedUserIdRef.current !== userId) return;
       setThesisHistory(data);
+      setThesisHistoryState('ready');
       accountStorage.putCachedHistory({
         userId,
         type: 'thesis',
@@ -896,10 +1074,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       }).catch(console.error);
     } catch (e) {
       console.warn("Offline: loading thesis history from cache");
-      const cached = await accountStorage.getCachedHistory(userId, 'thesis');
+      const [cachedResult, offlineResult] = await Promise.allSettled([
+        accountStorage.getCachedHistory(userId, 'thesis'),
+        accountStorage.getOfflineSessions(userId, 'thesis'),
+      ]);
+      const cached = cachedResult.status === 'fulfilled' ? cachedResult.value : null;
       const data = cached ? cached.data : [];
-
-      const offlineSessions = await accountStorage.getOfflineSessions(userId, 'thesis');
+      const offlineSessions = offlineResult.status === 'fulfilled' ? offlineResult.value : [];
       const offlineThesis = offlineSessions
         .filter(s => ['completed_local', 'pending_sync', 'sync_failed'].includes(s.status))
         .map(s => ({
@@ -914,6 +1095,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
 
       if (authenticatedUserIdRef.current !== userId) return;
       setThesisHistory([...offlineThesis, ...data]);
+      if (cached || offlineThesis.length > 0) {
+        setThesisHistoryState('ready');
+      } else {
+        setThesisHistoryState('error');
+        setThesisHistoryError('Thesis history could not be loaded. Check your connection and try again.');
+      }
     }
   }, [API_URL, profile.department]);
 
@@ -1070,7 +1257,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         setAuthenticatedUserId(null);
         setProfile({ name: '', email: '', password: '', department: '', profilePicture: '' });
         setInterviewHistory([]);
+        setInterviewHistoryState('idle');
+        setInterviewHistoryError(null);
         setThesisHistory([]);
+        setThesisHistoryState('idle');
+        setThesisHistoryError(null);
         setCommunicationHistory([]);
         onLogout();
       }
@@ -1493,6 +1684,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const [userAudioData, setUserAudioData] = useState<number[]>(new Array(3).fill(8));
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
+  const connectionLossDialogRef = useDialogFocus(showConnectionLossPrompt, () => setShowConnectionLossPrompt(false));
+  const thesisLeaveDialogRef = useDialogFocus(thesisIsLeaveModalOpen, () => setThesisIsLeaveModalOpen(false));
+  const interviewLeaveDialogRef = useDialogFocus(isLeaveModalOpen, () => setIsLeaveModalOpen(false));
 
   const {
     isListening,
@@ -3452,6 +3646,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   ];
 
   const enrollmentResponseCount = conversationLog.filter(message => message.sender === 'user').length;
+  const isEnrollmentMicDisabled = isMicTransitioning || isAiSpeaking || isSubmittingOfflineAnswer || enrollmentResponseCount >= 5;
   const enrollmentInstruction = isFinishingInterview
     ? activeActivityCheckpoint?.mode === 'offline'
       ? 'Saving your provisional interview result locally...'
@@ -3531,6 +3726,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const syncingSessions = syncQueueSessions.filter(session => session.status === 'syncing');
   const failedSyncSession = syncQueueSessions.find(session => session.status === 'sync_failed');
   const queuedSyncSessions = syncQueueSessions.filter(session => session.status === 'pending_sync');
+  const showAuthenticatedNavigation = !isModuleSessionMode && ![
+    'interview-type',
+    'university-setup',
+    'new-interview',
+    'interview-session',
+    'thesis-setup',
+    'thesis-session',
+  ].includes(activeTab);
+
+  const openAuthenticatedTab = (tab: typeof activeTab) => {
+    setActiveTab(tab);
+    setIsMobileNavOpen(false);
+  };
 
   return (
     <>
@@ -3543,7 +3751,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         </React.Suspense>
       </ProfessorAssetErrorBoundary>
       {connectivity.connectionState !== 'online' && (
-        <div className="fixed right-4 top-4 z-[9997] rounded-lg border border-amber-400/40 bg-slate-950/95 px-4 py-3 text-xs text-amber-100 shadow-xl">
+        <div role="status" className="status-surface-dark fixed right-4 top-4 z-[9997] max-w-[calc(100vw-2rem)] rounded-lg border border-amber-400/50 bg-slate-950/95 px-4 py-3 text-sm text-amber-100 shadow-xl">
           <p className="font-bold">
             {connectivity.connectionState === 'offline'
               ? 'Device offline'
@@ -3555,18 +3763,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         </div>
       )}
       {connectionRestoredNotice && activeActivityCheckpoint?.mode === 'offline' && (
-        <div className="fixed right-4 top-24 z-[9997] max-w-sm rounded-lg border border-emerald-400/40 bg-slate-950/95 px-4 py-3 text-xs text-emerald-100 shadow-xl">
+        <div role="status" className="status-surface-dark fixed right-4 top-24 z-[9997] max-w-[calc(100vw-2rem)] rounded-lg border border-emerald-400/40 bg-slate-950/95 px-4 py-3 text-sm text-emerald-100 shadow-xl sm:max-w-sm">
           <p>Connection restored. This activity remains offline and will be eligible for sync after local completion.</p>
           <button type="button" onClick={() => setConnectionRestoredNotice(false)} className="mt-2 font-bold underline">Dismiss</button>
         </div>
       )}
       {offlineFoundationError && (
-        <div className="fixed bottom-4 right-4 z-[9997] max-w-sm rounded-lg border border-rose-400/40 bg-slate-950/95 px-4 py-3 text-xs text-rose-100 shadow-xl">
+        <div role="alert" className="status-surface-dark fixed bottom-4 right-4 z-[9997] max-w-[calc(100vw-2rem)] rounded-lg border border-rose-400/40 bg-slate-950/95 px-4 py-3 text-sm text-rose-100 shadow-xl sm:max-w-sm">
           {offlineFoundationError}
         </div>
       )}
       {!activeActivityCheckpoint && resumableOfflineSession && activeTab === 'dashboard' && (
-        <div className="fixed bottom-4 left-1/2 z-[9996] flex -translate-x-1/2 items-center gap-3 rounded-lg border border-amber-400/30 bg-slate-950/95 px-4 py-3 text-xs text-amber-100 shadow-xl">
+        <div role="status" className="status-surface-dark fixed bottom-4 left-4 right-4 z-[9996] flex flex-col items-stretch gap-3 rounded-lg border border-amber-400/40 bg-slate-950/95 px-4 py-3 text-sm text-amber-100 shadow-xl sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:flex-row sm:items-center">
           <span>An unfinished offline {resumableOfflineSession.type.replace(/_/g, ' ')} activity is safely stored for this account.</span>
           {['pre_test_intro', 'pre_test_active_listening', 'post_test', 'drill'].includes(resumableOfflineSession.type) && (
             <button type="button" onClick={resumeOwnedOfflineActivity} className="rounded-md border border-amber-300/50 px-3 py-1.5 font-bold hover:bg-amber-300/10">Resume</button>
@@ -3574,7 +3782,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         </div>
       )}
       {!activeActivityCheckpoint && pendingSyncCount > 0 && activeTab === 'dashboard' && (
-        <div className="fixed bottom-4 right-4 z-[9996] max-w-sm rounded-lg border border-sky-400/30 bg-slate-950/95 px-4 py-3 text-xs text-sky-100 shadow-xl">
+        <div role="status" className="status-surface-dark fixed bottom-4 right-4 z-[9996] max-w-[calc(100vw-2rem)] rounded-lg border border-sky-400/40 bg-slate-950/95 px-4 py-3 text-sm text-sky-100 shadow-xl sm:max-w-sm">
           <p className="font-bold">
             {syncingSessions.length > 0
               ? `Syncing ${syncingSessions.length} saved ${syncingSessions.length === 1 ? 'activity' : 'activities'}...`
@@ -3604,15 +3812,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         </div>
       )}
       {!activeActivityCheckpoint && pendingSyncCount === 0 && lastSyncNotice && activeTab === 'dashboard' && (
-        <div className="fixed bottom-4 right-4 z-[9996] flex items-center gap-3 rounded-lg border border-emerald-400/30 bg-slate-950/95 px-4 py-3 text-xs text-emerald-100 shadow-xl">
+        <div role="status" className="status-surface-dark fixed bottom-4 right-4 z-[9996] flex max-w-[calc(100vw-2rem)] items-center gap-3 rounded-lg border border-emerald-400/40 bg-slate-950/95 px-4 py-3 text-sm text-emerald-100 shadow-xl">
           <span className="font-bold">{lastSyncNotice}</span>
           <button type="button" onClick={() => setLastSyncNotice(null)} className="underline">Dismiss</button>
         </div>
       )}
       {showConnectionLossPrompt && activeActivityCheckpoint?.mode === 'online' && (
-        <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 text-white shadow-2xl">
-            <h2 className="text-xl font-bold">Connection lost</h2>
+        <div style={programAccentStyle} className="status-surface-dark fixed inset-0 z-[9998] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+          <div ref={connectionLossDialogRef} role="dialog" aria-modal="true" aria-labelledby="connection-loss-title" tabIndex={-1} className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 text-white shadow-2xl outline-none">
+            <h2 id="connection-loss-title" className="text-xl font-bold">Connection lost</h2>
             <p className="mt-2 text-sm leading-relaxed text-slate-300">
               Your current question, transcript, response count, and camera summary are being preserved. Choose how to continue.
             </p>
@@ -3634,12 +3842,48 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         className={`dashboard-shell dashboard-theme-${appTheme} min-h-screen bg-page text-ink flex overflow-hidden`}
         style={programAccentStyle}
       >
+        {showAuthenticatedNavigation && (
+          <header inert={isMobileNavOpen ? true : undefined} className="fixed inset-x-0 top-0 z-40 flex h-16 items-center justify-between border-b border-line bg-card px-4 lg:hidden">
+            <span className="font-bold text-lg tracking-tight text-gold-text">Career Edge</span>
+            <button
+              ref={mobileNavTriggerRef}
+              type="button"
+              onClick={() => setIsMobileNavOpen(true)}
+              aria-label="Open navigation menu"
+              aria-haspopup="dialog"
+              aria-expanded={isMobileNavOpen}
+              aria-controls="authenticated-navigation"
+              className="program-accent-focus-ring flex h-11 w-11 items-center justify-center rounded-lg border border-line text-ink hover:bg-active"
+            >
+              <Menu className="h-5 w-5" aria-hidden="true" />
+            </button>
+          </header>
+        )}
+        {showAuthenticatedNavigation && isMobileNavOpen && (
+          <button
+            type="button"
+            aria-label="Close navigation menu"
+            onClick={() => setIsMobileNavOpen(false)}
+            className="fixed inset-0 z-40 bg-black/45 lg:hidden"
+          />
+        )}
         {/* Sidebar */}
-        {!isModuleSessionMode && activeTab !== 'interview-type' && activeTab !== 'university-setup' && activeTab !== 'new-interview' && activeTab !== 'interview-session' && activeTab !== 'thesis-setup' && activeTab !== 'thesis-session' && (
-          <aside className="w-72 bg-card border-r border-line flex flex-col h-screen shrink-0">
+        {showAuthenticatedNavigation && (
+          <aside
+            id="authenticated-navigation"
+            ref={mobileNavRef}
+            role={isMobileNavOpen ? 'dialog' : undefined}
+            aria-modal={isMobileNavOpen ? true : undefined}
+            aria-label="Career Edge navigation"
+            tabIndex={-1}
+            className={`fixed inset-y-0 left-0 z-50 h-[100dvh] w-72 max-w-[88vw] shrink-0 flex-col border-r border-line bg-card outline-none lg:static lg:z-auto lg:flex lg:h-screen lg:max-w-none ${isMobileNavOpen ? 'flex' : 'hidden'}`}
+          >
             {/* Logo Area */}
-            <div className="h-16 px-3 border-b border-line flex items-center shrink-0">
+            <div className="h-16 px-3 border-b border-line flex items-center justify-between shrink-0">
               <span className="font-bold text-xl tracking-tight text-gold-text">Career Edge</span>
+              <button type="button" onClick={() => setIsMobileNavOpen(false)} aria-label="Close navigation menu" className="program-accent-focus-ring flex h-10 w-10 items-center justify-center rounded-lg text-muted hover:bg-active hover:text-ink lg:hidden">
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
             </div>
 
             {/* Main Action */}
@@ -3650,6 +3894,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                     setSelectedCompanyType('');
                     setPosition('');
                     setActiveTab('interview-type');
+                    setIsMobileNavOpen(false);
                   }}
                   className="program-accent-button w-full py-2 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 transition-colors"
                 >
@@ -3660,16 +3905,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                 <div className="w-full relative group">
                   <button
                     disabled
+                    aria-describedby="start-interview-lock-guidance"
                     className="w-full py-3 px-4 rounded-xl font-medium flex items-center justify-center gap-2 bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50 transition-colors"
                   >
                     <Lock className="w-4 h-4 text-slate-500" />
                     Locked
                   </button>
-                  {/* Tooltip */}
-                  <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-3 px-3 py-2 bg-slate-800 border border-slate-700 text-xs font-medium text-slate-300 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-xl z-50">
-                    <div className="absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 border-b border-r border-slate-700 rotate-45 -mt-1" />
+                  <p id="start-interview-lock-guidance" className="mt-2 px-2 text-xs leading-relaxed text-muted">
                     Only available to CCIT, CTE, and CBAPA students
-                  </div>
+                  </p>
                 </div>
               )}
             </div>
@@ -3677,21 +3921,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
             {/* Navigation */}
             <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
               <button
-                onClick={() => setActiveTab('dashboard')}
+                onClick={() => openAuthenticatedTab('dashboard')}
+                aria-current={activeTab === 'dashboard' ? 'page' : undefined}
                 className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'dashboard' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
               >
                 <LayoutDashboard className="w-5 h-5" />
                 Dashboard
               </button>
               <button
-                onClick={() => setActiveTab('pre-test')}
+                onClick={() => openAuthenticatedTab('pre-test')}
+                aria-current={activeTab === 'pre-test' ? 'page' : undefined}
                 className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'pre-test' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
               >
                 <BookOpen className="w-5 h-5" />
                 Pre-Test
               </button>
               <button
-                onClick={() => setActiveTab('drills')}
+                onClick={() => openAuthenticatedTab('drills')}
+                aria-current={activeTab === 'drills' ? 'page' : undefined}
                 className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'drills' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
               >
                 <Clock className="w-5 h-5" />
@@ -3701,11 +3948,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                 onClick={() => {
                   requestPostTestNavigation(
                     postTestAccess,
-                    () => { setPostTestLockNotice(false); setActiveTab('post-test'); },
+                    () => { setPostTestLockNotice(false); openAuthenticatedTab('post-test'); },
                     () => setPostTestLockNotice(true),
                   );
                 }}
                 aria-disabled={!isPostTestUnlocked(postTestAccess)}
+                aria-current={activeTab === 'post-test' ? 'page' : undefined}
                 title={isPostTestUnlocked(postTestAccess) ? 'Post-Test' : postTestLockGuidance}
                 className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${isPostTestUnlocked(postTestAccess) ? activeTab === 'post-test' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink' : 'cursor-not-allowed text-muted opacity-60'}`}
               >
@@ -3716,14 +3964,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                 <p role="status" className="px-2 text-xs text-muted">{postTestAccess ? 'Post-Test is locked. Complete all Drill activities first.' : postTestLockGuidance}</p>
               )}
               <button
-                onClick={() => setActiveTab('history')}
+                onClick={() => openAuthenticatedTab('history')}
+                aria-current={activeTab === 'history' ? 'page' : undefined}
                 className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'history' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
               >
                 <Video className="w-5 h-5" />
                 Interview Practice
               </button>
               <button
-                onClick={() => setActiveTab('analytics')}
+                onClick={() => openAuthenticatedTab('analytics')}
+                aria-current={activeTab === 'analytics' ? 'page' : undefined}
                 className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'analytics' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
               >
                 <BarChart2 className="w-5 h-5" />
@@ -3744,7 +3994,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                     type="button"
                     role="menuitem"
                     onClick={() => {
-                      setActiveTab('profile');
+                      openAuthenticatedTab('profile');
                       setIsAccountMenuOpen(false);
                     }}
                     className="program-accent-focus-ring flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium text-ink transition-colors hover:bg-active"
@@ -3756,7 +4006,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                     type="button"
                     role="menuitem"
                     onClick={() => {
-                      setActiveTab('settings');
+                      openAuthenticatedTab('settings');
                       setIsAccountMenuOpen(false);
                     }}
                     className="program-accent-focus-ring flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium text-ink transition-colors hover:bg-active"
@@ -3770,6 +4020,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                     role="menuitem"
                     onClick={() => {
                       setIsAccountMenuOpen(false);
+                      setIsMobileNavOpen(false);
                       onLogout();
                     }}
                     className="program-accent-focus-ring flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium text-ink transition-colors hover:bg-active"
@@ -3811,7 +4062,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         )}
 
         {/* Main Content */}
-        <main className="min-w-0 flex-1 flex flex-col h-screen overflow-hidden">
+        <main inert={isMobileNavOpen ? true : undefined} className={`min-w-0 flex-1 flex flex-col h-screen overflow-hidden ${showAuthenticatedNavigation ? 'pt-16 lg:pt-0' : ''}`}>
           {/* Scrollable Content */}
           <div
             className={
@@ -3819,7 +4070,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                 ? "flex-1 overflow-hidden"
                 : isModuleSessionMode
                   ? "flex-1 overflow-y-auto bg-page"
-                  : "flex-1 overflow-y-auto px-4 pb-3 pt-6 sm:px-8 md:pb-4 md:pt-8 lg:px-10"
+                  : "mx-auto w-full max-w-[90rem] flex-1 overflow-y-auto px-4 pb-3 pt-6 sm:px-8 md:pb-4 md:pt-8 lg:px-10"
             }
             style={activeTab === 'interview-session' ? { backgroundColor: '#02040a' } : undefined}
           >
@@ -3828,11 +4079,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
               <div className="w-full">
                 {/* Page Title */}
                 <div className="mb-6">
-                  <h1 className="text-4xl md:text-5xl font-bold text-ink tracking-tight">
+                  <h1 className="text-3xl font-bold text-ink tracking-tight sm:text-4xl">
                     {isNewSignupSession ? 'Welcome to Career Edge, ' : 'Welcome back, '}
                     <span className="text-program-accent">{profile.name.split(' ')[0]}</span>
                   </h1>
-                  <p className="text-lg md:text-xl font-medium text-muted mt-1.5">Here's an overview of your interview progress.</p>
+                  <p className="mt-1.5 text-base font-medium text-muted sm:text-lg">Here's an overview of your interview progress.</p>
                 </div>
 
                 {renderStatCards()}
@@ -3851,15 +4102,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                     )}
                   </div>
 
-                  {interviewHistory.filter(item => (item.total_score || 0) > 0).length === 0 ? (
+                  {interviewHistory.filter(hasCompletedTotalScore).length === 0 && interviewHistoryState !== 'ready' ? (
+                    interviewHistoryState === 'error' ? (
+                      <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-8 text-center text-rose-700">
+                        <p className="text-sm font-semibold">{interviewHistoryError}</p>
+                        <button type="button" onClick={() => void fetchHistory()} className="mt-3 rounded-md border border-current px-3 py-1.5 text-sm font-bold">Retry</button>
+                      </div>
+                    ) : (
+                      <div role="status" className="flex items-center justify-center gap-2 rounded-lg border border-line bg-card px-4 py-8 text-sm text-muted">
+                        <LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading interview history…
+                      </div>
+                    )
+                  ) : interviewHistory.filter(hasCompletedTotalScore).length === 0 ? (
                     <div className="bg-card border border-line rounded-lg px-3 py-8 md:py-10 text-center">
                       <p className="text-muted text-sm">No interviews completed yet.</p>
                       <button onClick={() => setActiveTab('interview-type')} className="program-accent-link mt-2 text-sm font-bold hover:underline">Start your first interview</button>
                     </div>
                   ) : (
                     <div className="space-y-2.5">
-                      {interviewHistory.filter(item => (item.total_score || 0) > 0).slice(0, 5).map((item, i, filteredList) => (
-                        <motion.div
+                      {interviewHistory.filter(hasCompletedTotalScore).slice(0, 5).map((item, i, filteredList) => (
+                        <motion.button
+                          type="button"
                           key={item.id || i}
                           onClick={() => {
                             setInterviewResult(item);
@@ -3869,7 +4132,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                           initial={{ opacity: 0, x: -20 }}
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ delay: 0.1 + (i * 0.05) }}
-                          className="program-accent-hover-border bg-card border border-line rounded-lg p-3 flex items-center justify-between hover:bg-active transition-colors cursor-pointer group"
+                          className="program-accent-hover-border program-accent-focus-ring group flex w-full items-center justify-between rounded-lg border border-line bg-card p-3 text-left transition-colors hover:bg-active"
                         >
                           <div className="flex items-center gap-3">
                             <div className="group-hover-program-accent-surface w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-slate-400 transition-all">
@@ -3877,16 +4140,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                             </div>
                             <div>
                               <h4 className="group-hover-program-accent-text font-bold text-sm text-ink transition-colors">Interview #{filteredList.length - i}</h4>
-                              <p className="text-[10px] text-muted uppercase font-bold tracking-wider">{new Date(item.start_time).toLocaleDateString()}</p>
+                              <p className="text-xs text-muted uppercase font-bold tracking-wider">{new Date(item.start_time).toLocaleDateString()}</p>
                             </div>
                           </div>
                           <div className="flex items-center gap-4">
                             <div className="text-right">
-                              <span className={`text-lg font-black ${item.total_score >= 70 ? 'text-success' : 'text-rose-700'}`}>{item.total_score || 0}%</span>
+                              <span className={`text-lg font-black ${item.total_score >= 70 ? 'status-success-text' : 'status-failure-text'}`}>{item.total_score || 0}%</span>
                             </div>
                             <ChevronRight className="group-hover-program-accent-text w-4 h-4 text-slate-600 group-hover:translate-x-1 transition-all" />
                           </div>
-                        </motion.div>
+                        </motion.button>
                       ))}
                     </div>
                   )}
@@ -3965,7 +4228,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                     <button
                       onClick={startInterviewSession}
                       disabled={isStartingInterview}
-                      className="program-accent-hover-border bg-slate-900 border border-slate-800 rounded-2xl p-8 flex flex-col items-center text-center transition-all duration-300 group h-full"
+                      className={`program-accent-focus-ring bg-slate-900 border border-slate-800 rounded-2xl p-8 flex flex-col items-center text-center transition-all duration-300 h-full ${isStartingInterview ? 'cursor-not-allowed opacity-60' : 'program-accent-hover-border group'}`}
                     >
                       <div className="program-accent-surface w-16 h-16 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
                         <GraduationCap className="w-8 h-8" />
@@ -3982,7 +4245,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
 
                     <button
                       onClick={() => { setThesisAbstractFile(null); setActiveTab('thesis-setup'); }}
-                      className="bg-slate-900 border border-slate-800 hover:border-purple-500 hover:ring-1 hover:ring-purple-500 rounded-2xl p-8 flex flex-col items-center text-center transition-all duration-300 group h-full"
+                      className="program-accent-focus-ring bg-slate-900 border border-slate-800 hover:border-purple-500 hover:ring-1 hover:ring-purple-500 rounded-2xl p-8 flex flex-col items-center text-center transition-all duration-300 group h-full"
                     >
                       <div className="w-16 h-16 bg-purple-500/10 text-purple-400 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
                         <Shield className="w-8 h-8" />
@@ -4220,7 +4483,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
             )}
 
             {activeTab === 'thesis-session' && (
-              <div className="relative h-full flex flex-col items-center px-4 pt-6 w-full">
+              <div className="interview-session-theme relative flex min-h-full w-full flex-col items-center px-4 pt-6 text-slate-100">
                 {/* Timer */}
                 <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10">
                   <div className={`flex items-center gap-2 px-4 py-2 rounded-full font-mono text-sm font-bold border transition-colors ${thesisElapsedSeconds >= 3300 ? 'bg-rose-500/20 border-rose-500/30 text-rose-400' : 'bg-slate-800/90 border-slate-700 text-slate-300'}`}>
@@ -4230,7 +4493,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                 </div>
 
                 {/* TOP ROW: 3D MODEL & RESPONSE LOG */}
-                <div className="w-full max-w-7xl mx-auto flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch mb-8 h-[600px] mt-8">
+                <div className="mx-auto mb-6 mt-8 grid w-full max-w-7xl flex-1 grid-cols-1 items-stretch gap-4 lg:h-[min(600px,calc(100svh-10rem))] lg:grid-cols-12 lg:gap-6">
 
                   {/* LEFT: 3D Model */}
                   <motion.div
@@ -4261,12 +4524,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                     {isCameraEnabled && (
                       <div className="absolute left-4 right-4 top-14 z-20 overflow-hidden rounded-xl border border-purple-400/40 bg-slate-950 shadow-xl sm:left-auto sm:right-4 sm:top-4 sm:w-40">
                         <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
-                        <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-slate-200">
+                        <div className="flex items-center justify-between px-2.5 py-2 text-[11px] font-bold text-slate-200">
                           <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unavailable' ? 'Tracking unavailable' : 'Loading tracker'}</span>
                           <span className="text-purple-300">{getCheckpointEyeContactSummary().samples > 0 ? `${Math.round(getCheckpointEyeContactSummary().score || 0)}%` : '—'}</span>
                         </div>
                         {(eyeTracker.status === 'blocked' || eyeTracker.status === 'unavailable') && (
-                          <p className="px-2.5 pb-2 text-[9px] leading-snug text-slate-400">Activity can continue without eye-contact scoring.</p>
+                          <p className="px-2.5 pb-2 text-[11px] leading-snug text-slate-400">Activity can continue without eye-contact scoring.</p>
                         )}
                       </div>
                     )}
@@ -4446,7 +4709,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                           ))}
                         </div>
                       ) : (
-                        <Mic className="w-8 h-8 relative z-10 text-slate-400" />
+                        <MicOff className="w-8 h-8 relative z-10 text-slate-400" />
                       )}
                       {isListening && <span className="absolute inset-0 rounded-[2rem] border-4 border-emerald-400 opacity-0" style={{ animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite' }} />}
                     </button>
@@ -4477,15 +4740,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                 {thesisIsLeaveModalOpen && (
                   <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
                     <motion.div
+                      ref={thesisLeaveDialogRef}
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="thesis-leave-title"
+                      tabIndex={-1}
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      className="bg-slate-900 border border-slate-700/50 rounded-3xl p-8 max-w-sm w-full shadow-2xl flex flex-col items-center"
+                      className="flex w-full max-w-sm flex-col items-center rounded-2xl border border-line bg-card p-6 text-ink outline-none"
                     >
                       <div className="w-16 h-16 bg-rose-500/10 rounded-2xl flex items-center justify-center mb-6 text-rose-500">
                         <LogOut className="w-8 h-8" />
                       </div>
-                      <h3 className="text-xl font-bold text-[#2e2812] text-center mb-3">End Defense?</h3>
-                      <p className="text-[#6b6452] text-center mb-8 text-sm leading-relaxed px-2">Are you sure you want to end this thesis defense? Your session progress will not be graded.</p>
+                      <h3 id="thesis-leave-title" className="mb-3 text-center text-xl font-bold text-ink">End Defense?</h3>
+                      <p className="mb-6 px-2 text-center text-sm leading-relaxed text-muted">Are you sure you want to end this thesis defense? Your session progress will not be graded.</p>
                       <div className="flex gap-4 w-full">
                         <button onClick={() => setThesisIsLeaveModalOpen(false)} className="flex-1 py-3 px-4 bg-[#e3e0d6] hover:bg-[#d6d1c5] border border-[#cbc6b9] text-[#2e2812] rounded-xl font-semibold transition-colors">Cancel</button>
                         <button onClick={exitThesisSession} className="flex-1 py-3 px-4 bg-[#b42335] hover:bg-[#941c2d] border border-[#941c2d] text-white rounded-xl font-semibold transition-colors shadow-lg shadow-red-900/20">Leave</button>
@@ -4506,7 +4774,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                   <motion.div
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
-                    className="relative m-3 flex min-h-[52svh] items-center justify-center overflow-hidden rounded-xl border border-[var(--interview-border)] bg-[var(--interview-stage)] p-0 lg:col-start-1 lg:row-start-1 lg:m-5 lg:min-h-0"
+                    className="relative m-3 flex min-h-[40svh] items-center justify-center overflow-hidden rounded-xl border border-[var(--interview-border)] bg-[var(--interview-stage)] p-0 sm:min-h-[48svh] lg:col-start-1 lg:row-start-1 lg:m-5 lg:min-h-0"
                     style={{ backgroundColor: 'var(--interview-stage)' }}
                   >
                     <div className={`absolute inset-0 h-full w-full transition-opacity duration-200 ${isProfessorFirstFrameReady ? 'opacity-100' : 'opacity-0'}`}>
@@ -4537,22 +4805,167 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                     {isCameraEnabled && (
                       <div className="program-accent-dark-border absolute right-3 top-3 z-20 w-36 overflow-hidden rounded-xl border bg-[var(--interview-card)] shadow-xl sm:right-4 sm:top-4 sm:w-40">
                         <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
-                        <div className="flex items-center justify-between px-2.5 py-2 text-[10px] font-bold text-[var(--interview-text-secondary)]">
+                        <div className="flex items-center justify-between px-2.5 py-2 text-[11px] font-bold text-[var(--interview-text-secondary)]">
                           <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unavailable' ? 'Tracking unavailable' : 'Loading tracker'}</span>
                           <span className="program-accent-on-dark">{getCheckpointEyeContactSummary().samples > 0 ? `${Math.round(getCheckpointEyeContactSummary().score || 0)}%` : '—'}</span>
                         </div>
                         {(eyeTracker.status === 'blocked' || eyeTracker.status === 'unavailable') && (
-                          <p className="px-2.5 pb-2 text-[9px] leading-snug text-[var(--interview-text-muted)]">Activity can continue without eye-contact scoring.</p>
+                          <p className="px-2.5 pb-2 text-[11px] leading-snug text-[var(--interview-text-muted)]">Activity can continue without eye-contact scoring.</p>
                         )}
                       </div>
                     )}
                   </motion.div>
 
+                {/* Integrated meeting controls */}
+                {!interviewResult && (
+                  <div className="grid w-full shrink-0 items-center gap-3 border-t border-[var(--interview-border)] bg-[var(--interview-controls)] px-4 py-3 lg:col-start-1 lg:row-start-2 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:gap-6 lg:px-6">
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      className="min-w-0 text-center lg:max-w-2xl lg:text-left"
+                    >
+                      <p className="program-accent-on-dark text-[10px] font-bold uppercase tracking-[0.18em]">How to respond</p>
+                      <p className="mt-1 text-xs font-semibold text-[var(--interview-text-primary)]">Listen → Click microphone → Speak → Click microphone again to submit</p>
+                      <p className={`mt-1.5 text-xs leading-relaxed ${isListening ? 'program-accent-on-dark font-semibold' : 'text-[var(--interview-text-secondary)]'}`}>
+                        {enrollmentInstruction}
+                      </p>
+                    </div>
+
+                    <div className="flex items-start justify-center gap-3 sm:gap-4">
+                    <div className="relative flex flex-col items-center gap-1">
+                      <button
+                        onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
+                        className="group relative flex h-12 w-12 items-center justify-center rounded-lg bg-transparent text-[var(--interview-text-secondary)] transition-all duration-300 hover:bg-[var(--interview-control-hover)] hover:text-[var(--interview-text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--program-accent-on-dark)]"
+                        title="Add an attachment"
+                        aria-label="Add an attachment"
+                      >
+                        <Plus className={`h-[22px] w-[22px] transition-transform duration-300 ${isAddMenuOpen ? 'rotate-45' : 'group-hover:scale-110'}`} />
+                      </button>
+                      <span className="text-[11px] font-semibold text-[var(--interview-text-secondary)]">Attach</span>
+
+                      {/* Attachment Popover */}
+                      {isAddMenuOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          className="absolute bottom-[calc(100%+16px)] left-0 z-[100] w-48 overflow-hidden rounded-2xl border border-[var(--interview-border)] bg-[var(--interview-elevated)] shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] sm:left-1/2 sm:-translate-x-1/2"
+                        >
+                          <div className="p-3">
+                            <p className="text-xs font-semibold text-[var(--interview-text-primary)]">Attachments unavailable</p>
+                            <p className="mt-1 text-xs leading-relaxed text-[var(--interview-text-secondary)]">Files cannot be added during an enrollment interview yet.</p>
+                          </div>
+                        </motion.div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={toggleListening}
+                        disabled={isEnrollmentMicDisabled}
+                        className={`relative ${
+                          isEnrollmentMicDisabled
+                            ? 'cursor-not-allowed border-[var(--interview-border-strong)] bg-[var(--interview-disabled)] text-[var(--interview-text-secondary)]'
+                            : isListening
+                              ? 'program-accent-interview-active program-accent-border'
+                              : 'border-[var(--interview-border-strong)] bg-[var(--interview-elevated)] text-[var(--interview-text-primary)] hover:border-[var(--program-accent-on-dark)] hover:bg-[var(--interview-control-hover)]'
+                        } flex h-14 w-14 items-center justify-center rounded-2xl border shadow-lg transition-all duration-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--program-accent-on-dark)]`}
+                        title={
+                          isListening
+                            ? 'Stop recording and submit answer'
+                            : isMicTransitioning
+                              ? 'Submitting answer'
+                              : 'Start recording your answer'
+                        }
+                        aria-label={
+                          isListening
+                            ? 'Stop recording and submit answer'
+                            : isMicTransitioning
+                              ? 'Submitting answer'
+                              : enrollmentResponseCount >= 5
+                                ? 'All responses recorded'
+                                : 'Start microphone recording'
+                        }
+                        aria-pressed={isListening}
+                      >
+                        {isListening ? (
+                          <div className="relative z-10 flex h-8 w-full items-center justify-center gap-1">
+                            {userAudioData.map((height, i) => (
+                              <motion.div
+                                key={`w-left-${i}`}
+                                className="w-0.5 rounded-full"
+                                style={{ backgroundColor: 'var(--program-accent-dark-interactive-foreground)' }}
+                                animate={{ height: `${height * 0.65}px` }}
+                                transition={{ duration: 0.1, ease: 'linear' }}
+                              />
+                            ))}
+                            <Mic className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+                            {Array.from(userAudioData).reverse().map((height, i) => (
+                              <motion.div
+                                key={`w-right-${i}`}
+                                className="w-0.5 rounded-full"
+                                style={{ backgroundColor: 'var(--program-accent-dark-interactive-foreground)' }}
+                                animate={{ height: `${height * 0.65}px` }}
+                                transition={{ duration: 0.1, ease: 'linear' }}
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <MicOff className="relative z-10 h-[22px] w-[22px]" aria-hidden="true" />
+                        )}
+                        {isListening && (
+                          <span
+                            className="absolute inset-0 rounded-2xl border-2 opacity-0"
+                            style={{
+                              animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite',
+                              borderColor: 'var(--program-accent-on-dark)',
+                            }}
+                          />
+                        )}
+                      </button>
+                      <div className="min-h-7 text-center leading-tight">
+                        <span className={`block text-[11px] font-bold ${isListening ? 'program-accent-on-dark' : 'text-[var(--interview-text-primary)]'}`}>
+                          {isListening ? 'Recording...' : isMicTransitioning ? 'Submitting...' : enrollmentResponseCount >= 5 ? 'Answers Complete' : 'Start Answer'}
+                        </span>
+                        {isListening && <span className="mt-0.5 block text-[10px] font-medium text-[var(--interview-text-secondary)]">Click to submit</span>}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsCameraEnabled(enabled => !enabled)}
+                        className={`group flex h-12 w-12 items-center justify-center rounded-lg bg-transparent transition-all duration-300 hover:bg-[var(--interview-control-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--program-accent-on-dark)] ${isCameraEnabled ? 'program-accent-on-dark' : 'text-[var(--interview-text-secondary)] hover:text-[var(--interview-text-primary)]'}`}
+                        title={isCameraEnabled ? 'Turn camera off' : 'Turn camera on for eye-contact tracking'}
+                        aria-label={isCameraEnabled ? 'Turn camera off' : 'Turn camera on for eye-contact tracking'}
+                        aria-pressed={isCameraEnabled}
+                      >
+                        {isCameraEnabled ? <Camera className="h-[22px] w-[22px] transition-transform group-hover:scale-110" /> : <CameraOff className="h-[22px] w-[22px] transition-transform group-hover:scale-110" />}
+                      </button>
+                      <span className={`text-[11px] font-semibold ${isCameraEnabled ? 'program-accent-on-dark' : 'text-[var(--interview-text-secondary)]'}`}>{isCameraEnabled ? 'Camera On' : 'Camera Off'}</span>
+                    </div>
+                    </div>
+                    <div className="flex justify-center lg:justify-end">
+                      <div className="flex flex-col items-center gap-1">
+                        <button
+                          onClick={() => setIsLeaveModalOpen(true)}
+                          className="group relative flex h-12 w-12 items-center justify-center rounded-lg bg-transparent text-[#fda4af] transition-all duration-300 hover:bg-[#3b1420] hover:text-[#fecdd3] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#fb7185]"
+                          title="Leave interview without validating"
+                          aria-label="Leave interview without validating"
+                        >
+                          <LogOut className="h-[22px] w-[22px] transition-transform group-hover:scale-110" />
+                        </button>
+                        <span className="text-[11px] font-semibold text-[#fda4af]">Leave</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                   {/* Docked transcript and evaluation panel */}
                   <motion.div
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
-                    className="relative flex min-h-[24rem] flex-col overflow-hidden border-t border-[var(--interview-border)] bg-[var(--interview-transcript)] p-4 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:min-h-0 lg:border-l lg:border-t-0 lg:p-5"
+                    className="relative flex min-h-80 flex-col overflow-hidden border-t border-[var(--interview-border)] bg-[var(--interview-transcript)] p-4 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:min-h-0 lg:border-l lg:border-t-0 lg:p-5"
                     style={{ backgroundColor: 'var(--interview-transcript)' }}
                   >
                     {interviewResult ? (
@@ -4754,160 +5167,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                     )}
                   </motion.div>
 
-                {/* Integrated meeting controls */}
-                {!interviewResult && (
-                  <div className="grid w-full shrink-0 items-center gap-3 border-t border-[var(--interview-border)] bg-[var(--interview-controls)] px-4 py-3 lg:col-start-1 lg:row-start-2 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:gap-6 lg:px-6">
-                    <div
-                      role="status"
-                      aria-live="polite"
-                      className="min-w-0 text-center lg:max-w-2xl lg:text-left"
-                    >
-                      <p className="program-accent-on-dark text-[10px] font-bold uppercase tracking-[0.18em]">How to respond</p>
-                      <p className="mt-1 text-xs font-semibold text-[var(--interview-text-primary)]">Listen → Click microphone → Speak → Click microphone again to submit</p>
-                      <p className={`mt-1.5 text-xs leading-relaxed ${isListening ? 'program-accent-on-dark font-semibold' : 'text-[var(--interview-text-secondary)]'}`}>
-                        {enrollmentInstruction}
-                      </p>
-                    </div>
-
-                    <div className="flex items-start justify-center gap-3 sm:gap-4">
-                    <div className="relative flex flex-col items-center gap-1">
-                      <button
-                        onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
-                        className="group relative flex h-12 w-12 items-center justify-center rounded-lg bg-transparent text-[var(--interview-text-secondary)] transition-all duration-300 hover:bg-[var(--interview-control-hover)] hover:text-[var(--interview-text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--program-accent-on-dark)]"
-                        title="Add an attachment"
-                        aria-label="Add an attachment"
-                      >
-                        <Plus className={`h-[22px] w-[22px] transition-transform duration-300 ${isAddMenuOpen ? 'rotate-45' : 'group-hover:scale-110'}`} />
-                      </button>
-                      <span className="text-[11px] font-semibold text-[var(--interview-text-secondary)]">Attach</span>
-
-                      {/* Attachment Popover */}
-                      {isAddMenuOpen && (
-                        <motion.div
-                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                          animate={{ opacity: 1, scale: 1, y: 0 }}
-                          className="absolute bottom-[calc(100%+16px)] left-1/2 z-[100] w-48 -translate-x-1/2 overflow-hidden rounded-2xl border border-[var(--interview-border)] bg-[var(--interview-elevated)] shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)]"
-                        >
-                          <div className="flex flex-col p-1.5 space-y-1">
-                            <button onClick={() => setIsAddMenuOpen(false)} className="flex w-full items-center gap-3 rounded-xl p-2.5 text-left text-[var(--interview-text-secondary)] transition-all hover:bg-[var(--interview-control-hover)] hover:text-[var(--interview-text-primary)]">
-                              <div className="program-accent-dark-surface w-7 h-7 rounded-lg flex items-center justify-center shrink-0">
-                                <Folder className="w-3.5 h-3.5" />
-                              </div>
-                              <span className="text-xs font-semibold tracking-wide">Local Disk</span>
-                            </button>
-                            <button onClick={() => setIsAddMenuOpen(false)} className="flex w-full items-center gap-3 rounded-xl p-2.5 text-left text-[var(--interview-text-secondary)] transition-all hover:bg-[var(--interview-control-hover)] hover:text-[var(--interview-text-primary)]">
-                              <div className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
-                                <Cloud className="w-3.5 h-3.5 text-emerald-400" />
-                              </div>
-                              <span className="text-xs font-semibold tracking-wide">Drive</span>
-                            </button>
-                          </div>
-                        </motion.div>
-                      )}
-                    </div>
-
-                    <div className="flex flex-col items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={toggleListening}
-                        disabled={isMicTransitioning || isAiSpeaking || isSubmittingOfflineAnswer || enrollmentResponseCount >= 5}
-                        className={`relative ${
-                          isListening
-                            ? 'program-accent-interview-active program-accent-border'
-                            : isMicTransitioning || enrollmentResponseCount >= 5
-                              ? 'cursor-not-allowed border-[var(--interview-border-strong)] bg-[var(--interview-disabled)] text-[var(--interview-text-secondary)]'
-                              : 'border-[var(--interview-border-strong)] bg-[var(--interview-elevated)] text-[var(--interview-text-primary)] hover:border-[var(--program-accent-on-dark)] hover:bg-[var(--interview-control-hover)]'
-                        } flex h-14 w-14 items-center justify-center rounded-2xl border shadow-lg transition-all duration-300`}
-                        title={
-                          isListening
-                            ? 'Stop recording and submit answer'
-                            : isMicTransitioning
-                              ? 'Submitting answer'
-                              : 'Start recording your answer'
-                        }
-                        aria-label={
-                          isListening
-                            ? 'Stop recording and submit answer'
-                            : isMicTransitioning
-                              ? 'Submitting answer'
-                              : enrollmentResponseCount >= 5
-                                ? 'All responses recorded'
-                                : 'Start microphone recording'
-                        }
-                        aria-pressed={isListening}
-                      >
-                        {isListening ? (
-                          <div className="relative z-10 flex h-8 w-full items-center justify-center gap-1">
-                            {userAudioData.map((height, i) => (
-                              <motion.div
-                                key={`w-left-${i}`}
-                                className="w-0.5 rounded-full"
-                                style={{ backgroundColor: 'var(--program-accent-dark-interactive-foreground)' }}
-                                animate={{ height: `${height * 0.65}px` }}
-                                transition={{ duration: 0.1, ease: 'linear' }}
-                              />
-                            ))}
-                            <Mic className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
-                            {Array.from(userAudioData).reverse().map((height, i) => (
-                              <motion.div
-                                key={`w-right-${i}`}
-                                className="w-0.5 rounded-full"
-                                style={{ backgroundColor: 'var(--program-accent-dark-interactive-foreground)' }}
-                                animate={{ height: `${height * 0.65}px` }}
-                                transition={{ duration: 0.1, ease: 'linear' }}
-                              />
-                            ))}
-                          </div>
-                        ) : (
-                          <MicOff className="relative z-10 h-[22px] w-[22px]" aria-hidden="true" />
-                        )}
-                        {isListening && (
-                          <span
-                            className="absolute inset-0 rounded-2xl border-2 opacity-0"
-                            style={{
-                              animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite',
-                              borderColor: 'var(--program-accent-on-dark)',
-                            }}
-                          />
-                        )}
-                      </button>
-                      <div className="min-h-7 text-center leading-tight">
-                        <span className={`block text-[11px] font-bold ${isListening ? 'program-accent-on-dark' : 'text-[var(--interview-text-primary)]'}`}>
-                          {isListening ? 'Recording...' : isMicTransitioning ? 'Submitting...' : enrollmentResponseCount >= 5 ? 'Answers Complete' : 'Start Answer'}
-                        </span>
-                        {isListening && <span className="mt-0.5 block text-[10px] font-medium text-[var(--interview-text-secondary)]">Click to submit</span>}
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setIsCameraEnabled(enabled => !enabled)}
-                        className={`group flex h-12 w-12 items-center justify-center rounded-lg bg-transparent transition-all duration-300 hover:bg-[var(--interview-control-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--program-accent-on-dark)] ${isCameraEnabled ? 'program-accent-on-dark' : 'text-[var(--interview-text-secondary)] hover:text-[var(--interview-text-primary)]'}`}
-                        title={isCameraEnabled ? 'Turn camera off' : 'Turn camera on for eye-contact tracking'}
-                        aria-label={isCameraEnabled ? 'Turn camera off' : 'Turn camera on for eye-contact tracking'}
-                        aria-pressed={isCameraEnabled}
-                      >
-                        {isCameraEnabled ? <Camera className="h-[22px] w-[22px] transition-transform group-hover:scale-110" /> : <CameraOff className="h-[22px] w-[22px] transition-transform group-hover:scale-110" />}
-                      </button>
-                      <span className={`text-[11px] font-semibold ${isCameraEnabled ? 'program-accent-on-dark' : 'text-[var(--interview-text-secondary)]'}`}>{isCameraEnabled ? 'Camera On' : 'Camera Off'}</span>
-                    </div>
-                    </div>
-                    <div className="flex justify-center lg:justify-end">
-                      <div className="flex flex-col items-center gap-1">
-                        <button
-                          onClick={() => setIsLeaveModalOpen(true)}
-                          className="group relative flex h-12 w-12 items-center justify-center rounded-lg bg-transparent text-[#fda4af] transition-all duration-300 hover:bg-[#3b1420] hover:text-[#fecdd3] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#fb7185]"
-                          title="Leave interview without validating"
-                          aria-label="Leave interview without validating"
-                        >
-                          <LogOut className="h-[22px] w-[22px] transition-transform group-hover:scale-110" />
-                        </button>
-                        <span className="text-[11px] font-semibold text-[#fda4af]">Leave</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
                 </div>
               </div>
             )}
@@ -4916,15 +5175,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
             {isLeaveModalOpen && (
               <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
                 <motion.div
+                  ref={interviewLeaveDialogRef}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="interview-leave-title"
+                  tabIndex={-1}
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="bg-slate-900 border border-slate-700/50 rounded-3xl p-8 max-w-sm w-full shadow-2xl flex flex-col items-center"
+                  className="flex w-full max-w-sm flex-col items-center rounded-2xl border border-line bg-card p-6 text-ink outline-none"
                 >
                   <div className="w-16 h-16 bg-rose-500/10 rounded-2xl flex items-center justify-center mb-6 text-rose-500 shadow-inner">
                     <LogOut className="w-8 h-8" />
                   </div>
-                  <h3 className="text-xl font-bold text-[#2e2812] text-center mb-3">Leave Interview?</h3>
-                  <p className="text-[#6b6452] text-center mb-8 text-sm leading-relaxed px-2">
+                  <h3 id="interview-leave-title" className="mb-3 text-center text-xl font-bold text-ink">Leave Interview?</h3>
+                  <p className="mb-6 px-2 text-center text-sm leading-relaxed text-muted">
                     Are you sure you want to end this interview session? Your progress and current context will be cleared.
                   </p>
                   <div className="flex gap-4 w-full">
@@ -4953,15 +5217,35 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                 className="w-full space-y-8"
               >
                 <div>
-                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Interview Practice</h1>
-                  <p className="text-lg text-slate-400 mt-2">Relive your past sessions and track your progress over time.</p>
+                  <h1 className="text-3xl font-bold text-ink tracking-tight sm:text-4xl">Interview Practice</h1>
+                  <p className="mt-2 text-base text-muted sm:text-lg">Relive your past sessions and track your progress over time.</p>
                 </div>
 
                 {(() => {
                   const allHistory = [
-                    ...interviewHistory.filter(i => (i.total_score || 0) > 0).map(i => ({ ...i, _type: 'enrollment' as const })),
-                    ...thesisHistory.filter(i => (i.total_score || 0) > 0).map(i => ({ ...i, _type: 'thesis' as const }))
+                    ...interviewHistory.filter(hasCompletedTotalScore).map(i => ({ ...i, _type: 'enrollment' as const })),
+                    ...thesisHistory.filter(hasCompletedTotalScore).map(i => ({ ...i, _type: 'thesis' as const }))
                   ].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+                  const historyIsLoading = [interviewHistoryState, thesisHistoryState].some(state => state === 'idle' || state === 'loading');
+                  const historyErrors = [interviewHistoryError, thesisHistoryError].filter((message): message is string => Boolean(message));
+
+                  if (allHistory.length === 0 && historyIsLoading) {
+                    return (
+                      <div role="status" className="flex items-center justify-center gap-2 rounded-lg border border-line bg-card px-6 py-12 text-sm text-muted">
+                        <LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading interview history…
+                      </div>
+                    );
+                  }
+
+                  if (allHistory.length === 0 && historyErrors.length > 0) {
+                    return (
+                      <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-6 py-12 text-center text-rose-700">
+                        <h3 className="text-lg font-bold">Interview history unavailable</h3>
+                        <p className="mx-auto mt-2 max-w-lg text-sm">{historyErrors.join(' ')}</p>
+                        <button type="button" onClick={() => { void fetchHistory(); void fetchThesisHistory(); }} className="mt-5 rounded-lg border border-current px-4 py-2 text-sm font-bold">Retry</button>
+                      </div>
+                    );
+                  }
 
                   if (allHistory.length === 0) {
                     return (
@@ -4983,8 +5267,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
 
                   return (
                     <div className="grid grid-cols-1 gap-4 pb-12">
+                      {historyErrors.length > 0 && (
+                        <div role="status" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm status-warning-text">
+                          Showing available saved history. Some interview records could not be refreshed.
+                        </div>
+                      )}
                       {allHistory.map((item, i) => (
-                        <motion.div
+                        <motion.button
+                          type="button"
                           key={`${item._type}-${item.id || i}`}
                           onClick={() => {
                             setInterviewResult(item);
@@ -4994,46 +5284,46 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                           initial={{ opacity: 0, x: -20 }}
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ delay: i * 0.04 }}
-                          className="program-accent-hover-border bg-slate-900 border border-slate-800/50 rounded-2xl p-6 flex items-center justify-between hover:bg-slate-800/80 transition-all cursor-pointer group shadow-xl backdrop-blur-sm"
+                          className="program-accent-hover-border program-accent-focus-ring group flex w-full flex-col items-stretch gap-4 rounded-xl border border-line bg-card p-4 text-left transition-colors hover:bg-active sm:flex-row sm:items-center sm:justify-between sm:p-5"
                         >
-                          <div className="flex items-center gap-6">
-                            <div className={`w-14 h-14 rounded-2xl bg-slate-800 flex items-center justify-center transition-all duration-300 ${item._type === 'thesis'
-                              ? 'text-purple-400 group-hover:text-purple-300 group-hover:bg-purple-500/10'
-                              : 'group-hover-program-accent-surface text-slate-400'
+                          <div className="flex min-w-0 items-center gap-4">
+                            <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-active transition-colors ${item._type === 'thesis'
+                              ? 'text-rose-700'
+                              : 'group-hover-program-accent-surface text-muted'
                               }`}>
-                              {item._type === 'thesis' ? <Shield className="w-7 h-7" /> : <Video className="w-7 h-7" />}
+                              {item._type === 'thesis' ? <Shield className="w-6 h-6" /> : <Video className="w-6 h-6" />}
                             </div>
-                            <div>
-                              <div className="flex items-center gap-3">
-                                <h4 className={`font-bold text-xl text-slate-100 tracking-tight transition-colors ${item._type === 'thesis' ? 'group-hover:text-purple-400' : 'group-hover-program-accent-text'
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h4 className={`font-bold text-lg text-ink tracking-tight transition-colors ${item._type === 'thesis' ? 'group-hover:text-rose-700' : 'group-hover-program-accent-text'
                                   }`}>
                                   {item._type === 'thesis' ? 'Thesis Defense' : `Interview #${allHistory.filter(h => h._type === 'enrollment').length - allHistory.filter(h => h._type === 'enrollment').indexOf(item)}`}
                                 </h4>
-                                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${item._type === 'thesis'
-                                  ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
-                                  : item.passed ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                                <span className={`px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider border ${item._type === 'thesis'
+                                  ? 'bg-purple-500/10 status-thesis-text border-purple-500/20'
+                                  : item.passed ? 'bg-emerald-500/10 status-success-text border-emerald-500/20' : 'bg-rose-500/10 status-failure-text border-rose-500/20'
                                   }`}>
                                   {item._type === 'thesis' ? 'THESIS' : (item.passed ? 'PASSED' : 'NOT PASSED')}
                                 </span>
                               </div>
-                              <p className="text-sm text-slate-500 mt-1 font-medium italic">
+                              <p className="mt-1 text-sm font-medium text-muted">
                                 {item._type === 'thesis' ? `${profile.department?.toUpperCase()} Defense` : `${profile.department || 'General'} Assessment`} · {new Date(item.start_time).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
                               </p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-8">
-                            <div className="text-right min-w-[100px]">
-                              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em] mb-1">Final Score</p>
-                              <span className={`text-3xl font-black ${(item.total_score || 0) >= 75 ? 'text-emerald-400' : (item.total_score || 0) >= 50 ? 'text-program-accent' : 'text-rose-400'
+                          <div className="flex items-center justify-between gap-4 border-t border-line pt-3 sm:justify-end sm:border-l-0 sm:border-t-0 sm:pt-0">
+                            <div className="sm:text-right">
+                              <p className="mb-1 text-xs font-bold uppercase tracking-[0.14em] text-muted">Final Score</p>
+                              <span className={`text-3xl font-black ${(item.total_score || 0) >= 75 ? 'status-success-text' : (item.total_score || 0) >= 50 ? 'text-program-accent' : 'status-failure-text'
                                 }`}>
                                 {item.total_score || 0}%
                               </span>
                             </div>
-                            <div className="group-hover-program-accent-fill w-10 h-10 rounded-full flex items-center justify-center bg-slate-800 text-slate-500 transition-all duration-300 shadow-inner">
+                            <div className="group-hover-program-accent-fill flex h-10 w-10 items-center justify-center rounded-full bg-active text-muted transition-colors">
                               <ChevronRight className="w-6 h-6" />
                             </div>
                           </div>
-                        </motion.div>
+                        </motion.button>
                       ))}
                     </div>
                   );
@@ -5049,8 +5339,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                 className="w-full space-y-8"
               >
                 <div>
-                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Progress</h1>
-                  <p className="text-lg text-slate-400 mt-2">In-depth overview of all interviews, tests, and drills.</p>
+                  <h1 className="text-3xl font-bold text-ink tracking-tight sm:text-4xl">Progress</h1>
+                  <p className="mt-2 text-base text-muted sm:text-lg">In-depth overview of all interviews, tests, and drills.</p>
                 </div>
 
                 {renderStatCards()}
@@ -5122,10 +5412,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                     <div className="space-y-3">
                       {stats.comparisonInsights.map(insight => {
                         const presentation = {
-                          improved: { label: 'Improved', badge: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400', change: 'text-emerald-400' },
-                          declined: { label: 'Needs attention', badge: 'border-rose-500/30 bg-rose-500/10 text-rose-400', change: 'text-rose-400' },
+                          improved: { label: 'Improved', badge: 'border-emerald-500/30 bg-emerald-500/10 status-success-text', change: 'status-success-text' },
+                          declined: { label: 'Needs attention', badge: 'border-rose-500/30 bg-rose-500/10 status-failure-text', change: 'status-failure-text' },
                           steady: { label: 'No change', badge: 'border-slate-700 bg-slate-800/70 text-slate-400', change: 'text-slate-500' },
-                          baseline: { label: 'Baseline', badge: 'border-amber-500/30 bg-amber-500/10 text-amber-400', change: 'text-amber-400' },
+                          baseline: { label: 'Baseline', badge: 'border-amber-500/30 bg-amber-500/10 status-warning-text', change: 'status-warning-text' },
                           'no-data': { label: 'No data', badge: 'border-slate-700 bg-slate-800/70 text-slate-400', change: 'text-slate-500' },
                         }[insight.status];
 
@@ -5133,14 +5423,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                           <div key={insight.label} className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
                             <div className="flex items-start justify-between gap-3">
                               <h4 className="text-sm font-bold text-slate-100">{insight.label}</h4>
-                              <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${presentation.badge}`}>
+                              <span className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-bold uppercase tracking-wider ${presentation.badge}`}>
                                 {presentation.label}
                               </span>
                             </div>
 
                             <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-end gap-3">
                               <div>
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Previous</p>
+                                <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Previous</p>
                                 <p className="mt-0.5 text-xl font-black text-slate-300">
                                   {insight.previous == null ? 'N/A' : `${insight.previous}%`}
                                 </p>
@@ -5149,7 +5439,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                                 {insight.delta == null ? '—' : `${insight.delta > 0 ? '+' : ''}${insight.delta} pp`}
                               </div>
                               <div className="text-right">
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Current</p>
+                                <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Current</p>
                                 <p className="mt-0.5 text-xl font-black text-slate-100">
                                   {insight.current == null ? 'N/A' : `${insight.current}%`}
                                 </p>
@@ -5288,8 +5578,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                       <CircleHelp className="h-5 w-5" aria-hidden="true" />
                     </div>
                     <div>
-                      <h2 id="support-topics-heading" className="text-lg font-bold text-ink">Help topics</h2>
-                      <p className="mt-1 text-sm text-muted">Choose the area that best matches what you need help with.</p>
+                      <h2 id="support-topics-heading" className="text-lg font-bold text-ink">Common help areas</h2>
+                      <p className="mt-1 text-sm text-muted">Career Edge support will cover these areas when an approved contact channel is available.</p>
                     </div>
                   </div>
                   <ul className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -5354,7 +5644,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                   <p className="text-lg text-slate-400 mt-2">Detailed performance breakdown</p>
                 </div>
 
-                <div className="bg-[#1e293b]/80 backdrop-blur-md rounded-[2rem] p-8 shadow-xl border border-slate-800/80">
+                <div className="rounded-2xl border border-line bg-card p-5 sm:p-7">
                   <div className="text-center space-y-3 mb-8">
                     <div className={`mx-auto inline-flex items-center justify-center w-24 h-24 rounded-full mb-2 border-4 ${interviewResult.passed ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
                       <span className="text-3xl font-black">{interviewResult.total_score || 0}%</span>
@@ -5430,7 +5720,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                       </div>
                     )}
 
-                    <button onClick={() => { setInterviewResult(null); setActiveTab(prevTab as any); }} className="w-full mt-6 py-4 bg-slate-800 hover:bg-slate-700 text-white text-base rounded-xl font-bold transition-colors shadow-lg">
+                    <button onClick={() => { setInterviewResult(null); setActiveTab(prevTab as any); }} className="program-accent-button program-accent-focus-ring mt-6 w-full rounded-xl py-4 text-base font-bold transition-colors">
                       Back
                     </button>
                   </div>
@@ -5445,12 +5735,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                 className="w-full space-y-5"
               >
                 <div>
-                  <h1 className="text-4xl font-bold text-slate-100 tracking-tight">Profile</h1>
-                  <p className="text-lg text-slate-400 mt-2">Manage your account details and profile picture.</p>
+                  <h1 className="text-3xl font-bold text-ink tracking-tight sm:text-4xl">Profile</h1>
+                  <p className="mt-2 text-base text-muted sm:text-lg">Manage your account details and profile picture.</p>
                 </div>
 
                 <div className="space-y-6 rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6">
-                  <div className="flex items-center gap-5 sm:gap-6">
+                  <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-center sm:gap-6">
                     {/* Profile Picture with Camera Overlay */}
                     <div className="relative group">
                       <ProfileAvatar
@@ -5460,19 +5750,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                         initialClassName="text-3xl"
                       />
                       {/* Camera Overlay Trigger */}
-                      <label className="program-accent-button absolute bottom-0 right-0 w-8 h-8 rounded-full flex items-center justify-center cursor-pointer shadow-lg transform translate-x-1 translate-y-1 transition-all hover:scale-110 active:scale-95 z-10 border-2 border-slate-900">
+                      <button
+                        type="button"
+                        aria-label="Upload profile picture"
+                        onClick={() => profilePictureInputRef.current?.click()}
+                        className="program-accent-button program-accent-focus-ring absolute bottom-0 right-0 z-10 flex h-9 w-9 translate-x-1 translate-y-1 cursor-pointer items-center justify-center rounded-full border-2 border-card transition-transform hover:scale-105"
+                      >
                         <Camera className="w-4 h-4" />
-                        <input
-                          type="file"
-                          accept="image/png, image/jpeg"
-                          onChange={handleImageUpload}
-                          className="hidden"
-                        />
-                      </label>
+                      </button>
+                      <input
+                        ref={profilePictureInputRef}
+                        id="profile-picture-upload"
+                        type="file"
+                        accept="image/png, image/jpeg"
+                        onChange={handleImageUpload}
+                        className="hidden"
+                        tabIndex={-1}
+                      />
                     </div>
 
-                    <div className="flex flex-col gap-1">
-                      <h3 className="text-2xl font-bold text-slate-100 tracking-tight">{profile.name}</h3>
+                    <div className="min-w-0 max-w-full flex-1">
+                      <h3 className="break-words text-2xl font-bold text-slate-100 tracking-tight">{profile.name}</h3>
                       <p className="text-sm text-slate-400 font-medium">Click the camera to update photo</p>
                     </div>
                   </div>
@@ -5480,8 +5778,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                   <div className="grid grid-cols-1 gap-x-6 gap-y-4 md:grid-cols-2">
                     {/* Name */}
                     <div className="space-y-2">
-                      <label className="text-sm font-medium text-slate-300">Full Name</label>
+                      <label htmlFor="profile-full-name" className="text-sm font-medium text-slate-300">Full Name</label>
                       <input
+                        id="profile-full-name"
                         type="text"
                         value={profile.name}
                         onChange={(e) => setProfile({ ...profile, name: e.target.value })}
@@ -5491,8 +5790,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
 
                     {/* Email */}
                     <div className="space-y-2">
-                      <label className="text-sm font-medium text-slate-300">Email Address <span className="text-slate-500 ml-1 font-normal">(Read only)</span></label>
+                      <label htmlFor="profile-email" className="text-sm font-medium text-slate-300">Email Address <span className="text-slate-500 ml-1 font-normal">(Read only)</span></label>
                       <input
+                        id="profile-email"
                         type="email"
                         value={profile.email}
                         readOnly
@@ -5502,8 +5802,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-sm font-medium text-slate-300">Password</label>
+                      <label htmlFor="profile-password" className="text-sm font-medium text-slate-300">Password</label>
                       <input
+                        id="profile-password"
                         type="password"
                         value={profile.password || ''}
                         onChange={(e) => setProfile({ ...profile, password: e.target.value })}
@@ -5514,8 +5815,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
 
                     {/* Department */}
                     <div className="space-y-2">
-                      <label className="text-sm font-medium text-slate-300">Department</label>
+                      <label htmlFor="profile-department" className="text-sm font-medium text-slate-300">Department</label>
                       <input
+                        id="profile-department"
                         type="text"
                         value={profile.department}
                         onChange={(e) => setProfile({ ...profile, department: e.target.value })}

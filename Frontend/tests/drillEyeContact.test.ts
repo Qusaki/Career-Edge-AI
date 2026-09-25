@@ -22,7 +22,7 @@ test('Drills reuse one shared eye-contact tracker for the active session', () =>
 
 test('Drill camera renders inline in the activity-card header with responsive stacking', () => {
   assert.match(drillsSource, /flex flex-col items-start gap-4 sm:flex-row sm:justify-between[\s\S]*?<CameraTrackingNotice \{\.\.\.eyeTracker\} \/>/);
-  assert.match(cameraSource, /max-w-40/);
+  assert.match(cameraSource, /max-w-44/);
   assert.doesNotMatch(cameraSource, /\bfixed\b|right-\d|right-\[/);
   assert.match(cameraSource, /Camera unavailable/);
   assert.match(cameraSource, /Activity can continue without eye-contact scoring\./);

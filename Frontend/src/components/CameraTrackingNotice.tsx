@@ -35,6 +35,13 @@ export function CameraTrackingNotice({
             detail: 'Activity can continue without eye-contact scoring.',
             colors: 'border-rose-400/40 bg-rose-50 text-rose-800',
           }
+      : status === 'off'
+        ? {
+            icon: <CameraOff className="h-4 w-4" />,
+            title: 'Camera off',
+            detail: 'Eye-contact tracking is not active.',
+            colors: 'border-line bg-background text-ink',
+          }
         : {
             icon: <LoaderCircle className="h-4 w-4 animate-spin" />,
             title: 'Opening camera',
@@ -44,9 +51,8 @@ export function CameraTrackingNotice({
 
   return (
     <aside
-      role="status"
-      aria-live="polite"
-      className={`w-full max-w-40 shrink-0 overflow-hidden rounded-xl border shadow-sm ${presentation.colors}`}
+      aria-label="Camera tracking status"
+      className={`w-full max-w-44 shrink-0 overflow-hidden rounded-xl border ${presentation.colors}`}
     >
       <video
         ref={videoRef}
@@ -55,11 +61,11 @@ export function CameraTrackingNotice({
         className="aspect-video w-full scale-x-[-1] bg-black object-cover"
       />
       <div className="p-2.5">
-        <div className="flex items-center gap-1.5 text-[11px] font-bold leading-tight">
+        <div className="flex items-center gap-1.5 text-xs font-bold leading-tight" role="status" aria-live="polite" aria-atomic="true">
           {presentation.icon}
           <span>{presentation.title}</span>
         </div>
-        <p className="mt-1 text-[10px] leading-snug opacity-85">{presentation.detail}</p>
+        <p className="mt-1 text-[11px] leading-snug opacity-90" aria-live="off">{presentation.detail}</p>
       </div>
     </aside>
   );

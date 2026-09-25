@@ -5,8 +5,8 @@ export function SoundWaveInterviewer({ active, label }: { active: boolean; label
   const bars = [28, 46, 68, 40, 84, 52, 72, 34, 58, 44, 76, 36];
 
   return (
-    <div className="flex min-h-56 flex-col items-center justify-center gap-5 rounded-lg border border-line bg-background p-6 text-center">
-      <div className="flex h-28 items-center gap-2">
+    <div className="flex min-h-32 flex-col items-center justify-center gap-3 rounded-lg border border-line bg-background p-4 text-center sm:min-h-36">
+      <div className="flex h-16 items-center gap-1.5 sm:h-20 sm:gap-2">
         {bars.map((height, index) => (
           <span
             key={index}

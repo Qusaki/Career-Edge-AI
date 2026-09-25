@@ -122,7 +122,7 @@ type PostTestPageProps = PostTestActivityProps & {
 export function PostTestPage({ postTestAccess, progressChecking, progressFetchError, onGoToDrills, ...activityProps }: PostTestPageProps) {
   if (!isPostTestUnlocked(postTestAccess)) {
     return (
-      <section className="mx-auto max-w-2xl rounded-lg border border-line bg-card p-8 text-center text-ink">
+      <section className="mx-auto max-w-2xl rounded-xl border border-line bg-card p-6 text-center text-ink sm:p-8">
         <Lock className="mx-auto mb-4 h-10 w-10 text-muted" aria-hidden="true" />
         <h1 className="text-2xl font-bold">{postTestAccess ? 'Post-Test Locked' : 'Post-Test Access Unverified'}</h1>
         <p className="mt-3 text-muted">{postTestAccess
@@ -948,8 +948,8 @@ function PostTestActivity({
   if (activeSession) {
     return (
       <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
-        <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
-          <div className="mb-5 flex items-center justify-between gap-3">
+        <div className="mx-auto flex min-h-[calc(100svh-2rem)] w-full max-w-5xl flex-col sm:min-h-[calc(100svh-4rem)]">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <button
               onClick={quitPostTest}
               className="flex items-center gap-2 rounded-lg border border-line bg-card px-4 py-2 text-sm font-semibold text-muted transition-colors hover:bg-active hover:text-ink"
@@ -967,12 +967,12 @@ function PostTestActivity({
             </button>
           </div>
 
-          <section className="flex-1 rounded-lg border border-line bg-card p-5">
+          <section className="flex-1 rounded-xl border border-line bg-card p-4 sm:p-5">
             <div className="mb-4 flex flex-col items-start gap-4 sm:flex-row sm:justify-between">
               <div className="min-w-0">
                 <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Post-Test Session</p>
                 <div className="flex flex-wrap items-center gap-3">
-                  <h1 className="text-3xl font-bold tracking-tight text-ink">Post-Test Interview</h1>
+                  <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">Post-Test Interview</h1>
                   <span className="program-accent-surface rounded-full px-3 py-1 text-sm font-bold">
                     Question {currentQuestionNumber} of 5
                   </span>
@@ -1014,7 +1014,7 @@ function PostTestActivity({
               }
             />
 
-            <div className="mt-4 flex min-h-[38vh] flex-col items-center justify-center rounded-lg border border-line bg-background p-6 text-center">
+            <div className="mt-4 flex min-h-44 max-h-[32rem] flex-col items-center justify-center overflow-y-auto rounded-lg border border-line bg-background p-4 text-center sm:min-h-52 sm:p-6">
               {messages.length === 0 ? (
                 <div className="flex h-full items-center justify-center gap-2 text-muted">
                   <LoaderCircle className="h-5 w-5 animate-spin" /> Preparing audio question...
@@ -1059,20 +1059,21 @@ function PostTestActivity({
               </div>
             )}
 
-            <div className="mt-4 flex justify-center">
+            <div className="mt-4 flex flex-col items-center gap-2">
               <button
                 onClick={isListening ? stopListening : recordAndSendReply}
                 disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking || isSubmittingAnswer || isFinalizing || !answerBoundary.canAcceptAnswer}
-                className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
+                className={`program-accent-focus-ring flex min-h-12 items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
               >
                 {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                 {isListening ? 'Stop Recording' : answerBoundary.canAcceptAnswer ? 'Speak Answer' : 'All Answers Recorded'}
               </button>
+              <p className="text-center text-xs text-muted">{visibleUserMessages.length} of 5 answers recorded. Complete Interview unlocks after all five.</p>
             </div>
             {sessionMode === 'offline' && (
-              <div className="mx-auto mt-4 flex max-w-2xl gap-2">
-                <textarea value={reply} onChange={event => setReply(event.target.value)} disabled={isListening || isSubmittingAnswer || !answerBoundary.canAcceptAnswer} placeholder={answerBoundary.canAcceptAnswer ? 'Or type your answer while offline.' : 'All five answers are recorded.'} className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none disabled:cursor-not-allowed disabled:opacity-60" />
-                <button type="button" onClick={() => void sendReply()} disabled={!reply.trim() || isListening || isSubmittingAnswer || !answerBoundary.canAcceptAnswer} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Submit</button>
+              <div className="mx-auto mt-4 flex max-w-2xl flex-col gap-2 sm:flex-row">
+                <textarea value={reply} onChange={event => setReply(event.target.value)} disabled={isListening || isSubmittingAnswer || !answerBoundary.canAcceptAnswer} placeholder={answerBoundary.canAcceptAnswer ? 'Or type your answer while offline.' : 'All five answers are recorded.'} className="min-h-20 w-full flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)] disabled:cursor-not-allowed disabled:opacity-60" />
+                <button type="button" onClick={() => void sendReply()} disabled={!reply.trim() || isListening || isSubmittingAnswer || !answerBoundary.canAcceptAnswer} className="program-accent-button w-full rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50 sm:w-auto sm:self-end">Submit</button>
               </div>
             )}
           </section>
@@ -1085,7 +1086,7 @@ function PostTestActivity({
     <div className="w-full">
       <header className="mb-6">
         <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Assessment</p>
-        <h1 className="text-4xl font-bold tracking-tight text-ink md:text-5xl">Post-Test</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">Post-Test</h1>
         <p className="mt-1.5 text-lg font-medium text-muted">
           Measure your progress with a final department-specific interview.
         </p>

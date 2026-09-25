@@ -1106,8 +1106,8 @@ export function PreTestPage({
   if (activeExercise && activeSession) {
     return (
       <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
-        <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
-          <div className="mb-5 flex items-center justify-between gap-3">
+        <div className="mx-auto flex min-h-[calc(100svh-2rem)] w-full max-w-5xl flex-col sm:min-h-[calc(100svh-4rem)]">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <button
               onClick={quitSession}
               className="flex items-center gap-2 rounded-lg border border-line bg-card px-4 py-2 text-sm font-semibold text-muted transition-colors hover:bg-active hover:text-ink"
@@ -1127,11 +1127,11 @@ export function PreTestPage({
             </button>
           </div>
 
-          <section className="flex-1 rounded-lg border border-line bg-card p-5">
+          <section className="flex-1 rounded-xl border border-line bg-card p-4 sm:p-5">
             <div className="mb-4 flex flex-col items-start gap-4 sm:flex-row sm:justify-between">
               <div className="min-w-0">
                 <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Pre-Test Session</p>
-                <h1 className="text-3xl font-bold tracking-tight text-ink">{activeExercise.kind === 'active-listening' ? 'Active Listening' : activeExercise.title}</h1>
+                <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">{activeExercise.kind === 'active-listening' ? 'Active Listening' : activeExercise.title}</h1>
                 <p className="mt-1 text-sm text-muted">
                   {activeExercise.kind === 'intro'
                     ? 'Introduce yourself clearly, completely, and concisely.'
@@ -1164,13 +1164,13 @@ export function PreTestPage({
                     {PRETEST_WHO_AM_I_PROMPT}
                   </p>
                 </div>
-                <div className="mt-4 min-h-[35vh] rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
+                <div className="mt-4 min-h-36 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink sm:min-h-44">
                   {sessionMode === 'offline' ? (
                     <textarea
                       value={introTranscript}
                       onChange={event => setIntroTranscript(event.target.value)}
                       placeholder="Speak with the mic or type your self-introduction here."
-                      className="min-h-[30vh] w-full resize-y bg-transparent text-ink outline-none placeholder:text-muted"
+                      className="min-h-28 max-h-64 w-full resize-y bg-transparent text-ink outline-none placeholder:text-muted focus-visible:ring-2 focus-visible:ring-[var(--program-accent)]"
                     />
                   ) : introTranscript || <span className="text-muted">Press the mic and speak your self-introduction.</span>}
                 </div>
@@ -1184,18 +1184,19 @@ export function PreTestPage({
                 )}
                 {sessionMode === 'offline' && (
                   <div className="mt-3 flex justify-end">
-                    <button type="button" onClick={() => void saveTypedIntro()} disabled={!introTranscript.trim()} className="rounded-lg border border-line px-4 py-2 text-sm font-semibold disabled:opacity-50">Save Typed Answer</button>
+                  <button type="button" onClick={() => void saveTypedIntro()} disabled={!introTranscript.trim()} className="program-accent-focus-ring rounded-lg border border-line px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">Save Typed Answer</button>
                   </div>
                 )}
-                <div className="mt-4 flex justify-center">
+                <div className="mt-4 flex flex-col items-center gap-2">
                   <button
                     onClick={isListening ? stopListening : recordIntro}
                     disabled={isPersistingIntro || isFinalizing || isVoiceSpeaking}
-                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
+                    className={`program-accent-focus-ring flex min-h-12 items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : 'Speak Answer'}
                   </button>
+                  {!introTranscript.trim() && <p className="text-center text-xs text-muted">Record or save your introduction to enable completion.</p>}
                 </div>
               </div>
             ) : (
@@ -1216,7 +1217,7 @@ export function PreTestPage({
                               : 'Preparing exercise...'
                   }
                 />
-                <div className="mt-3 h-36 overflow-y-auto rounded-lg border border-line bg-background p-4 sm:h-40 md:h-44">
+                <div className="mt-3 min-h-32 max-h-52 overflow-y-auto rounded-lg border border-line bg-background p-4 sm:min-h-36">
                   {visibleActiveListeningMessages.length === 0 && error ? (
                     <div className="flex h-full items-center justify-center text-center text-sm leading-relaxed text-rose-700">
                       {error}
@@ -1252,19 +1253,20 @@ export function PreTestPage({
                   </div>
                 )}
 
-                <div className="mt-3 flex justify-center">
+                <div className="mt-3 flex flex-col items-center gap-2">
                   <button
                     onClick={isListening ? stopListening : recordAndSendReply}
                     disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking || isSubmittingAnswer}
-                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
+                    className={`program-accent-focus-ring flex min-h-12 items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : 'Speak Answer'}
                   </button>
+                  {!messages.some(message => message.sender === 'user') && <p className="text-center text-xs text-muted">Submit one response to enable completion.</p>}
                 </div>
                 {sessionMode === 'offline' && (
                   <div className="mx-auto mt-4 flex max-w-2xl gap-2">
-                    <textarea value={reply} onChange={event => setReply(event.target.value)} placeholder="Or type your summary while offline." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none" />
+                    <textarea value={reply} onChange={event => setReply(event.target.value)} placeholder="Or type your summary while offline." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)]" />
                     <button type="button" onClick={() => void sendReply()} disabled={!reply.trim()} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Submit</button>
                   </div>
                 )}
@@ -1280,7 +1282,7 @@ export function PreTestPage({
     <div className="w-full">
       <header className="mb-6">
         <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Assessment</p>
-        <h1 className="text-4xl font-bold tracking-tight text-ink md:text-5xl">Pre-Test</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">Pre-Test</h1>
         <p className="mt-1.5 text-lg font-medium text-muted">
           Establish your baseline before beginning interview practice.
         </p>

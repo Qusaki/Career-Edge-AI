@@ -45,7 +45,8 @@ test('finalizing renders the inactive icon and prevents a new microphone start',
   assert.match(preTestSource, /disabled=\{isPersistingIntro \|\| isFinalizing \|\| isVoiceSpeaking\}/);
   assert.match(postTestSource, /isSubmittingAnswer \|\| isFinalizing \|\| !answerBoundary\.canAcceptAnswer/);
   assert.match(drillsSource, /disabled=\{isVoiceSpeaking \|\| isFinalizing \|\| drillTimer\?\.phase === 'expired'\}/);
-  assert.match(enrollmentControls, /disabled=\{isMicTransitioning \|\| isAiSpeaking \|\| isSubmittingOfflineAnswer/);
+  assert.match(dashboardSource, /const isEnrollmentMicDisabled = isMicTransitioning \|\| isAiSpeaking \|\| isSubmittingOfflineAnswer \|\| enrollmentResponseCount >= 5/);
+  assert.match(enrollmentControls, /disabled=\{isEnrollmentMicDisabled\}/);
 });
 
 test('permission loading remains visually inactive until the shared listening state begins', () => {

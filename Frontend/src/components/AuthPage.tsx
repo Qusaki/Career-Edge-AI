@@ -109,7 +109,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
+    <div className="auth-theme-dark min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-x-hidden py-20">
       {/* Background Effects */}
       <div className="absolute inset-0 z-0 pointer-events-none">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-sky-600/10 blur-[120px] rounded-full" />
@@ -119,7 +119,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
       {/* Back Button */}
       <button
         onClick={onBack}
-        className="absolute top-8 left-8 flex items-center gap-2 text-slate-400 hover:text-white transition-colors z-10"
+        className="absolute top-5 left-4 sm:top-8 sm:left-8 flex items-center gap-2 text-slate-400 hover:text-white transition-colors z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400"
       >
         <ArrowLeft className="w-5 h-5" />
         <span className="font-medium">Back to Home</span>
@@ -133,7 +133,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
       >
         <div className="p-8">
           <div className="text-center mb-8">
-            <h2 className="text-3xl font-bold text-ink mb-2">
+            <h2 className="text-3xl font-bold text-slate-100 mb-2">
               {mode === 'signin' ? 'Welcome back' : 'Create an account'}
             </h2>
             <p className="text-slate-400 text-sm">
@@ -144,7 +144,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
           </div>
 
           {error && (
-            <div className="mb-6 p-4 bg-red-500/10 border border-red-500/50 rounded-xl flex items-center gap-3">
+            <div role="alert" className="mb-6 p-4 bg-red-500/10 border border-red-500/50 rounded-xl flex items-center gap-3">
               <p className="text-sm font-medium text-red-500">{error}</p>
             </div>
           )}
@@ -154,12 +154,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
                   {/* Name Inputs */}
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium text-slate-300">First Name</label>
+                      <label htmlFor="signup-first-name" className="text-sm font-medium text-slate-300">First Name</label>
                       <div className="relative">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                           <User className="h-5 w-5 text-slate-500" />
                         </div>
                         <input
+                          id="signup-first-name"
                           type="text"
                           value={firstName}
                           onChange={(e) => setFirstName(e.target.value)}
@@ -171,12 +172,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-sm font-medium text-slate-300">Middle Name</label>
+                      <label htmlFor="signup-middle-name" className="text-sm font-medium text-slate-300">Middle Name</label>
                       <div className="relative">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                           <User className="h-5 w-5 text-slate-500" />
                         </div>
                         <input
+                          id="signup-middle-name"
                           type="text"
                           value={middleName}
                           onChange={(e) => setMiddleName(e.target.value)}
@@ -188,12 +190,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-sm font-medium text-slate-300">Last Name</label>
+                      <label htmlFor="signup-last-name" className="text-sm font-medium text-slate-300">Last Name</label>
                       <div className="relative">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                           <User className="h-5 w-5 text-slate-500" />
                         </div>
                         <input
+                          id="signup-last-name"
                           type="text"
                           value={lastName}
                           onChange={(e) => setLastName(e.target.value)}
@@ -209,12 +212,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
 
             {/* Email Input */}
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300">Email Address</label>
+              <label htmlFor="auth-email" className="text-sm font-medium text-slate-300">Email Address</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Mail className="h-5 w-5 text-slate-500" />
                 </div>
                 <input
+                  id="auth-email"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -228,11 +232,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
             {/* Password Input */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-slate-300">Password</label>
+                <label htmlFor="auth-password" className="text-sm font-medium text-slate-300">Password</label>
                 {mode === 'signin' && (
-                  <a href="#" className="text-xs font-medium text-sky-400 hover:text-sky-300 transition-colors">
-                    Forgot password?
-                  </a>
+                  <span className="text-xs font-medium text-slate-500" title="Password recovery is not currently available">
+                    Recovery unavailable
+                  </span>
                 )}
               </div>
               <div className="relative">
@@ -240,6 +244,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
                   <Lock className="h-5 w-5 text-slate-500" />
                 </div>
                 <input
+                  id="auth-password"
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -250,6 +255,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-pressed={showPassword}
                   className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-500 hover:text-slate-300 transition-colors"
                 >
                   {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
@@ -261,14 +268,17 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
                 <div className="space-y-5 mt-5">
                   {/* Department Selection (Hover Effect) */}
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-300">Department</label>
-                    <div className="grid grid-cols-3 gap-2">
+                    <fieldset>
+                      <legend className="text-sm font-medium text-slate-300">Department</legend>
+                      <div className="mt-2 grid grid-cols-3 gap-2">
                       {DEPARTMENTS.map((dept) => (
-                        <div
+                        <button
+                          type="button"
                           key={dept}
                           onClick={() => setSelectedDept(dept)}
+                          aria-pressed={selectedDept === dept}
                           className={`
-                            relative group cursor-pointer rounded-xl border p-3 text-center transition-all duration-300
+                            relative group cursor-pointer rounded-xl border p-3 text-center transition-all duration-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400
                             ${selectedDept === dept 
                               ? 'border-sky-500 bg-sky-500/10 text-sky-400' 
                               : 'border-slate-700 bg-slate-800/50 text-slate-400 hover:border-slate-500 hover:text-slate-200'}
@@ -285,9 +295,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
                               transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
                             />
                           )}
-                        </div>
+                        </button>
                       ))}
-                    </div>
+                      </div>
+                    </fieldset>
                   </div>
                 </div>
               )}

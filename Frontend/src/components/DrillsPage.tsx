@@ -1065,8 +1065,8 @@ export function DrillsPage({
           : 'Ready';
     return (
       <div className="min-h-screen w-full bg-page p-4 text-ink sm:p-8">
-        <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col">
-          <div className="mb-5 flex items-center justify-between gap-3">
+        <div className="mx-auto flex min-h-[calc(100svh-2rem)] w-full max-w-5xl flex-col sm:min-h-[calc(100svh-4rem)]">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <button
               onClick={quitDrill}
               className="flex items-center gap-2 rounded-lg border border-line bg-card px-4 py-2 text-sm font-semibold text-muted transition-colors hover:bg-active hover:text-ink"
@@ -1074,24 +1074,16 @@ export function DrillsPage({
               <ArrowLeft className="h-4 w-4" />
               Quit
             </button>
-            <button
-              onClick={completeDrill}
-              disabled={completing !== null || (activeSession.drill_type === 'negotiation' ? !negotiationMessages.some(message => message.sender === 'user') : !spokenResponse.trim())}
-              className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {completing === activeSession.id ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
-              {completing === activeSession.id ? 'Completing…' : 'Mark Complete'}
-            </button>
           </div>
 
-          <section className="flex-1 rounded-lg border border-line bg-card p-5">
+          <section className="flex-1 rounded-xl border border-line bg-card p-4 sm:p-5">
             <div className="mb-4 flex flex-col items-start gap-4 sm:flex-row sm:justify-between">
               <div className="min-w-0">
                 <div className="program-accent-surface mb-3 flex h-11 w-11 items-center justify-center rounded-lg">
                   <Sparkles className="h-6 w-6" />
                 </div>
                 <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Drill Session</p>
-                <h1 className="text-3xl font-bold tracking-tight text-ink">Current Drill</h1>
+                <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">Current Drill</h1>
                 <p className="text-program-accent mt-1 text-sm font-bold uppercase tracking-wider">
                   {activeSession.drill_level} · {activeSession.drill_type.replace(/_/g, ' ')}
                 </p>
@@ -1104,11 +1096,6 @@ export function DrillsPage({
                 {error || notice}
               </div>
             )}
-
-            <SoundWaveInterviewer
-              active={isVoiceSpeaking || negotiationLoading}
-              label={isVoiceSpeaking ? 'Speaking...' : negotiationLoading ? 'Preparing reply...' : 'Audio prompt ready'}
-            />
 
             {drillTimer && (
               <div
@@ -1129,42 +1116,25 @@ export function DrillsPage({
               </div>
             )}
 
-            <div className="mb-4 overflow-hidden rounded-lg border border-line bg-background" aria-label="Drill instructions">
-              <div className="border-b border-line px-4 py-3">
-                <p className="text-xs font-bold uppercase tracking-[0.16em] text-muted">Instructions</p>
-              </div>
-              <div className="divide-y divide-line">
-                <div className="px-4 py-3">
-                <p className="text-program-accent text-xs font-bold uppercase tracking-wider">Task</p>
+            <div className="mb-4 rounded-lg border border-line bg-background p-4">
+              <p className="text-program-accent text-xs font-bold uppercase tracking-wider">Prompt</p>
+              <pre className="mt-2 whitespace-pre-wrap break-words font-sans text-base leading-relaxed text-ink">
+                {activePrompt || 'Prompt loaded.'}
+              </pre>
+              <div className="mt-3 border-t border-line pt-3">
+                <p className="text-xs font-bold uppercase tracking-wider text-muted">Task</p>
                 <p className="mt-1 text-sm font-semibold leading-relaxed text-ink">{activeInstruction.task}</p>
-                </div>
-                <div className="px-4 py-3">
-                <p className="text-program-accent text-xs font-bold uppercase tracking-wider">How to answer</p>
-                <p className="mt-1 text-sm leading-relaxed text-muted">{activeInstruction.howToAnswer}</p>
-                </div>
-                <div className="px-4 py-3">
-                  <p className="text-program-accent text-xs font-bold uppercase tracking-wider">Answer format</p>
-                  <p className="mt-1 text-sm leading-relaxed text-muted">
-                    {activeInstruction.example || 'Give one clear, complete spoken response that follows the prompt details.'}
-                  </p>
-                </div>
-                <div className="bg-card/50 px-4 py-3">
-                  <p className="text-xs font-bold uppercase tracking-wider text-muted">Automatic scoring</p>
-                  <p className="mt-1 text-sm leading-relaxed text-muted">
-                    Practice goal: follow the task directions as closely as possible. {activeScoringNote}
-                  </p>
-                </div>
               </div>
             </div>
 
+            <SoundWaveInterviewer
+              active={isVoiceSpeaking || negotiationLoading}
+              label={isVoiceSpeaking ? 'Speaking...' : negotiationLoading ? 'Preparing reply...' : 'Audio prompt ready'}
+            />
+
             {activeSession.drill_type === 'negotiation' ? (
               <>
-                <div className="mb-4 mt-4 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
-                  <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-wider">Prompt details</p>
-                  <p className="whitespace-pre-wrap">{activePrompt || 'Prompt loaded.'}</p>
-                </div>
-
-                <div className="h-[44vh] overflow-y-auto rounded-lg border border-line bg-background p-4">
+                <div className="h-64 max-h-[45svh] overflow-y-auto rounded-lg border border-line bg-background p-4 sm:h-72">
                   {negotiationMessages.map((message, index) => (
                     <div key={index} className={`mb-3 flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                       <div className={`max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed ${message.sender === 'user' ? 'program-accent-fill' : 'border border-line bg-card text-ink'}`}>
@@ -1189,32 +1159,27 @@ export function DrillsPage({
                   </div>
                 )}
 
-                <div className="mt-4 flex justify-center">
+                <div className="mt-4 flex flex-col items-center gap-2">
                   <button
                     onClick={isListening ? stopListening : recordNegotiationReply}
                     disabled={negotiationLoading || negotiationGameOver || isVoiceSpeaking || isFinalizing}
-                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
+                    className={`program-accent-focus-ring flex min-h-12 items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : negotiationGameOver ? 'Negotiation Ended' : 'Speak Reply'}
                   </button>
+                  {!negotiationMessages.some(message => message.sender === 'user') && <p className="text-center text-xs text-muted">Submit a reply to enable Mark Complete.</p>}
                 </div>
                 {sessionMode === 'offline' && !negotiationGameOver && (
-                  <div className="mx-auto mt-4 flex max-w-2xl gap-2">
-                    <textarea value={negotiationReply} onChange={event => setNegotiationReply(event.target.value)} placeholder="Or type your negotiation reply while offline." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none" />
+                  <div className="mx-auto mt-4 flex max-w-2xl flex-col gap-2 sm:flex-row">
+                    <textarea value={negotiationReply} onChange={event => setNegotiationReply(event.target.value)} placeholder="Or type your negotiation reply while offline." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)]" />
                     <button type="button" onClick={() => void sendNegotiationReply()} disabled={!negotiationReply.trim() || negotiationLoading} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Submit</button>
                   </div>
                 )}
               </>
             ) : (
               <>
-                <div className="rounded-lg border border-line bg-background p-4">
-                  <p className="text-program-accent text-xs font-bold uppercase tracking-wider">Prompt</p>
-                  <pre className="mt-2 whitespace-pre-wrap break-words font-sans text-base leading-relaxed text-ink">
-                    {activePrompt || 'Prompt loaded.'}
-                  </pre>
-                </div>
-                <div className="mt-4 min-h-[28vh] rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink">
+                <div className="min-h-36 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink sm:min-h-44">
                   <p className="text-program-accent mb-2 font-bold">Your spoken response</p>
                   {spokenResponse || <span className="text-muted">Press the mic and answer the drill out loud.</span>}
                 </div>
@@ -1226,24 +1191,65 @@ export function DrillsPage({
                     {liveTranscript || <span className="text-muted">Start speaking when you are ready.</span>}
                   </div>
                 )}
-                <div className="mt-4 flex justify-center">
+                <div className="mt-4 flex flex-col items-center gap-2">
                   <button
                     onClick={isListening ? stopDrillResponse : recordDrillResponse}
                     disabled={isVoiceSpeaking || isFinalizing || drillTimer?.phase === 'expired'}
-                    className={`flex items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
+                    className={`program-accent-focus-ring flex min-h-12 items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                     {isListening ? 'Stop Recording' : drillTimer?.phase === 'expired' ? 'Time Expired' : 'Speak Answer'}
                   </button>
+                  {!spokenResponse.trim() && <p className="text-center text-xs text-muted">Record or save a response to enable Mark Complete.</p>}
                 </div>
                 {sessionMode === 'offline' && (
-                  <div className="mx-auto mt-4 flex max-w-2xl gap-2">
-                    <textarea value={spokenResponse} onChange={event => setSpokenResponse(event.target.value)} placeholder="Or type your Drill response while offline." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none" />
+                  <div className="mx-auto mt-4 flex max-w-2xl flex-col gap-2 sm:flex-row">
+                    <textarea value={spokenResponse} onChange={event => setSpokenResponse(event.target.value)} placeholder="Or type your Drill response while offline." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)]" />
                     <button type="button" onClick={() => void saveTypedDrillResponse()} disabled={!spokenResponse.trim()} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Save</button>
                   </div>
                 )}
               </>
             )}
+
+            <div className="mt-5 flex flex-col items-center gap-2 border-t border-line pt-5">
+              <button
+                onClick={completeDrill}
+                disabled={completing !== null || (activeSession.drill_type === 'negotiation' ? !negotiationMessages.some(message => message.sender === 'user') : !spokenResponse.trim())}
+                className="program-accent-button program-accent-focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+              >
+                {completing === activeSession.id ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
+                {completing === activeSession.id ? 'Completing…' : 'Mark Complete'}
+              </button>
+              <p className="text-center text-xs text-muted">
+                {activeSession.drill_type === 'negotiation'
+                  ? 'Mark Complete becomes available after you submit a reply.'
+                  : 'Mark Complete becomes available after you record or save a response.'}
+              </p>
+            </div>
+
+            <div className="mt-4 overflow-hidden rounded-lg border border-line bg-background" aria-label="Drill supporting instructions">
+              <div className="border-b border-line px-4 py-3">
+                <p className="text-xs font-bold uppercase tracking-[0.16em] text-muted">Supporting guidance</p>
+              </div>
+              <div className="divide-y divide-line">
+                <div className="px-4 py-2.5">
+                  <p className="text-program-accent text-xs font-bold uppercase tracking-wider">How to answer</p>
+                  <p className="mt-1 text-sm leading-relaxed text-muted">{activeInstruction.howToAnswer}</p>
+                </div>
+                <div className="px-4 py-2.5">
+                  <p className="text-program-accent text-xs font-bold uppercase tracking-wider">Answer format</p>
+                  <p className="mt-1 text-sm leading-relaxed text-muted">
+                    {activeInstruction.example || 'Give one clear, complete spoken response that follows the prompt details.'}
+                  </p>
+                </div>
+                <div className="bg-card/50 px-4 py-2.5">
+                  <p className="text-xs font-bold uppercase tracking-wider text-muted">Automatic scoring</p>
+                  <p className="mt-1 text-sm leading-relaxed text-muted">
+                    Practice goal: follow the task directions as closely as possible. {activeScoringNote}
+                  </p>
+                </div>
+              </div>
+            </div>
           </section>
         </div>
       </div>
@@ -1254,7 +1260,7 @@ export function DrillsPage({
     <div className="w-full">
       <header className="mb-6">
         <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Practice</p>
-        <h1 className="text-4xl font-bold tracking-tight text-ink md:text-5xl">Drills</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">Drills</h1>
         <p className="mt-1.5 text-lg font-medium text-muted">
           Sharpen quick speaking, framing, and response skills between assessments.
         </p>

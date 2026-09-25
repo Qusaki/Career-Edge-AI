@@ -12,6 +12,7 @@ export interface ActivityComparison {
 }
 
 const toFiniteNumber = (value: unknown): number | null => {
+  if (value == null || value === '') return null;
   const number = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(number) ? number : null;
 };
@@ -27,6 +28,11 @@ export const isCompletedActivity = (item: ScoreRecord): boolean => {
   if (status === 'completed') return true;
   return item.end_time != null || toFiniteNumber(item.total_score) != null || toFiniteNumber(item.score) != null;
 };
+
+/** Completed interview results remain displayable when the legitimate score is zero. */
+export const hasCompletedTotalScore = (item: ScoreRecord): boolean => (
+  isCompletedActivity(item) && toFiniteNumber(item.total_score) != null
+);
 
 export const getNormalizedActivityScore = (item: ScoreRecord): number | null => {
   const source = String(item._source || '');
