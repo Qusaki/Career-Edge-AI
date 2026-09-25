@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, useMotionValue, useSpring, useTransform } from 'motion/react';
-import { Mic, FileText, CheckCircle, BarChart, Play, ArrowRight, Github, Facebook, BrainCircuit, Target, GraduationCap, Menu, X, MessageSquare, Video, Plus, Send, MousePointer2, Paperclip, LogOut, MapPin, Phone, Mail, Globe } from 'lucide-react';
+import { Mic, FileText, CheckCircle, BarChart, Play, ArrowRight, Github, Facebook, BrainCircuit, Target, GraduationCap, MessageSquare, Video, Plus, Send, MousePointer2, Paperclip, LogOut, MapPin, Phone, Mail, Globe } from 'lucide-react';
 import { AuthPage } from './components/AuthPage';
 import { Dashboard } from './components/Dashboard';
 import { forgetVerifiedAccount } from './offline/accountBinding';
@@ -377,7 +377,6 @@ const FeatureCard = ({ icon, title, description }: { icon: React.ReactNode, titl
 );
 
 export default function App() {
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [currentView, setCurrentView] = useState<'landing' | 'auth' | 'dashboard'>('landing');
   const [isNewSignupSession, setIsNewSignupSession] = useState(false);
 
@@ -392,7 +391,6 @@ export default function App() {
   const openAuth = (mode: 'signin' | 'signup') => {
     setAuthMode(mode);
     setCurrentView('auth');
-    setIsMenuOpen(false); // close mobile menu if open
   };
 
   if (currentView === 'auth') {
@@ -432,44 +430,18 @@ export default function App() {
 
       {/* Navbar */}
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-neutral-800/50 bg-neutral-950/80 backdrop-blur-md">
-        <div className="container mx-auto px-6 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-xl font-bold tracking-tight text-brand-gold">Career Edge</span>
+        <div className="container mx-auto flex h-20 items-center justify-between gap-2 px-4 sm:px-6">
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="whitespace-nowrap text-lg font-bold tracking-tight text-brand-gold sm:text-xl">Career Edge</span>
           </div>
 
-          {/* Desktop Nav */}
-          <div className="hidden md:flex items-center gap-8">
-            <a href="#features" className="text-sm font-medium text-neutral-300 hover:text-white transition-colors">Features</a>
-            <span className="text-sm font-medium text-neutral-500" title="Coming soon">How it Works</span>
-            <a href="#campus-map" className="text-sm font-medium text-neutral-300 hover:text-white transition-colors">Contact</a>
-            <span className="text-sm font-medium text-neutral-500" title="Coming soon">About</span>
-          </div>
-
-          <div className="hidden md:flex items-center gap-4">
-            <button onClick={() => openAuth('signin')} className="text-sm font-medium text-neutral-300 hover:text-white transition-colors">Sign In</button>
-            <button onClick={() => openAuth('signup')} className="rounded-lg bg-brand-gold px-5 py-2.5 text-sm font-semibold text-brand-black transition-colors hover:bg-brand-gold-light active:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold-light">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+            <button onClick={() => openAuth('signin')} className="min-h-11 whitespace-nowrap text-xs font-medium text-neutral-300 transition-colors hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold-light sm:text-sm">Sign In</button>
+            <button onClick={() => openAuth('signup')} className="min-h-11 whitespace-nowrap rounded-lg bg-brand-gold px-3 py-2 text-xs font-semibold text-brand-black transition-colors hover:bg-brand-gold-light active:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold-light sm:px-5 sm:py-2.5 sm:text-sm">
               Get Started
             </button>
           </div>
-
-          {/* Mobile Menu Toggle */}
-          <button type="button" className="md:hidden p-2 text-neutral-300" onClick={() => setIsMenuOpen(!isMenuOpen)} aria-label={isMenuOpen ? 'Close main menu' : 'Open main menu'} aria-expanded={isMenuOpen} aria-controls="landing-mobile-menu">
-            {isMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-          </button>
         </div>
-
-        {/* Mobile Nav */}
-        {isMenuOpen && (
-          <div id="landing-mobile-menu" className="md:hidden absolute top-20 left-0 right-0 bg-neutral-900 border-b border-neutral-800 p-6 flex flex-col gap-4 shadow-2xl">
-            <a href="#features" onClick={() => setIsMenuOpen(false)} className="text-neutral-300 font-medium py-2">Features</a>
-            <span className="py-2 font-medium text-neutral-500">How it Works — coming soon</span>
-            <a href="#campus-map" onClick={() => setIsMenuOpen(false)} className="text-neutral-300 font-medium py-2">Contact</a>
-            <span className="py-2 font-medium text-neutral-500">About — coming soon</span>
-            <hr className="border-neutral-800 my-2" />
-            <button onClick={() => openAuth('signin')} className="w-full py-3 rounded-lg bg-neutral-800 text-white font-medium mb-2">Sign In</button>
-            <button onClick={() => openAuth('signup')} className="w-full rounded-lg bg-brand-gold py-3 font-semibold text-brand-black transition-colors hover:bg-brand-gold-light active:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold-light">Get Started</button>
-          </div>
-        )}
       </nav>
 
       <main className="relative z-10 pt-24 pb-16">
