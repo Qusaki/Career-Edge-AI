@@ -26,7 +26,7 @@ test('a final online Who Am I response is persisted before frontend checkpoint s
   assert.ok(persistenceRequest >= 0);
   assert.ok(canonicalStateUpdate > persistenceRequest);
   assert.ok(checkpointUpdate > canonicalStateUpdate);
-  assert.match(preTestSource, /normalizeApiError\(body, 'Unable to save your Who Am I\? response\.'/);
+  assert.match(preTestSource, /normalizePreTestApiError\(body, 'Unable to save your Who Am I\? response\.'/);
 });
 
 test('online resume hydrates the canonical transcript into completion-ready state', () => {

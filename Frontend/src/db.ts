@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable, type Table } from 'dexie';
 import { selectOwnedResumableSessions, selectOwnedSyncQueue } from './offline/selectors';
+import { hasUnsyncedOfflineWork } from './offline/updateRefreshSafety';
 
 export type OfflineActivityType =
   | 'upcoming'
@@ -255,6 +256,19 @@ export const accountStorage = {
       .equals([requireVerifiedUserId(userId), type])
       .toArray();
     return sessions.map(normalizeOfflineSession);
+  },
+
+  async hasUnsyncedOfflineWork(userId: number) {
+    const sessions = await db.accountOfflineSessions
+      .where('userId')
+      .equals(requireVerifiedUserId(userId))
+      .toArray();
+    return hasUnsyncedOfflineWork(sessions);
+  },
+
+  async hasAnyUnsyncedOfflineWork() {
+    const sessions = await db.accountOfflineSessions.where('mode').equals('offline').toArray();
+    return hasUnsyncedOfflineWork(sessions);
   },
 
   async getPendingOfflineSessions(userId: number) {

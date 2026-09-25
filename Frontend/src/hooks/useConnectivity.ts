@@ -19,10 +19,62 @@ export const deriveConnectionState = (
   return backendReachable ? 'online' : 'degraded';
 };
 
-const HEALTH_CHECK_TIMEOUT_MS = 5_000;
+// /health only confirms that the API process answered, not database or AI availability.
+export const HEALTH_ATTEMPT_TIMEOUTS_MS = [5_000, 20_000, 45_000] as const;
+export const HEALTH_RETRY_DELAYS_MS = [1_500, 3_500] as const;
 const HEALTH_CHECK_THROTTLE_MS = 15_000;
 const HEALTH_CHECK_INTERVAL_MS = 60_000;
+const HEALTH_RECOVERY_INTERVAL_MS = 30_000;
 const ONLINE_EVENT_DEBOUNCE_MS = 400;
+
+type ReachabilityCheck = {
+  signal: AbortSignal;
+  probe: (timeoutMs: number, signal: AbortSignal) => Promise<boolean>;
+  wait: (delayMs: number, signal: AbortSignal) => Promise<void>;
+  onFirstFailure?: () => void;
+};
+
+export async function confirmBackendReachability({
+  signal,
+  probe,
+  wait,
+  onFirstFailure,
+}: ReachabilityCheck): Promise<boolean | null> {
+  for (let attempt = 0; attempt < HEALTH_ATTEMPT_TIMEOUTS_MS.length; attempt += 1) {
+    if (signal.aborted) return null;
+    let reachable = false;
+    try {
+      reachable = await probe(HEALTH_ATTEMPT_TIMEOUTS_MS[attempt], signal);
+    } catch {
+      // A failed health probe is provisional until the bounded checks finish.
+    }
+    if (signal.aborted) return null;
+    if (reachable) return true;
+    if (attempt === 0) onFirstFailure?.();
+    if (attempt < HEALTH_RETRY_DELAYS_MS.length) {
+      await wait(HEALTH_RETRY_DELAYS_MS[attempt], signal);
+    }
+  }
+  return signal.aborted ? null : false;
+}
+
+const waitForRetry = (delayMs: number, signal: AbortSignal): Promise<void> => new Promise(resolve => {
+  if (signal.aborted) {
+    resolve();
+    return;
+  }
+  const onAbort = () => {
+    window.clearTimeout(timeout);
+    signal.removeEventListener('abort', onAbort);
+    resolve();
+  };
+  const timeout = window.setTimeout(() => {
+    signal.removeEventListener('abort', onAbort);
+    resolve();
+  }, delayMs);
+  signal.addEventListener('abort', onAbort, { once: true });
+  if (signal.aborted) onAbort();
+});
 
 export function useConnectivity(apiUrl: string) {
   const initialNetworkAvailable = typeof navigator === 'undefined' ? true : navigator.onLine;
@@ -38,42 +90,69 @@ export function useConnectivity(apiUrl: string) {
 
   const checkBackend = useCallback((force = false): Promise<boolean> => {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      abortRef.current?.abort();
       setNetworkAvailable(false);
       backendReachableRef.current = false;
       setBackendReachable(false);
       return Promise.resolve(false);
     }
 
+    if (!force && activeCheckRef.current) return activeCheckRef.current;
     const now = Date.now();
     if (!force && now - lastCheckRef.current < HEALTH_CHECK_THROTTLE_MS) {
       return Promise.resolve(backendReachableRef.current === true);
     }
-    if (activeCheckRef.current) return activeCheckRef.current;
-
+    if (force) abortRef.current?.abort();
     lastCheckRef.current = now;
     const controller = new AbortController();
     abortRef.current = controller;
-    const timeout = window.setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
+    if (backendReachableRef.current === false) {
+      backendReachableRef.current = null;
+      setBackendReachable(null);
+    }
     const healthUrl = new URL('/health', apiUrl.endsWith('/') ? apiUrl : `${apiUrl}/`).toString();
 
-    const check = fetch(healthUrl, {
-      method: 'GET',
-      cache: 'no-store',
+    const check = confirmBackendReachability({
       signal: controller.signal,
+      probe: async (timeoutMs, signal) => {
+        const attemptController = new AbortController();
+        const onAbort = () => attemptController.abort();
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) onAbort();
+        const timeout = window.setTimeout(() => attemptController.abort(), timeoutMs);
+        try {
+          const response = await fetch(healthUrl, {
+            method: 'GET',
+            cache: 'no-store',
+            signal: attemptController.signal,
+          });
+          return !attemptController.signal.aborted && response.ok;
+        } catch {
+          return false;
+        } finally {
+          window.clearTimeout(timeout);
+          signal.removeEventListener('abort', onAbort);
+        }
+      },
+      wait: waitForRetry,
+      onFirstFailure: () => {
+        if (abortRef.current !== controller || !navigator.onLine) return;
+        backendReachableRef.current = null;
+        setBackendReachable(null);
+      },
     })
-      .then(response => response.ok)
-      .catch(() => false)
       .then(reachable => {
-        if (abortRef.current === controller) {
-          setNetworkAvailable(typeof navigator === 'undefined' ? true : navigator.onLine);
+        if (abortRef.current === controller && reachable !== null) {
+          const browserOnline = navigator.onLine;
+          setNetworkAvailable(browserOnline);
+          if (!browserOnline) return false;
           backendReachableRef.current = reachable;
           setBackendReachable(reachable);
           setLastCheckedAt(Date.now());
         }
-        return reachable;
+        return reachable === true;
       })
       .finally(() => {
-        window.clearTimeout(timeout);
         if (abortRef.current === controller) abortRef.current = null;
         if (activeCheckRef.current === check) activeCheckRef.current = null;
       });
@@ -93,6 +172,7 @@ export function useConnectivity(apiUrl: string) {
       setBackendReachable(false);
     };
     const handleOnline = () => {
+      abortRef.current?.abort();
       setNetworkAvailable(true);
       backendReachableRef.current = null;
       setBackendReachable(null);
@@ -109,8 +189,11 @@ export function useConnectivity(apiUrl: string) {
     if (navigator.onLine) void checkBackend(true);
 
     const interval = window.setInterval(() => {
-      if (navigator.onLine) void checkBackend(false);
-    }, HEALTH_CHECK_INTERVAL_MS);
+      if (
+        navigator.onLine
+        && (backendReachableRef.current === false || Date.now() - lastCheckRef.current >= HEALTH_CHECK_INTERVAL_MS)
+      ) void checkBackend(false);
+    }, HEALTH_RECOVERY_INTERVAL_MS);
 
     return () => {
       if (onlineDebounce) window.clearTimeout(onlineDebounce);

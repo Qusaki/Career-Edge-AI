@@ -1,5 +1,6 @@
 import boto3
 import os
+import hashlib
 # pyrefly: ignore [missing-import]
 from fastapi import UploadFile
 from botocore.exceptions import NoCredentialsError, ClientError
@@ -58,6 +59,21 @@ def upload_file_to_s3(file: UploadFile, object_name: str = None) -> str:
         raise ValueError(f"AWS Client error: {e}")
 
 AWS_S3_ABSTRACTS_BUCKET_NAME = os.getenv("AWS_S3_ABSTRACTS_BUCKET_NAME")
+
+def store_thesis_abstract_text(session_id: int, abstract_text: str) -> str:
+    """Store the canonical extracted context at one retry-safe key per session."""
+    if not all([AWS_REGION, AWS_S3_ABSTRACTS_BUCKET_NAME]):
+        raise ValueError("AWS abstracts bucket configuration is missing.")
+    content = abstract_text.encode("utf-8")
+    digest = hashlib.sha256(content).hexdigest()[:16]
+    object_name = f"abstracts/session_{session_id}_{digest}.txt"
+    s3_client.put_object(
+        Bucket=AWS_S3_ABSTRACTS_BUCKET_NAME,
+        Key=object_name,
+        Body=content,
+        ContentType="text/plain; charset=utf-8",
+    )
+    return object_name
 
 def upload_abstract_to_s3(file: UploadFile, session_id: int) -> str:
     """

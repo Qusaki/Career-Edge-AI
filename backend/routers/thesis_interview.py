@@ -2,7 +2,7 @@ import json
 import datetime
 import logging
 # pyrefly: ignore [missing-import]
-from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, HTTPException, Depends, File, Form, UploadFile, WebSocket, WebSocketDisconnect, status
 # pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
 
@@ -10,7 +10,7 @@ from database import get_db
 from core.ai import get_ai_unavailable_message
 from core.deps import get_current_user, get_current_user_ws
 from core.scoring import bounded_integer_score, bounded_score
-from core.aws import get_abstract_text_from_s3, delete_abstract_from_s3
+from core.aws import get_abstract_text_from_s3, delete_abstract_from_s3, store_thesis_abstract_text
 from models.user import User
 from models.thesis_interview import ThesisInterviewSession, ThesisInterviewMessage
 from schemas.thesis_interview import ThesisInterviewSessionResponse, ThesisInterviewSessionWithMessagesResponse, ThesisCompleteInterviewRequest
@@ -25,6 +25,8 @@ THESIS_FINAL_TURN_INSTRUCTION = (
     "question. Give one brief constructive closing statement and tell the student "
     "they can complete the defense."
 )
+THESIS_ABSTRACT_MAX_BYTES = 10 * 1024 * 1024
+THESIS_ABSTRACT_CONTEXT_MAX_CHARS = 5000
 
 
 def get_thesis_evaluation_score_keys(department: str) -> list[str]:
@@ -133,6 +135,72 @@ def get_user_interviews(db: Session = Depends(get_db), current_user: User = Depe
     return sessions
 
 
+@router.post("/{session_id}/upload-abstract")
+async def upload_abstract(
+    session_id: int,
+    file: UploadFile | None = File(None),
+    abstract_text: str | None = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Replace the active session's canonical abstract context for subsequent turns."""
+    if not current_user.department or current_user.department.upper() not in {"CCIT", "CTE", "CBAPA"}:
+        raise HTTPException(status_code=403, detail="Thesis Defense is not available for this department.")
+    if session_id <= 0 or session_id > 9007199254740991:
+        raise HTTPException(status_code=404, detail="Thesis session not found.")
+    session = db.query(ThesisInterviewSession).filter(
+        ThesisInterviewSession.id == session_id,
+        ThesisInterviewSession.user_id == current_user.id,
+    ).first()
+    if not session or session.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Thesis session not found.")
+    if session.status != "active":
+        raise HTTPException(status_code=409, detail="Only an active thesis session can update its abstract.")
+    if (datetime.datetime.utcnow() - session.start_time).total_seconds() > 3600:
+        session.status = "expired"
+        db.commit()
+        raise HTTPException(status_code=409, detail="This thesis session has expired.")
+
+    filename = file.filename.lower() if file and file.filename else ""
+    suffix = ".pdf" if filename.endswith(".pdf") else ".txt" if filename.endswith(".txt") else None
+    if suffix is None:
+        raise HTTPException(status_code=400, detail="Choose a PDF or TXT thesis abstract.")
+    content = await file.read(THESIS_ABSTRACT_MAX_BYTES + 1)
+    if len(content) > THESIS_ABSTRACT_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="The thesis abstract must be 10 MB or smaller.")
+    if not content:
+        raise HTTPException(status_code=400, detail="The selected abstract is empty.")
+    if suffix == ".pdf" and not content.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="The selected PDF could not be read.")
+    if suffix == ".txt":
+        try:
+            file_text = content.decode("utf-8").strip()[:THESIS_ABSTRACT_CONTEXT_MAX_CHARS]
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="The selected TXT file must contain readable UTF-8 text.") from None
+        if file_text != (abstract_text or "").strip():
+            raise HTTPException(status_code=400, detail="The selected TXT file and extracted abstract do not match.")
+
+    canonical_text = (abstract_text or "").strip()
+    if len(canonical_text) > THESIS_ABSTRACT_CONTEXT_MAX_CHARS or not any(char.isalnum() for char in canonical_text):
+        raise HTTPException(status_code=400, detail="The abstract must contain readable text up to 5000 characters.")
+
+    previous_key = session.abstract_s3_key
+    new_key = None
+    try:
+        new_key = store_thesis_abstract_text(session.id, canonical_text)
+        session.abstract_s3_key = new_key
+        db.commit()
+    except Exception as error:
+        db.rollback()
+        if new_key and new_key != previous_key:
+            delete_abstract_from_s3(new_key)
+        logger.warning("Thesis abstract update failed (session_id=%s, error=%s)", session_id, type(error).__name__)
+        raise HTTPException(status_code=503, detail="The abstract could not be saved. Please retry.") from None
+    if previous_key and previous_key != session.abstract_s3_key:
+        delete_abstract_from_s3(previous_key)
+    return {"updated": True}
+
+
 
 @router.websocket("/{session_id}/chat")
 async def interview_chat_ws(
@@ -172,6 +240,7 @@ async def interview_chat_ws(
                 try:
                     data = json.loads(msg["text"])
                     message_type = data.get("type", "message")
+                    db.refresh(session)
                     stored_messages = get_stored_chat_messages(db, session.id)
                     if message_type == "start" and stored_messages:
                         await websocket.send_json({"type": "history", "messages": stored_messages})
@@ -180,8 +249,10 @@ async def interview_chat_ws(
                             continue
                     browser_abstract = str(data.get("abstract_text", "")).strip()[:5000]
                     abstract_text = browser_abstract or None
-                    if abstract_text is None and session.abstract_s3_key:
+                    if session.abstract_s3_key:
                         abstract_text = get_abstract_text_from_s3(session.abstract_s3_key)
+                        if not abstract_text:
+                            raise ValueError("Saved thesis abstract context is unavailable")
                     system_prompt = get_thesis_system_prompt(current_user.department, abstract_text)
                     is_initial_turn = message_type in {"start", "retry"} and not stored_messages
                     is_retry = message_type == "retry" or (

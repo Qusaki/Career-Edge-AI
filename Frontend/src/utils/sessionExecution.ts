@@ -1,4 +1,5 @@
 import type { OfflineSessionMode } from '../db';
+import { isOfflineClientSessionId, isPositiveServerSessionId } from './sessionIdentity';
 
 export type SessionExecution =
   | { mode: 'online'; serverSessionId: number }
@@ -17,17 +18,14 @@ export const resolveSessionExecution = ({
   knownOfflineClientSessionId,
 }: ResolveSessionExecutionInput): SessionExecution => {
   if (sessionMode === 'offline') {
-    const verifiedOfflineClientSessionId = knownOfflineClientSessionId?.trim() || null;
+    const verifiedOfflineClientSessionId = isOfflineClientSessionId(knownOfflineClientSessionId)
+      ? knownOfflineClientSessionId.trim() : null;
     return verifiedOfflineClientSessionId
       ? { mode: 'offline', clientSessionId: verifiedOfflineClientSessionId }
       : { mode: 'invalid', reason: 'unverified_session' };
   }
 
-  if (
-    typeof activeSessionId === 'number'
-    && Number.isSafeInteger(activeSessionId)
-    && activeSessionId > 0
-  ) {
+  if (isPositiveServerSessionId(activeSessionId)) {
     return { mode: 'online', serverSessionId: activeSessionId };
   }
 

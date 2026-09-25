@@ -45,11 +45,13 @@ test('all scoped HTTP handlers use the shared normalizer and WebSocket messages 
   const postTest = readComponent('PostTestPage.tsx');
   const drills = readComponent('DrillsPage.tsx');
 
-  for (const source of [preTest, postTest, drills]) {
+  assert.match(preTest, /normalizePreTestApiError\(body,/);
+  for (const source of [postTest, drills]) {
     assert.match(source, /normalizeApiError\(body,/);
     assert.doesNotMatch(source, /new Error\(body\?\.detail \|\|/);
   }
-  assert.match(preTest, /normalizeApiError\(data, 'The audio interviewer could not respond/);
+  assert.doesNotMatch(preTest, /new Error\(body\?\.detail \|\|/);
+  assert.match(preTest, /normalizePreTestApiError\(data, 'The audio interviewer could not respond/);
   assert.match(postTest, /normalizeApiError\(data, 'The audio interviewer could not respond/);
   assert.match(preTest, /const data: unknown = JSON\.parse/);
   assert.match(postTest, /const data: unknown = JSON\.parse/);

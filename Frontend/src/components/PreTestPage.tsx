@@ -17,7 +17,8 @@ import {
   PRETEST_WHO_AM_I_VERSION,
 } from '../offline/questionPacks';
 import { evaluateActiveListening, evaluateWhoAmI } from '../offline/localEvaluation';
-import { normalizeApiError } from '../utils/httpError';
+import { normalizePreTestApiError } from '../utils/preTestApiError';
+import { hasRestorableOfflineIdentity, isPositiveServerSessionId } from '../utils/sessionIdentity';
 import { resolvePreTestSessionExecution } from '../utils/preTestSessionExecution';
 import { resolveSessionExecution } from '../utils/sessionExecution';
 
@@ -237,6 +238,10 @@ export function PreTestPage({
   useEffect(() => {
     if (!resumeSession || resumeSession.mode !== 'offline' || resumedSessionRef.current === resumeSession.clientSessionId) return;
     if (!['pre_test_intro', 'pre_test_active_listening'].includes(resumeSession.type)) return;
+    if (!hasRestorableOfflineIdentity(resumeSession)) {
+      setError('This saved Pre-Test has an invalid session identity. It has been preserved and cannot be resumed automatically.');
+      return;
+    }
     resumedSessionRef.current = resumeSession.clientSessionId;
     if (!hasCurrentQuestionPack(resumeSession.type, resumeSession.questionPackVersion)) {
       setVersionMismatch(true);
@@ -273,7 +278,7 @@ export function PreTestPage({
     if (activeExercise.kind === 'active-listening') {
       const answerCount = messagesRef.current.filter(message => message.sender === 'user').length;
       if (answerCount === 0 && resumeSession) {
-        const canonicalPrompt = resumeSession.serverSessionId
+        const canonicalPrompt = isPositiveServerSessionId(resumeSession.serverSessionId)
           ? getActiveListeningPromptForServerSession(resumeSession.serverSessionId)
           : getOfflineActiveListeningPrompt(resumeSession.clientSessionId);
         const alignedMessages: ChatMessage[] = [{ sender: 'ai', text: canonicalPrompt }];
@@ -511,7 +516,7 @@ export function PreTestPage({
         clearActiveListeningTimeout();
         resetActiveListeningTurnState();
         setConnectionState('error');
-        setError(normalizeApiError(data, 'The audio interviewer could not respond. Check that the backend service is running.'));
+        setError(normalizePreTestApiError(data, 'The audio interviewer could not respond. Check that the backend service is running.'));
         initialActiveListeningReplayRef.current = null;
         return;
       }
@@ -641,7 +646,7 @@ export function PreTestPage({
       });
       if (!response.ok) {
         const body = await response.json().catch(() => null);
-        throw new Error(normalizeApiError(body, `Unable to start ${exercise.title}.`));
+        throw new Error(normalizePreTestApiError(body, `Unable to start ${exercise.title}.`));
       }
       const session: Session = await response.json();
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
@@ -674,7 +679,7 @@ export function PreTestPage({
         });
         if (!sessionDetailResponse.ok) {
           const body = await sessionDetailResponse.json().catch(() => null);
-          throw new Error(normalizeApiError(body, 'Unable to restore the Active Listening conversation.'));
+          throw new Error(normalizePreTestApiError(body, 'Unable to restore the Active Listening conversation.'));
         }
         const sessionDetail: {
           messages?: Array<{ id: number; role: string; content: string }>;
@@ -861,7 +866,7 @@ export function PreTestPage({
           });
           if (!response.ok) {
             const body = await response.json().catch(() => null);
-            throw new Error(normalizeApiError(body, 'Unable to save your Who Am I? response.'));
+            throw new Error(normalizePreTestApiError(body, 'Unable to save your Who Am I? response.'));
           }
           const persistedSession: Session = await response.json();
           if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
@@ -1056,7 +1061,7 @@ export function PreTestPage({
       });
       if (!response.ok) {
         const body = await response.json().catch(() => null);
-        throw new Error(normalizeApiError(body, `Unable to complete ${activeExercise.title}.`));
+        throw new Error(normalizePreTestApiError(body, `Unable to complete ${activeExercise.title}.`));
       }
       cancelListening();
       clearActiveListeningTimeout();

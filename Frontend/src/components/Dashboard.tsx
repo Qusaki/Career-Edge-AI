@@ -6,6 +6,7 @@ import { clearProfessorModelCache, ProfessorModel, ProfessorModelPreloader } fro
 import { PreTestPage } from './PreTestPage';
 import { DrillsPage } from './DrillsPage';
 import { PostTestPage } from './PostTestPage';
+import { AppUpdateNotice, type UpdateBlockReason } from './AppUpdateNotice';
 import { useWebLLM } from '../hooks/useWebLLM';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import type { MLCEngine } from '@mlc-ai/web-llm';
@@ -15,6 +16,9 @@ import {
   syncOfflineQueueWithRetry,
 } from '../offline/offlineSyncClient';
 import { maintainOwnedOfflineStorage } from '../offline/offlineCleanup';
+import { isUpdateSessionActive } from '../offline/updateRefreshSafety';
+import { isPositiveServerSessionId } from '../utils/sessionIdentity';
+import { ThesisAbstractFileError, thesisAbstractUploadError, validateThesisAbstractFile } from '../utils/thesisAbstractUpload';
 import { getVerifiedAccountForToken, rememberVerifiedAccount } from '../offline/accountBinding';
 import { getQuestionPackVersion, hasCurrentQuestionPack } from '../offline/questionPacks';
 import {
@@ -107,6 +111,10 @@ import {
 interface DashboardProps {
   onLogout: () => void;
   isNewSignupSession: boolean;
+  updateAvailable: boolean;
+  updateRefreshing: boolean;
+  updateError: string | null;
+  onRefreshUpdate: () => Promise<void>;
 }
 
 interface AuthenticatedUserResponse {
@@ -313,7 +321,14 @@ class ProfessorAssetErrorBoundary extends React.Component<
   }
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSession }) => {
+export const Dashboard: React.FC<DashboardProps> = ({
+  onLogout,
+  isNewSignupSession,
+  updateAvailable,
+  updateRefreshing,
+  updateError,
+  onRefreshUpdate,
+}) => {
   const connectivity = useConnectivity(API_URL);
   const connectivityOnlineRef = React.useRef(connectivity.effectiveOnline);
   connectivityOnlineRef.current = connectivity.effectiveOnline;
@@ -594,6 +609,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const [thesisStartError, setThesisStartError] = useState<string | null>(null);
   const [thesisInSessionUploading, setThesisInSessionUploading] = useState(false);
   const [thesisAbstractUpdated, setThesisAbstractUpdated] = useState(false);
+  const [thesisUploadError, setThesisUploadError] = useState<string | null>(null);
   const activeInterviewModeRef = React.useRef<'enrollment' | 'thesis' | null>(null);
   const [isCameraEnabled, setIsCameraEnabled] = useState(false);
   const eyeTracker = useEyeContactTracker(
@@ -602,6 +618,51 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       (activeTab === 'thesis-session' && !thesisResult)
     )
   );
+
+  const [updateHasUnsyncedWork, setUpdateHasUnsyncedWork] = useState<boolean | null>(null);
+  const [updateSafetyError, setUpdateSafetyError] = useState<string | null>(null);
+  const updateSessionActive = isUpdateSessionActive({
+    activeTab,
+    isModuleSessionMode,
+    activeCheckpoint: activeActivityCheckpoint,
+    isStartingInterview,
+    thesisIsStarting,
+  });
+  const updateSessionActiveRef = React.useRef(updateSessionActive);
+  updateSessionActiveRef.current = updateSessionActive;
+
+  const checkSavedWorkForUpdate = React.useCallback(async () => {
+    const userId = authenticatedUserIdRef.current;
+    setUpdateHasUnsyncedWork(null);
+    setUpdateSafetyError(null);
+    if (!userId) return;
+    try {
+      const hasUnsyncedWork = await accountStorage.hasUnsyncedOfflineWork(userId);
+      if (authenticatedUserIdRef.current === userId) setUpdateHasUnsyncedWork(hasUnsyncedWork);
+    } catch {
+      setUpdateSafetyError('Saved work could not be checked. Try again before refreshing.');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (updateAvailable) void checkSavedWorkForUpdate();
+  }, [updateAvailable, authenticatedUserId, activeActivityCheckpoint?.updatedAt, syncQueueSessions, checkSavedWorkForUpdate]);
+
+  const refreshWhenSafe = async () => {
+    const userId = authenticatedUserIdRef.current;
+    if (!userId || updateSessionActiveRef.current) return;
+    setUpdateHasUnsyncedWork(null);
+    setUpdateSafetyError(null);
+    try {
+      // A fresh IndexedDB read is authoritative even if another tab just saved work.
+      const hasUnsyncedWork = await accountStorage.hasUnsyncedOfflineWork(userId);
+      if (authenticatedUserIdRef.current !== userId) return;
+      setUpdateHasUnsyncedWork(hasUnsyncedWork);
+      if (!hasUnsyncedWork && !updateSessionActiveRef.current) await onRefreshUpdate();
+    } catch {
+      setUpdateSafetyError('Saved work could not be checked. Try again before refreshing.');
+    }
+  };
 
   const queueCheckpointOperation = React.useCallback((operation: () => Promise<unknown>) => {
     const queued = checkpointOperationRef.current
@@ -2671,6 +2732,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     interviewSessionId: number,
     action: 'start' | 'retry',
   ) => new Promise<void>((resolve, reject) => {
+    if (!isPositiveServerSessionId(interviewSessionId)) {
+      reject(new Error('This interview session could not be verified. Please restart the activity.'));
+      return;
+    }
     const token = localStorage.getItem('token');
     if (!token) {
       reject(new Error('Your session has expired. Please sign in again.'));
@@ -2840,8 +2905,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       });
 
       if (response.ok) {
-        const data = await response.json();
-        sid = data.id;
+        const data: unknown = await response.json();
+        const serverSessionId = typeof data === 'object' && data !== null && 'id' in data ? data.id : null;
+        if (!isPositiveServerSessionId(serverSessionId)) {
+          alert('The Enrollment Interview session could not be verified. Please restart the activity.');
+          return;
+        }
+        sid = serverSessionId;
       } else {
         const errorText = await response.text();
         alert(`Failed to start session: ${errorText}`);
@@ -2977,6 +3047,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       return;
     }
     if (!sessionId || !isEnrollmentFinalProfessorTurnReady) return;
+    if (!isPositiveServerSessionId(sessionId)) {
+      setOnlineInterviewError('This interview session could not be verified. Please restart the activity.');
+      return;
+    }
     if (!authenticatedUserIdRef.current) {
       alert('Your account could not be verified. Please sign in again before saving this interview.');
       return;
@@ -3067,33 +3141,39 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
     r?.score_cbapa_research_problem !== undefined;
 
   const readThesisAbstractFile = async (file: File) => {
-    if (file.name.toLowerCase().endsWith('.txt')) return file.text();
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
-      throw new Error('Only PDF and TXT thesis abstracts are supported.');
+    const fileError = validateThesisAbstractFile(file);
+    if (fileError) throw new ThesisAbstractFileError(fileError);
+    try {
+      if (file.name.toLowerCase().endsWith('.txt')) return await file.text();
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = '';
+      const maxPages = Math.min(pdf.numPages, 10);
+      for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+        const page = await pdf.getPage(pageNumber);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items
+          .map(item => ('str' in item ? item.str : ''))
+          .join(' ');
+        fullText += `${pageText}\n`;
+      }
+      return fullText;
+    } catch {
+      throw new ThesisAbstractFileError('The selected abstract could not be read. Choose a readable PDF or TXT file.');
     }
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    let fullText = '';
-    const maxPages = Math.min(pdf.numPages, 10);
-    for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
-      const page = await pdf.getPage(pageNumber);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items
-        .map(item => ('str' in item ? item.str : ''))
-        .join(' ');
-      fullText += `${pageText}\n`;
-    }
-    return fullText;
   };
 
   const uploadThesisAbstractInSession = async (file: File) => {
     if (thesisInSessionUploading) return;
+    setThesisUploadError(null);
+    setThesisAbstractUpdated(false);
     const active = activeActivityCheckpointRef.current;
     if (active?.type === 'thesis' && active.mode === 'offline') {
       setThesisInSessionUploading(true);
       setThesisAbstractUpdated(false);
       try {
         const abstractText = (await readThesisAbstractFile(file)).trim().slice(0, 5000);
+        if (!/[\p{L}\p{N}]/u.test(abstractText)) throw new ThesisAbstractFileError('The selected abstract did not contain readable text.');
         const state = readOfflineInterviewActivityState(active);
         if (!state) throw new Error('The saved offline Thesis session is incomplete.');
         const nextState: OfflineInterviewActivityState = {
@@ -3101,39 +3181,57 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
           thesisAbstractContext: abstractText,
           thesisAbstractSourceName: file.name,
         };
-        thesisAbstractTextRef.current = abstractText;
         const saved = await updateActivityCheckpoint({
           activityState: nextState as unknown as Record<string, unknown>,
         });
         if (!saved) throw new Error('The updated abstract could not be saved locally.');
+        thesisAbstractTextRef.current = abstractText;
         setThesisAbstractFile(file);
         setThesisAbstractUpdated(true);
         setTimeout(() => setThesisAbstractUpdated(false), 3000);
       } catch (error) {
-        setOnlineInterviewError(error instanceof Error ? error.message : 'The abstract could not be read locally.');
+        setThesisUploadError(error instanceof ThesisAbstractFileError ? error.message : 'The abstract could not be saved locally. Please retry.');
       } finally {
         setThesisInSessionUploading(false);
       }
       return;
     }
-    if (!thesisSessionIdRef.current) return;
+    if (!thesisSessionIdRef.current) {
+      setThesisUploadError('This thesis session could not be verified. Please restart the activity.');
+      return;
+    }
+    if (!isPositiveServerSessionId(thesisSessionIdRef.current)) {
+      setThesisUploadError('This thesis session could not be verified. Please restart the activity.');
+      return;
+    }
     setThesisInSessionUploading(true);
     setThesisAbstractUpdated(false);
     try {
+      const abstractText = (await readThesisAbstractFile(file)).trim().slice(0, 5000);
+      if (!/[\p{L}\p{N}]/u.test(abstractText)) throw new ThesisAbstractFileError('The selected abstract did not contain readable text.');
       const token = localStorage.getItem('token');
+      if (!token) {
+        setThesisUploadError('Your session could not be authorized. Please sign in again.');
+        return;
+      }
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('abstract_text', abstractText);
       const res = await fetch(`${API_URL}/thesis-interview/${thesisSessionIdRef.current}/upload-abstract`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
         body: formData
       });
       if (res.ok) {
+        thesisAbstractTextRef.current = abstractText;
+        setThesisAbstractFile(file);
         setThesisAbstractUpdated(true);
         setTimeout(() => setThesisAbstractUpdated(false), 3000);
+      } else {
+        setThesisUploadError(thesisAbstractUploadError(res.status));
       }
-    } catch (e) {
-      console.error('In-session abstract upload failed:', e);
+    } catch (error) {
+      setThesisUploadError(error instanceof ThesisAbstractFileError ? error.message : 'The abstract could not be saved. Check your connection and try again.');
     } finally {
       setThesisInSessionUploading(false);
     }
@@ -3234,8 +3332,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
         setThesisIsStarting(false);
         return;
       }
-      const data = await response.json();
-      sid = data.id;
+      const data: unknown = await response.json();
+      const serverSessionId = typeof data === 'object' && data !== null && 'id' in data ? data.id : null;
+      if (!isPositiveServerSessionId(serverSessionId)) {
+        setThesisStartError('The Thesis Interview session could not be verified. Please restart the activity.');
+        setThesisIsStarting(false);
+        return;
+      }
+      sid = serverSessionId;
     } catch (error) {
       console.error('Unable to start Thesis Interview.', error);
       setThesisStartError('The thesis defense could not be started. Check your connection and try again.');
@@ -3343,6 +3447,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
       return;
     }
     if (!thesisSessionIdRef.current) return;
+    if (!isPositiveServerSessionId(thesisSessionIdRef.current)) {
+      setOnlineInterviewError('This thesis session could not be verified. Please restart the activity.');
+      return;
+    }
     if (!authenticatedUserIdRef.current) {
       alert('Your account could not be verified. Please sign in again before saving this thesis session.');
       return;
@@ -3726,6 +3834,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
   const syncingSessions = syncQueueSessions.filter(session => session.status === 'syncing');
   const failedSyncSession = syncQueueSessions.find(session => session.status === 'sync_failed');
   const queuedSyncSessions = syncQueueSessions.filter(session => session.status === 'pending_sync');
+  const updateBlockReason: UpdateBlockReason = updateSessionActive
+    ? 'active-session'
+    : updateHasUnsyncedWork === null
+      ? 'checking-work'
+      : updateHasUnsyncedWork ? 'unsynced-work' : null;
   const showAuthenticatedNavigation = !isModuleSessionMode && ![
     'interview-type',
     'university-setup',
@@ -3750,16 +3863,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
           <ProfessorModelPreloader onReady={handleProfessorAssetReady} />
         </React.Suspense>
       </ProfessorAssetErrorBoundary>
+      <AppUpdateNotice
+        available={updateAvailable}
+        blockedReason={updateBlockReason}
+        isRefreshing={updateRefreshing}
+        error={updateSafetyError || updateError}
+        onRefresh={() => void refreshWhenSafe()}
+        onCheckAgain={() => void checkSavedWorkForUpdate()}
+      />
       {connectivity.connectionState !== 'online' && (
-        <div role="status" className="status-surface-dark fixed right-4 top-4 z-[9997] max-w-[calc(100vw-2rem)] rounded-lg border border-amber-400/50 bg-slate-950/95 px-4 py-3 text-sm text-amber-100 shadow-xl">
+        <div role="status" className={`status-surface-dark fixed right-4 top-4 z-[9997] max-w-[calc(100vw-2rem)] rounded-lg border bg-slate-950/95 px-4 py-3 text-sm shadow-xl ${connectivity.connectionState === 'checking' ? 'border-slate-500/50 text-slate-100' : 'border-amber-400/50 text-amber-100'}`}>
           <p className="font-bold">
             {connectivity.connectionState === 'offline'
               ? 'Device offline'
               : connectivity.connectionState === 'degraded'
                 ? 'Career Edge cloud unavailable'
-                : 'Checking cloud connection…'}
+                : 'Connecting to Career Edge cloud…'}
           </p>
-          <p className="mt-1 text-slate-300">Cloud activities require both network and backend availability.</p>
+          <p className="mt-1 text-slate-300">
+            {connectivity.connectionState === 'checking'
+              ? 'Checking cloud availability. Please wait.'
+              : 'Cloud activities require both network and backend availability.'}
+          </p>
         </div>
       )}
       {connectionRestoredNotice && activeActivityCheckpoint?.mode === 'offline' && (
@@ -4592,6 +4717,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, isNewSignupSessi
                               </button>
                             )}
                           </div>
+                        )}
+                        {thesisAbstractUpdated && (
+                          <p role="status" className="mb-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-100">
+                            {activeActivityCheckpoint?.mode === 'offline'
+                              ? 'Thesis abstract saved on this device. Your next offline question will use the new context.'
+                              : 'Thesis abstract updated. The next question will use the new context.'}
+                          </p>
+                        )}
+                        {thesisUploadError && (
+                          <p role="alert" className="mb-3 rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-200">
+                            {thesisUploadError}
+                          </p>
                         )}
                         {renderOfflineInterviewInput('thesis')}
                         <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-4 pr-1 scroll-smooth">

@@ -3,6 +3,7 @@ import {
   type AccountOfflineSession,
   type OfflineAudioReference,
 } from '../db';
+import { isOfflineClientSessionId, isPositiveServerSessionId } from '../utils/sessionIdentity';
 
 interface OfflineSyncResponse {
   synchronized: true;
@@ -74,6 +75,20 @@ const toAudioManifest = (references: OfflineAudioReference[]) => references.map(
 }));
 
 export const buildOfflineSyncPayload = (session: AccountOfflineSession) => {
+  if (!isOfflineClientSessionId(session.clientSessionId) || session.localId !== session.clientSessionId) {
+    throw new OfflineSyncError(
+      'This saved session has an invalid local identity. Your work is preserved and needs manual attention.',
+      'invalid_client_session_id',
+      false,
+    );
+  }
+  if (session.serverSessionId != null && !isPositiveServerSessionId(session.serverSessionId)) {
+    throw new OfflineSyncError(
+      'This saved session has an invalid server identity. Your local work is preserved and needs manual attention.',
+      'invalid_server_session_id',
+      false,
+    );
+  }
   if (!session.questionPackVersion) {
     throw new OfflineSyncError(
       'This offline session uses an unsupported question version and needs manual attention.',
@@ -233,7 +248,7 @@ export const syncOfflineSession = async (
       !result.synchronized
       || result.client_session_id !== syncing.clientSessionId
       || result.activity_type !== syncing.type
-      || !Number.isSafeInteger(result.server_session_id)
+      || !isPositiveServerSessionId(result.server_session_id)
     ) {
       throw new OfflineSyncError(
         'The server returned an invalid synchronization result.',

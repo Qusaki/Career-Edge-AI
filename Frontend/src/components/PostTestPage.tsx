@@ -12,6 +12,7 @@ import { evaluatePostTest } from '../offline/localEvaluation';
 import { getPostTestQuestions, hasCurrentQuestionPack, POST_TEST_VERSION } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
 import { resolveSessionExecution } from '../utils/sessionExecution';
+import { hasRestorableOfflineIdentity } from '../utils/sessionIdentity';
 import { isPostTestUnlocked, type PostTestAccess } from '../utils/postTestProgress';
 import {
   appendOfflinePostTestAnswer,
@@ -226,6 +227,10 @@ function PostTestActivity({
       || resumeSession.mode !== 'offline'
       || resumedSessionRef.current === resumeSession.clientSessionId
     ) return;
+    if (!hasRestorableOfflineIdentity(resumeSession)) {
+      setError('This saved Post-Test has an invalid session identity. It has been preserved and cannot be resumed automatically.');
+      return;
+    }
     resumedSessionRef.current = resumeSession.clientSessionId;
     if (!hasCurrentQuestionPack('post_test', resumeSession.questionPackVersion)) {
       setError('This saved offline activity uses an older question version. It was preserved and cannot be resumed automatically.');

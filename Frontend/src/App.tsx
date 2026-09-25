@@ -3,6 +3,9 @@ import { motion, useMotionValue, useSpring, useTransform } from 'motion/react';
 import { Mic, FileText, CheckCircle, BarChart, Play, ArrowRight, Github, Facebook, BrainCircuit, Target, GraduationCap, MessageSquare, Video, Plus, Send, MousePointer2, Paperclip, LogOut, MapPin, Phone, Mail, Globe } from 'lucide-react';
 import { AuthPage } from './components/AuthPage';
 import { Dashboard } from './components/Dashboard';
+import { AppUpdateNotice, type UpdateBlockReason } from './components/AppUpdateNotice';
+import { accountStorage } from './db';
+import { usePwaUpdate } from './hooks/usePwaUpdate';
 import { forgetVerifiedAccount } from './offline/accountBinding';
 
 const MorphingGraphic = () => {
@@ -379,6 +382,52 @@ const FeatureCard = ({ icon, title, description }: { icon: React.ReactNode, titl
 export default function App() {
   const [currentView, setCurrentView] = useState<'landing' | 'auth' | 'dashboard'>('landing');
   const [isNewSignupSession, setIsNewSignupSession] = useState(false);
+  const pwaUpdate = usePwaUpdate();
+  const [publicHasUnsyncedWork, setPublicHasUnsyncedWork] = useState<boolean | null>(null);
+  const [publicUpdateSafetyError, setPublicUpdateSafetyError] = useState<string | null>(null);
+
+  const checkPublicSavedWork = async () => {
+    setPublicHasUnsyncedWork(null);
+    setPublicUpdateSafetyError(null);
+    try {
+      setPublicHasUnsyncedWork(await accountStorage.hasAnyUnsyncedOfflineWork());
+    } catch {
+      setPublicUpdateSafetyError('Saved work could not be checked. Try again before refreshing.');
+    }
+  };
+
+  useEffect(() => {
+    if (!pwaUpdate.updateAvailable || currentView === 'dashboard') return;
+    void checkPublicSavedWork();
+  }, [pwaUpdate.updateAvailable, currentView]);
+
+  const publicBlockReason: UpdateBlockReason = publicHasUnsyncedWork === null
+    ? 'checking-work'
+    : publicHasUnsyncedWork ? 'unsynced-work' : null;
+  const publicUpdateNotice = (
+    <AppUpdateNotice
+      available={pwaUpdate.updateAvailable}
+      blockedReason={publicBlockReason}
+      isRefreshing={pwaUpdate.isRefreshing}
+      error={publicUpdateSafetyError || pwaUpdate.error}
+      onRefresh={() => {
+        void (async () => {
+          // Recheck the database immediately before any reload, including after another tab changes it.
+          setPublicHasUnsyncedWork(null);
+          setPublicUpdateSafetyError(null);
+          try {
+            const hasUnsyncedWork = await accountStorage.hasAnyUnsyncedOfflineWork();
+            setPublicHasUnsyncedWork(hasUnsyncedWork);
+            if (hasUnsyncedWork) return;
+            await pwaUpdate.refresh();
+          } catch {
+            setPublicUpdateSafetyError('Saved work could not be checked. Try again before refreshing.');
+          }
+        })();
+      }}
+      onCheckAgain={() => void checkPublicSavedWork()}
+    />
+  );
 
   useEffect(() => {
     // Auto-login if token exists
@@ -395,14 +444,17 @@ export default function App() {
 
   if (currentView === 'auth') {
     return (
-      <AuthPage
-        onBack={() => setCurrentView('landing')}
-        onSuccess={({ isNewSignup }) => {
-          setIsNewSignupSession(isNewSignup);
-          setCurrentView('dashboard');
-        }}
-        initialMode={authMode}
-      />
+      <>
+        <AuthPage
+          onBack={() => setCurrentView('landing')}
+          onSuccess={({ isNewSignup }) => {
+            setIsNewSignupSession(isNewSignup);
+            setCurrentView('dashboard');
+          }}
+          initialMode={authMode}
+        />
+        {publicUpdateNotice}
+      </>
     );
   }
 
@@ -410,6 +462,10 @@ export default function App() {
     return (
       <Dashboard
         isNewSignupSession={isNewSignupSession}
+        updateAvailable={pwaUpdate.updateAvailable}
+        updateRefreshing={pwaUpdate.isRefreshing}
+        updateError={pwaUpdate.error}
+        onRefreshUpdate={pwaUpdate.refresh}
         onLogout={() => {
           localStorage.removeItem('token');
           forgetVerifiedAccount();
@@ -420,7 +476,7 @@ export default function App() {
     );
   }
 
-  return (
+  return <>
     <div className="min-h-screen bg-neutral-950 text-neutral-50 font-sans selection:bg-violet-500/30 overflow-x-hidden">
       {/* Background Effects */}
       <div className="fixed inset-0 z-0 pointer-events-none">
@@ -636,5 +692,6 @@ export default function App() {
         </div>
       </footer>
     </div>
-  );
+    {publicUpdateNotice}
+  </>;
 }

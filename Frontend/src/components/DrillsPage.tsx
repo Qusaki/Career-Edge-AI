@@ -12,6 +12,7 @@ import { evaluateDrill, getOfflineNegotiationTurn } from '../offline/localEvalua
 import { DRILLS_VERSION, getOfflineDrillPrompt, hasCurrentQuestionPack, NEGOTIATION_OPENING_PROMPT } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
 import { resolveDrillSessionExecution } from '../utils/drillSessionExecution';
+import { hasRestorableOfflineIdentity } from '../utils/sessionIdentity';
 import { readPostTestAccess, type PostTestAccess } from '../utils/postTestProgress';
 import {
   createDrillTimerState,
@@ -462,6 +463,10 @@ export function DrillsPage({
       || resumeSession.mode !== 'offline'
       || resumedSessionRef.current === resumeSession.clientSessionId
     ) return;
+    if (!hasRestorableOfflineIdentity(resumeSession)) {
+      setError('This saved Drill has an invalid session identity. It has been preserved and cannot be resumed automatically.');
+      return;
+    }
     resumedSessionRef.current = resumeSession.clientSessionId;
     if (!hasCurrentQuestionPack('drill', resumeSession.questionPackVersion)) {
       setError('This saved offline activity uses an older question version. It was preserved and cannot be resumed automatically.');
@@ -662,6 +667,14 @@ export function DrillsPage({
 
       const session: DrillSession = await sessionResponse.json();
       if (exerciseGenerationRef.current !== attemptId) return;
+      const execution = resolveDrillSessionExecution({
+        sessionMode: 'online',
+        activeSessionId: session.id,
+        knownOfflineClientSessionId: null,
+      });
+      if (execution.mode !== 'online') {
+        throw new Error('This Drill session could not be verified. Please restart the activity.');
+      }
       if (!session.canonical_prompt) {
         throw new Error(`The server did not return a canonical prompt for ${drill.title}.`);
       }
@@ -683,7 +696,7 @@ export function DrillsPage({
       setNotice(`${drill.title} is ready.`);
       const checkpoint = await onActivityStart({
         type: 'drill',
-        serverSessionId: typeof session.id === 'number' ? session.id : null,
+        serverSessionId: execution.serverSessionId,
         questionPackVersion: DRILLS_VERSION,
         currentQuestion: drill.isNegotiation ? NEGOTIATION_OPENING_PROMPT : formattedPrompt,
         conversationLog: drill.isNegotiation ? [{ sender: 'ai', text: NEGOTIATION_OPENING_PROMPT }] : [],

@@ -8,10 +8,29 @@ import { VitePWA } from 'vite-plugin-pwa';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(() => {
+  const buildId = new Date().toISOString();
   return {
+    define: {
+      __CAREER_EDGE_BUILD_ID__: JSON.stringify(buildId),
+    },
     plugins: [
       react(), 
       tailwindcss(),
+      {
+        name: 'career-edge-build-version',
+        transformIndexHtml: () => [{
+          tag: 'meta',
+          attrs: { name: 'career-edge-build', content: buildId },
+          injectTo: 'head',
+        }],
+        generateBundle() {
+          this.emitFile({
+            type: 'asset',
+            fileName: 'version.json',
+            source: JSON.stringify({ buildId }),
+          });
+        },
+      },
       VitePWA({
         registerType: 'autoUpdate',
         devOptions: {
@@ -20,7 +39,8 @@ export default defineConfig(() => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,json,wasm,task}'],
-          globIgnores: ['**/offline-webllm-*.js'],
+          // Version checks must reach the deployment, not the old app-shell cache.
+          globIgnores: ['**/offline-webllm-*.js', '**/version.json'],
           maximumFileSizeToCacheInBytes: 5000000000, // Large max size for model weights if cached in service worker (though IndexedDB is better)
         },
         manifest: {
