@@ -1152,13 +1152,6 @@ function PostTestActivity({
               </div>
               <div className="text-right">
                 <span className="program-accent-surface rounded-full px-2.5 py-1 text-xs font-bold capitalize">{session.status}</span>
-                {session.total_score != null && (
-                  <p className="mt-1 text-sm font-bold text-ink">
-                    {session.eye_contact_samples
-                      ? session.total_score
-                      : Math.max(0, session.total_score - (session.score_eye_contact || 0))}/25
-                  </p>
-                )}
               </div>
             </div>
           ))}

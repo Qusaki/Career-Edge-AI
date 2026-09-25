@@ -1430,7 +1430,6 @@ export function DrillsPage({
               </div>
               <div className="text-right">
                 <span className="program-accent-surface rounded-full px-2.5 py-1 text-xs font-bold capitalize">{session.status}</span>
-                {session.score != null && <p className="mt-1 text-sm font-bold text-ink">{Math.round(session.score)}%</p>}
               </div>
             </div>
           ))}
