@@ -4,10 +4,11 @@ import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
+import { cancelBrowserSpeech, speakBrowserText } from '../utils/browserSpeech';
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
 import { createClientSessionId } from '../offline/sessionFoundation';
-import { combineEyeContactSummaries, type EyeContactSummary } from '../offline/eyeContact';
+import { combineEyeContactSummaries, shouldCheckpointEyeContact, type EyeContactSummary } from '../offline/eyeContact';
 import { evaluateDrill, getOfflineNegotiationTurn } from '../offline/localEvaluation';
 import { DRILLS_VERSION, getOfflineDrillPrompt, hasCurrentQuestionPack, NEGOTIATION_OPENING_PROMPT } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
@@ -361,6 +362,7 @@ export function DrillsPage({
   const sessionModeRef = useRef(sessionMode);
   const activeOfflineClientSessionIdRef = useRef<string | null>(null);
   const offlineEyeContactBaselineRef = useRef<EyeContactSummary | null>(null);
+  const eyeContactAutosaveRef = useRef({ sessionId: '', lastSamples: 0 });
   const drillTimerRef = useRef<DrillTimerState | null>(null);
   const {
     isListening,
@@ -401,6 +403,18 @@ export function DrillsPage({
       ? combineEyeContactSummaries(offlineEyeContactBaselineRef.current, liveWindow)
       : liveWindow;
   };
+
+  useEffect(() => {
+    if (sessionMode !== 'offline' || !activeSession) return;
+    const sessionId = String(activeSession.id);
+    if (eyeContactAutosaveRef.current.sessionId !== sessionId) {
+      eyeContactAutosaveRef.current = { sessionId, lastSamples: 0 };
+      return;
+    }
+    if (!shouldCheckpointEyeContact(eyeTracker.samples, eyeContactAutosaveRef.current.lastSamples)) return;
+    eyeContactAutosaveRef.current.lastSamples = eyeTracker.samples;
+    void onActivityCheckpoint({ eyeContactSummary: getCheckpointEyeContactSummary() });
+  }, [activeSession, eyeTracker.samples, onActivityCheckpoint, sessionMode]);
 
   useEffect(() => {
     if (sessionMode !== 'offline' || !isListening || !activeSession) return;
@@ -512,22 +526,13 @@ export function DrillsPage({
   }, [activeSession, sessionMode]);
 
   const speakText = useCallback((text: string) => {
-    if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    setIsVoiceSpeaking(true);
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US';
-    utterance.rate = CLEAR_AI_SPEECH_RATE;
-    utterance.pitch = CLEAR_AI_SPEECH_PITCH;
-    utterance.volume = CLEAR_AI_SPEECH_VOLUME;
-    utterance.onstart = () => setIsVoiceSpeaking(true);
-    utterance.onend = () => setIsVoiceSpeaking(false);
-    utterance.onerror = () => setIsVoiceSpeaking(false);
-    try {
-      window.speechSynthesis.speak(utterance);
-    } catch {
-      setIsVoiceSpeaking(false);
-    }
+    void speakBrowserText(text, {
+      rate: CLEAR_AI_SPEECH_RATE,
+      pitch: CLEAR_AI_SPEECH_PITCH,
+      volume: CLEAR_AI_SPEECH_VOLUME,
+      onPending: () => setIsVoiceSpeaking(true),
+      onFinish: () => setIsVoiceSpeaking(false),
+    });
   }, []);
 
   const loadSessions = useCallback(async () => {
@@ -569,7 +574,7 @@ export function DrillsPage({
   useEffect(() => () => {
     exerciseGenerationRef.current += 1;
     cancelListening();
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    cancelBrowserSpeech();
   }, [cancelListening]);
 
   const startDrill = async (drill: Drill) => {
@@ -599,7 +604,7 @@ export function DrillsPage({
     activeOfflineClientSessionIdRef.current = null;
     offlineEyeContactBaselineRef.current = null;
     cancelListening();
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    cancelBrowserSpeech();
     try {
       if (!effectiveOnline) {
         const clientSessionId = createClientSessionId();
@@ -729,7 +734,7 @@ export function DrillsPage({
   const quitDrill = () => {
     exerciseGenerationRef.current += 1;
     cancelListening();
-    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
+    cancelBrowserSpeech();
     setStarting(null);
     setCompleting(null);
     setActiveSession(null);
@@ -982,7 +987,7 @@ export function DrillsPage({
         });
         if (!saved || !await onActivityEnd('completed_local')) return;
         cancelListening();
-        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+        cancelBrowserSpeech();
         setActiveSession(null);
         setActivePrompt('');
         setSpokenResponse('');
@@ -1042,7 +1047,7 @@ export function DrillsPage({
       await response.json();
       if (exerciseGenerationRef.current !== attemptId) return;
       cancelListening();
-      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      cancelBrowserSpeech();
       setNotice('Drill was marked complete.');
       void onActivityEnd('cloud_completed');
       setActiveSession(null);
@@ -1183,10 +1188,10 @@ export function DrillsPage({
                   </button>
                   {!negotiationMessages.some(message => message.sender === 'user') && <p className="text-center text-xs text-muted">Submit a reply to enable Mark Complete.</p>}
                 </div>
-                {sessionMode === 'offline' && !negotiationGameOver && (
+                {!negotiationGameOver && (
                   <div className="mx-auto mt-4 flex max-w-2xl flex-col gap-2 sm:flex-row">
-                    <textarea value={negotiationReply} onChange={event => setNegotiationReply(event.target.value)} placeholder="Or type your negotiation reply while offline." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)]" />
-                    <button type="button" onClick={() => void sendNegotiationReply()} disabled={!negotiationReply.trim() || negotiationLoading} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Submit</button>
+                    <textarea value={negotiationReply} onChange={event => setNegotiationReply(event.target.value)} disabled={isListening || isFinalizing || isVoiceSpeaking || negotiationLoading} placeholder="Or type your negotiation reply if the microphone is unavailable." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)] disabled:opacity-60" />
+                    <button type="button" onClick={() => void sendNegotiationReply()} disabled={!negotiationReply.trim() || isListening || isFinalizing || isVoiceSpeaking || negotiationLoading} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Submit</button>
                   </div>
                 )}
               </>
@@ -1215,12 +1220,10 @@ export function DrillsPage({
                   </button>
                   {!spokenResponse.trim() && <p className="text-center text-xs text-muted">Record or save a response to enable Mark Complete.</p>}
                 </div>
-                {sessionMode === 'offline' && (
-                  <div className="mx-auto mt-4 flex max-w-2xl flex-col gap-2 sm:flex-row">
-                    <textarea value={spokenResponse} onChange={event => setSpokenResponse(event.target.value)} placeholder="Or type your Drill response while offline." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)]" />
-                    <button type="button" onClick={() => void saveTypedDrillResponse()} disabled={!spokenResponse.trim()} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Save</button>
-                  </div>
-                )}
+                <div className="mx-auto mt-4 flex max-w-2xl flex-col gap-2 sm:flex-row">
+                  <textarea value={spokenResponse} onChange={event => setSpokenResponse(event.target.value)} disabled={isListening || isFinalizing || isVoiceSpeaking} placeholder="Or type your Drill response if the microphone is unavailable." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)] disabled:opacity-60" />
+                  <button type="button" onClick={() => void saveTypedDrillResponse()} disabled={!spokenResponse.trim() || isListening || isFinalizing || isVoiceSpeaking} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Save</button>
+                </div>
               </>
             )}
 

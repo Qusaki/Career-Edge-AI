@@ -4,10 +4,11 @@ import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
+import { cancelBrowserSpeech, speakBrowserText } from '../utils/browserSpeech';
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
 import { createClientSessionId } from '../offline/sessionFoundation';
-import { combineEyeContactSummaries, type EyeContactSummary } from '../offline/eyeContact';
+import { combineEyeContactSummaries, shouldCheckpointEyeContact, type EyeContactSummary } from '../offline/eyeContact';
 import {
   getOfflineActiveListeningPrompt,
   getActiveListeningPromptForServerSession,
@@ -174,6 +175,7 @@ export function PreTestPage({
   const [reply, setReply] = useState('');
   const [isAiResponding, setIsAiResponding] = useState(false);
   const [isVoiceSpeaking, setIsVoiceSpeaking] = useState(false);
+  const [speechFallbackPrompt, setSpeechFallbackPrompt] = useState('');
   const [connectionState, setConnectionState] = useState<RealtimeConnectionState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -192,6 +194,7 @@ export function PreTestPage({
   const connectionAttemptRef = useRef(0);
   const lifecycleGenerationRef = useRef(0);
   const offlineEyeContactBaselineRef = useRef<EyeContactSummary | null>(null);
+  const eyeContactAutosaveRef = useRef({ sessionId: '', lastSamples: 0 });
   const activeOfflineClientSessionIdRef = useRef<string | null>(null);
   const introTranscriptRef = useRef('');
   const introPersistenceInFlightRef = useRef(false);
@@ -218,6 +221,18 @@ export function PreTestPage({
       ? combineEyeContactSummaries(offlineEyeContactBaselineRef.current, liveWindow)
       : liveWindow;
   };
+
+  useEffect(() => {
+    if (sessionMode !== 'offline' || !activeExercise || !activeSession) return;
+    const sessionId = `${activeExercise.kind}:${activeSession.id}`;
+    if (eyeContactAutosaveRef.current.sessionId !== sessionId) {
+      eyeContactAutosaveRef.current = { sessionId, lastSamples: 0 };
+      return;
+    }
+    if (!shouldCheckpointEyeContact(eyeTracker.samples, eyeContactAutosaveRef.current.lastSamples)) return;
+    eyeContactAutosaveRef.current.lastSamples = eyeTracker.samples;
+    void onActivityCheckpoint({ eyeContactSummary: getCheckpointEyeContactSummary() });
+  }, [activeExercise, activeSession, eyeTracker.samples, onActivityCheckpoint, sessionMode]);
 
   useEffect(() => {
     if (sessionMode !== 'offline' || !isListening || !activeSession || !activeExercise) return;
@@ -345,7 +360,7 @@ export function PreTestPage({
     wsRef.current = null;
     if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, 'Exercise closed.');
     cancelListening();
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    cancelBrowserSpeech();
   }, [cancelListening]);
 
   const clearActiveListeningTimeout = () => {
@@ -387,22 +402,18 @@ export function PreTestPage({
   };
 
   const speakText = useCallback((text: string) => {
-    if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    setIsVoiceSpeaking(true);
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US';
-    utterance.rate = CLEAR_AI_SPEECH_RATE;
-    utterance.pitch = CLEAR_AI_SPEECH_PITCH;
-    utterance.volume = CLEAR_AI_SPEECH_VOLUME;
-    utterance.onstart = () => setIsVoiceSpeaking(true);
-    utterance.onend = () => setIsVoiceSpeaking(false);
-    utterance.onerror = () => setIsVoiceSpeaking(false);
-    try {
-      window.speechSynthesis.speak(utterance);
-    } catch {
-      setIsVoiceSpeaking(false);
-    }
+    void speakBrowserText(text, {
+      rate: CLEAR_AI_SPEECH_RATE,
+      pitch: CLEAR_AI_SPEECH_PITCH,
+      volume: CLEAR_AI_SPEECH_VOLUME,
+      onPending: () => {
+        setSpeechFallbackPrompt('');
+        setIsVoiceSpeaking(true);
+      },
+      onFinish: () => setIsVoiceSpeaking(false),
+    }).then(result => {
+      if (result !== 'ended' && result !== 'cancelled') setSpeechFallbackPrompt(text);
+    });
   }, []);
 
   function connectActiveListeningChat(serverSessionId: number, retryCount = 0) {
@@ -589,6 +600,7 @@ export function PreTestPage({
     introPersistenceInFlightRef.current = false;
     setIsPersistingIntro(false);
     setMessages([]);
+    setSpeechFallbackPrompt('');
     setReply('');
     setConnectionState('idle');
     cancelListening();
@@ -742,7 +754,7 @@ export function PreTestPage({
 
   const quitSession = () => {
     lifecycleGenerationRef.current += 1;
-    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
+    cancelBrowserSpeech();
     cancelListening();
     connectionAttemptRef.current += 1;
     clearActiveListeningTimeout();
@@ -761,6 +773,7 @@ export function PreTestPage({
     setActiveSession(null);
     setIntroTranscript('');
     setMessages([]);
+    setSpeechFallbackPrompt('');
     setReply('');
     setIsAiResponding(false);
     setIsVoiceSpeaking(false);
@@ -916,6 +929,60 @@ export function PreTestPage({
   const saveTypedIntro = async () => {
     const text = introTranscript.trim();
     if (!text) return;
+    if (sessionMode !== 'offline') {
+      if (!activeExercise || !activeSession || introPersistenceInFlightRef.current) return;
+      const execution = resolvePreTestSessionExecution({
+        sessionMode,
+        activeSessionId: activeSession.id,
+        knownOfflineClientSessionId: activeOfflineClientSessionIdRef.current,
+      });
+      if (execution.mode !== 'online') {
+        setError(PRE_TEST_SESSION_RECOVERY_ERROR);
+        return;
+      }
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setError('Your session is no longer authenticated. Please sign in again.');
+        return;
+      }
+      introPersistenceInFlightRef.current = true;
+      setIsPersistingIntro(true);
+      const lifecycleGeneration = lifecycleGenerationRef.current;
+      try {
+        const response = await fetch(`${apiUrl}${activeExercise.endpoint}/${execution.serverSessionId}/response`, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transcript: text }),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(normalizePreTestApiError(body, 'Unable to save your Who Am I? response.'));
+        }
+        const persistedSession: Session = await response.json();
+        if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
+        const canonicalTranscript = persistedSession.transcript?.trim() || text;
+        introTranscriptRef.current = canonicalTranscript;
+        setIntroTranscript(canonicalTranscript);
+        resetSpeechTranscript();
+        await onActivityCheckpoint({
+          currentStep: 1,
+          responseCount: 1,
+          answers: [{ step: 1, text: canonicalTranscript, createdAt: Date.now() }],
+          eyeContactSummary: getCheckpointEyeContactSummary(),
+        });
+        if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
+        setNotice('Your Who Am I? response is saved. You can complete the exercise when ready.');
+      } catch (persistenceError) {
+        if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
+        setError(persistenceError instanceof Error ? persistenceError.message : 'Unable to save your Who Am I? response.');
+      } finally {
+        if (lifecycleGenerationRef.current === lifecycleGeneration) {
+          introPersistenceInFlightRef.current = false;
+          setIsPersistingIntro(false);
+        }
+      }
+      return;
+    }
     const saved = await onActivityCheckpoint({
       currentStep: 1,
       responseCount: 1,
@@ -999,6 +1066,7 @@ export function PreTestPage({
         setActiveExercise(null);
         setActiveSession(null);
         setMessages([]);
+        setSpeechFallbackPrompt('');
         messagesRef.current = [];
         offlineEyeContactBaselineRef.current = null;
         activeOfflineClientSessionIdRef.current = null;
@@ -1066,7 +1134,7 @@ export function PreTestPage({
       cancelListening();
       clearActiveListeningTimeout();
       resetActiveListeningTurnState();
-      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      cancelBrowserSpeech();
       setIsVoiceSpeaking(false);
       connectionAttemptRef.current += 1;
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
@@ -1084,6 +1152,7 @@ export function PreTestPage({
       setActiveExercise(null);
       setActiveSession(null);
       setMessages([]);
+      setSpeechFallbackPrompt('');
       setIntroTranscript('');
       setNotice(`${activeExercise.title} completed.`);
       void onActivityEnd('cloud_completed');
@@ -1170,14 +1239,13 @@ export function PreTestPage({
                   </p>
                 </div>
                 <div className="mt-4 min-h-36 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink sm:min-h-44">
-                  {sessionMode === 'offline' ? (
-                    <textarea
-                      value={introTranscript}
-                      onChange={event => setIntroTranscript(event.target.value)}
-                      placeholder="Speak with the mic or type your self-introduction here."
-                      className="min-h-28 max-h-64 w-full resize-y bg-transparent text-ink outline-none placeholder:text-muted focus-visible:ring-2 focus-visible:ring-[var(--program-accent)]"
-                    />
-                  ) : introTranscript || <span className="text-muted">Press the mic and speak your self-introduction.</span>}
+                  <textarea
+                    value={introTranscript}
+                    onChange={event => setIntroTranscript(event.target.value)}
+                    disabled={isListening || isFinalizing || isPersistingIntro}
+                    placeholder="Speak with the mic or type your self-introduction here."
+                    className="min-h-28 max-h-64 w-full resize-y bg-transparent text-ink outline-none placeholder:text-muted focus-visible:ring-2 focus-visible:ring-[var(--program-accent)] disabled:opacity-60"
+                  />
                 </div>
                 {(isListening || isFinalizing || hasUnfinalizedTranscript) && (
                   <div className="mt-3 rounded-lg border border-line bg-card p-3 text-sm leading-relaxed text-ink" aria-live="polite">
@@ -1187,11 +1255,9 @@ export function PreTestPage({
                     {liveTranscript || <span className="text-muted">Start speaking when you are ready.</span>}
                   </div>
                 )}
-                {sessionMode === 'offline' && (
-                  <div className="mt-3 flex justify-end">
-                  <button type="button" onClick={() => void saveTypedIntro()} disabled={!introTranscript.trim()} className="program-accent-focus-ring rounded-lg border border-line px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">Save Typed Answer</button>
-                  </div>
-                )}
+                <div className="mt-3 flex justify-end">
+                  <button type="button" onClick={() => void saveTypedIntro()} disabled={!introTranscript.trim() || isListening || isFinalizing || isPersistingIntro} className="program-accent-focus-ring rounded-lg border border-line px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">Save Typed Answer</button>
+                </div>
                 <div className="mt-4 flex flex-col items-center gap-2">
                   <button
                     onClick={isListening ? stopListening : recordIntro}
@@ -1222,6 +1288,11 @@ export function PreTestPage({
                               : 'Preparing exercise...'
                   }
                 />
+                {speechFallbackPrompt && !visibleActiveListeningMessages.some(message => message.text === speechFallbackPrompt) && (
+                  <p role="alert" className="mt-3 rounded-lg border border-amber-400/50 bg-amber-50 p-3 text-sm leading-relaxed text-amber-900">
+                    Audio playback is unavailable. Professor Maxiel asks: {speechFallbackPrompt}
+                  </p>
+                )}
                 <div className="mt-3 min-h-32 max-h-52 overflow-y-auto rounded-lg border border-line bg-background p-4 sm:min-h-36">
                   {visibleActiveListeningMessages.length === 0 && error ? (
                     <div className="flex h-full items-center justify-center text-center text-sm leading-relaxed text-rose-700">
@@ -1269,12 +1340,10 @@ export function PreTestPage({
                   </button>
                   {!messages.some(message => message.sender === 'user') && <p className="text-center text-xs text-muted">Submit one response to enable completion.</p>}
                 </div>
-                {sessionMode === 'offline' && (
-                  <div className="mx-auto mt-4 flex max-w-2xl gap-2">
-                    <textarea value={reply} onChange={event => setReply(event.target.value)} placeholder="Or type your summary while offline." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)]" />
-                    <button type="button" onClick={() => void sendReply()} disabled={!reply.trim()} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Submit</button>
-                  </div>
-                )}
+                <div className="mx-auto mt-4 flex max-w-2xl gap-2">
+                  <textarea value={reply} onChange={event => setReply(event.target.value)} disabled={isListening || isFinalizing || isSubmittingAnswer || isAiResponding} placeholder="Or type your summary if the microphone is unavailable." className="min-h-20 flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)] disabled:opacity-60" />
+                  <button type="button" onClick={() => void sendReply()} disabled={!reply.trim() || isListening || isFinalizing || isSubmittingAnswer || isAiResponding} className="program-accent-button self-end rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50">Submit</button>
+                </div>
               </>
             )}
           </section>

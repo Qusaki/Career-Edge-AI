@@ -4,10 +4,11 @@ import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
+import { cancelBrowserSpeech, speakBrowserText } from '../utils/browserSpeech';
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
 import { createClientSessionId } from '../offline/sessionFoundation';
-import { combineEyeContactSummaries, type EyeContactSummary } from '../offline/eyeContact';
+import { combineEyeContactSummaries, shouldCheckpointEyeContact, type EyeContactSummary } from '../offline/eyeContact';
 import { evaluatePostTest } from '../offline/localEvaluation';
 import { getPostTestQuestions, hasCurrentQuestionPack, POST_TEST_VERSION } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
@@ -181,6 +182,7 @@ function PostTestActivity({
   const resumedSessionRef = useRef<string | null>(null);
   const activeOfflineClientSessionIdRef = useRef<string | null>(null);
   const offlineEyeContactBaselineRef = useRef<EyeContactSummary | null>(null);
+  const eyeContactAutosaveRef = useRef({ sessionId: '', lastSamples: 0 });
   const answerSubmissionInFlightRef = useRef(false);
   const completionInFlightRef = useRef(false);
   const [isSubmittingAnswer, setIsSubmittingAnswer] = useState(false);
@@ -205,6 +207,18 @@ function PostTestActivity({
       ? combineEyeContactSummaries(offlineEyeContactBaselineRef.current, liveWindow)
       : liveWindow;
   };
+
+  useEffect(() => {
+    if (sessionMode !== 'offline' || !activeSession) return;
+    const sessionId = String(activeSession.id);
+    if (eyeContactAutosaveRef.current.sessionId !== sessionId) {
+      eyeContactAutosaveRef.current = { sessionId, lastSamples: 0 };
+      return;
+    }
+    if (!shouldCheckpointEyeContact(eyeTracker.samples, eyeContactAutosaveRef.current.lastSamples)) return;
+    eyeContactAutosaveRef.current.lastSamples = eyeTracker.samples;
+    void onActivityCheckpoint({ eyeContactSummary: getCheckpointEyeContactSummary() });
+  }, [activeSession, eyeTracker.samples, onActivityCheckpoint, sessionMode]);
 
   useEffect(() => {
     if (sessionMode !== 'offline' || !isListening || !activeSession) return;
@@ -310,26 +324,17 @@ function PostTestActivity({
   }, [activeSession, onActivityCheckpoint, sessionMode, userDepartment]);
 
   const speakText = useCallback((text: string) => {
-    if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    setIsVoiceSpeaking(true);
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US';
-    utterance.rate = CLEAR_AI_SPEECH_RATE;
-    utterance.pitch = CLEAR_AI_SPEECH_PITCH;
-    utterance.volume = CLEAR_AI_SPEECH_VOLUME;
-    utterance.onstart = () => setIsVoiceSpeaking(true);
-    utterance.onend = () => setIsVoiceSpeaking(false);
-    utterance.onerror = () => setIsVoiceSpeaking(false);
-    try {
-      window.speechSynthesis.speak(utterance);
-    } catch {
-      setIsVoiceSpeaking(false);
-    }
+    void speakBrowserText(text, {
+      rate: CLEAR_AI_SPEECH_RATE,
+      pitch: CLEAR_AI_SPEECH_PITCH,
+      volume: CLEAR_AI_SPEECH_VOLUME,
+      onPending: () => setIsVoiceSpeaking(true),
+      onFinish: () => setIsVoiceSpeaking(false),
+    });
   }, []);
 
   const cancelSpeech = () => {
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    cancelBrowserSpeech();
     setIsVoiceSpeaking(false);
   };
 
@@ -373,7 +378,7 @@ function PostTestActivity({
     wsRef.current = null;
     if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, 'Exercise closed.');
     cancelListening();
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    cancelBrowserSpeech();
   }, [cancelListening]);
 
   const clearFirstPromptTimeout = () => {
@@ -1075,12 +1080,10 @@ function PostTestActivity({
               </button>
               <p className="text-center text-xs text-muted">{visibleUserMessages.length} of 5 answers recorded. Complete Interview unlocks after all five.</p>
             </div>
-            {sessionMode === 'offline' && (
-              <div className="mx-auto mt-4 flex max-w-2xl flex-col gap-2 sm:flex-row">
-                <textarea value={reply} onChange={event => setReply(event.target.value)} disabled={isListening || isSubmittingAnswer || !answerBoundary.canAcceptAnswer} placeholder={answerBoundary.canAcceptAnswer ? 'Or type your answer while offline.' : 'All five answers are recorded.'} className="min-h-20 w-full flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)] disabled:cursor-not-allowed disabled:opacity-60" />
-                <button type="button" onClick={() => void sendReply()} disabled={!reply.trim() || isListening || isSubmittingAnswer || !answerBoundary.canAcceptAnswer} className="program-accent-button w-full rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50 sm:w-auto sm:self-end">Submit</button>
-              </div>
-            )}
+            <div className="mx-auto mt-4 flex max-w-2xl flex-col gap-2 sm:flex-row">
+              <textarea value={reply} onChange={event => setReply(event.target.value)} disabled={isListening || isFinalizing || isSubmittingAnswer || isAiResponding || isVoiceSpeaking || !answerBoundary.canAcceptAnswer} placeholder={answerBoundary.canAcceptAnswer ? 'Or type your answer if the microphone is unavailable.' : 'All five answers are recorded.'} className="min-h-20 w-full flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)] disabled:cursor-not-allowed disabled:opacity-60" />
+              <button type="button" onClick={() => void sendReply()} disabled={!reply.trim() || isListening || isFinalizing || isSubmittingAnswer || isAiResponding || isVoiceSpeaking || !answerBoundary.canAcceptAnswer} className="program-accent-button w-full rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50 sm:w-auto sm:self-end">Submit</button>
+            </div>
           </section>
         </div>
       </div>

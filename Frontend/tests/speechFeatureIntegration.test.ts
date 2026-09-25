@@ -9,11 +9,12 @@ const dashboardSource = readSource('components/Dashboard.tsx');
 const preTestSource = readSource('components/PreTestPage.tsx');
 const postTestSource = readSource('components/PostTestPage.tsx');
 const drillsSource = readSource('components/DrillsPage.tsx');
+const browserSpeechSource = readSource('utils/browserSpeech.ts');
 
 test('the shared hook is the only active SpeechRecognition implementation', () => {
   assert.match(dashboardSource, /useSpeechInput\(\)/);
   assert.doesNotMatch(dashboardSource, /webkitSpeechRecognition|new SpeechRecognition|recognition\.onresult/);
-  assert.match(hookSource, /window\.SpeechRecognition \?\? window\.webkitSpeechRecognition/);
+  assert.match(hookSource, /host\.SpeechRecognition \?\? host\.webkitSpeechRecognition/);
   assert.match(hookSource, /recognition\.lang = 'en-US'/);
   assert.match(hookSource, /recognition\.maxAlternatives = 1/);
   assert.doesNotMatch(hookSource, /\bany\b|as any|@ts-ignore|@ts-expect-error/);
@@ -68,18 +69,19 @@ test('normal and negotiation Drills display live text without committing interim
 
 test('TTS is pending before speak and every microphone handler rejects overlap', () => {
   for (const source of [preTestSource, postTestSource, drillsSource]) {
-    const pendingState = source.indexOf('setIsVoiceSpeaking(true)');
-    const speakCall = source.indexOf('window.speechSynthesis.speak(utterance)');
-    assert.ok(pendingState >= 0 && speakCall > pendingState);
+    assert.match(source, /speakBrowserText\(text, \{[\s\S]*?onPending: \(\) =>[\s\S]*?setIsVoiceSpeaking\(true\)/);
     assert.match(source, /speechSynthesis\?\.speaking \|\| window\.speechSynthesis\?\.pending/);
   }
+  assert.match(browserSpeechSource, /synthesis\.speak\(utterance\)/);
+  assert.match(browserSpeechSource, /startTimeoutMs \?\? 2500/);
   assert.match(drillsSource, /disabled=\{negotiationLoading \|\| negotiationGameOver \|\| isVoiceSpeaking \|\| isFinalizing\}/);
   assert.match(drillsSource, /disabled=\{isVoiceSpeaking \|\| isFinalizing \|\| drillTimer\?\.phase === 'expired'\}/);
   assert.match(dashboardSource, /isAiSpeakingRef\.current \|\| window\.speechSynthesis\?\.speaking \|\| window\.speechSynthesis\?\.pending/);
 });
 
-test('fatal recognition errors shut down online input while offline recording remains recoverable', () => {
+test('terminal recognition errors end listening and finalize any valid offline recording', () => {
   assert.match(hookSource, /session\.fatalError = true/);
-  assert.match(hookSource, /if \(!session\.offlineAudio\)[\s\S]*?session\.cancelled = true[\s\S]*?releaseMicrophone\(\)/);
-  assert.match(hookSource, /session\.offlineAudio && session\.fatalError && listeningRef\.current/);
+  assert.match(hookSource, /session\.failureMessage = message;[\s\S]*?listeningRef\.current = false;[\s\S]*?deliverTranscript\(\)/);
+  assert.match(hookSource, /await offlineRecorderRef\.current\?\.stopRecording\(\)/);
+  assert.match(hookSource, /if \(canonicalTranscript\) session\.onTranscript\(canonicalTranscript\)/);
 });

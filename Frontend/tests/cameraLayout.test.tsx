@@ -75,6 +75,7 @@ test('Enrollment and Thesis keep compact camera states inside the upper-right st
 test('camera tracking state and score sampling logic remain authoritative in the existing hook', () => {
   assert.match(eyeTrackerSource, /navigator\.mediaDevices\.getUserMedia\([\s\S]*?video:/);
   assert.match(eyeTrackerSource, /landmarker\.detectForVideo\(video, performance\.now\(\)\)/);
+  assert.match(eyeTrackerSource, /countEyeContactFrame\([\s\S]*?result\.faceLandmarks\[0\]/);
   assert.match(eyeTrackerSource, /setSamples\(samplesRef\.current\)/);
   assert.match(eyeTrackerSource, /setScore\(Math\.round\(\(hitsRef\.current \/ samplesRef\.current\) \* 100\)\)/);
 });

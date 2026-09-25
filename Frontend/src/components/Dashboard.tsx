@@ -9,6 +9,7 @@ import { PostTestPage } from './PostTestPage';
 import { AppUpdateNotice, type UpdateBlockReason } from './AppUpdateNotice';
 import { useWebLLM } from '../hooks/useWebLLM';
 import { useSpeechInput } from '../hooks/useSpeechInput';
+import { cancelBrowserSpeech, speakBrowserText } from '../utils/browserSpeech';
 import type { MLCEngine } from '@mlc-ai/web-llm';
 import { useConnectivity } from '../hooks/useConnectivity';
 import {
@@ -35,6 +36,7 @@ import {
   type OfflineInterviewKind,
 } from '../offline/interviewRuntime';
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
+import { shouldCheckpointEyeContact } from '../offline/eyeContact';
 import {
   accountStorage,
   type AccountOfflineSession,
@@ -822,17 +824,30 @@ export const Dashboard: React.FC<DashboardProps> = ({
     const saved = restoredEyeContactSummaryRef.current;
     const currentSamples = eyeTracker.samples;
     const currentScore = currentSamples > 0 ? eyeTracker.score : null;
-    if (!saved || saved.samples <= 0) {
+    if (!saved || saved.samples <= 0 || saved.score === null) {
       return { score: currentScore, samples: currentSamples };
     }
     if (currentSamples <= 0 || currentScore === null) return saved;
-    const savedScore = saved.score ?? 0;
+    const savedScore = saved.score;
     const samples = saved.samples + currentSamples;
     return {
       score: Math.round(((savedScore * saved.samples + currentScore * currentSamples) / samples) * 100) / 100,
       samples,
     };
   }, [eyeTracker.samples, eyeTracker.score]);
+  const eyeContactAutosaveRef = React.useRef({ sessionId: '', lastSamples: 0 });
+  React.useEffect(() => {
+    const checkpoint = activeActivityCheckpoint;
+    if (!checkpoint || checkpoint.mode !== 'offline' || checkpoint.status !== 'in_progress'
+      || (checkpoint.type !== 'upcoming' && checkpoint.type !== 'thesis')) return;
+    if (eyeContactAutosaveRef.current.sessionId !== checkpoint.clientSessionId) {
+      eyeContactAutosaveRef.current = { sessionId: checkpoint.clientSessionId, lastSamples: 0 };
+      return;
+    }
+    if (!shouldCheckpointEyeContact(eyeTracker.samples, eyeContactAutosaveRef.current.lastSamples)) return;
+    eyeContactAutosaveRef.current.lastSamples = eyeTracker.samples;
+    void updateActivityCheckpoint({ eyeContactSummary: getCheckpointEyeContactSummary() });
+  }, [activeActivityCheckpoint, eyeTracker.samples, getCheckpointEyeContactSummary, updateActivityCheckpoint]);
   const communicationSkillCriteria = [
     {
       label: 'Vocabulary Usage',
@@ -1725,7 +1740,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const unlockBrowserSpeech = () => {
     if (!('speechSynthesis' in window)) return;
 
-    window.speechSynthesis.cancel();
+    cancelBrowserSpeech();
     window.speechSynthesis.resume();
     const unlockUtterance = new SpeechSynthesisUtterance('.');
     unlockUtterance.volume = 0;
@@ -2053,55 +2068,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
         ) || matchingVoices[0];
       };
 
-      const speakWithBrowser = (text: string) => {
-        return new Promise<void>((resolve) => {
-          if (!('speechSynthesis' in window)) {
-            console.warn("Speech synthesis is not supported in this browser.");
-            resolve();
-            return;
-          }
-
-          const utterance = new SpeechSynthesisUtterance(text);
-          utterance.lang = detectSpeechLang(text);
-          utterance.rate = CLEAR_AI_SPEECH_RATE;
-          utterance.pitch = CLEAR_AI_SPEECH_PITCH;
-          utterance.volume = CLEAR_AI_SPEECH_VOLUME;
-          const voices = window.speechSynthesis.getVoices();
-          const preferredVoice = selectPreferredFemaleVoice(voices, utterance.lang);
-          if (preferredVoice) utterance.voice = preferredVoice;
-
-          let finished = false;
-          const fallbackTimeoutMs = getClearSpeechTimeoutMs(text);
-          const fallbackTimer = window.setTimeout(() => {
-            console.warn("Speech synthesis timed out before onend fired.");
-            if (window.speechSynthesis.speaking || window.speechSynthesis.pending) window.speechSynthesis.cancel();
-            finish();
-          }, fallbackTimeoutMs);
-
-          const finish = () => {
-            if (finished) return;
-            finished = true;
-            window.clearTimeout(fallbackTimer);
-            resolve();
-          };
-
-          utterance.onend = finish;
-          utterance.onerror = (event) => {
-            console.error("Speech synthesis failed", event);
-            finish();
-          };
-
-          try {
-            setIsAiSpeaking(true);
-            isAiSpeakingRef.current = true;
-            window.speechSynthesis.resume();
-            window.speechSynthesis.speak(utterance);
-          } catch (error) {
-            console.error("Speech synthesis could not start", error);
-            finish();
-          }
-        });
-      };
+      const speakWithBrowser = (text: string) => speakBrowserText(text, {
+        language: detectSpeechLang(text),
+        rate: CLEAR_AI_SPEECH_RATE,
+        pitch: CLEAR_AI_SPEECH_PITCH,
+        volume: CLEAR_AI_SPEECH_VOLUME,
+        maxDurationMs: getClearSpeechTimeoutMs(text),
+        selectVoice: selectPreferredFemaleVoice,
+        onPending: () => {
+          setIsAiSpeaking(true);
+          isAiSpeakingRef.current = true;
+        },
+      });
 
       const processTtsQueue = async () => {
         if (isTtsPlaying) return ttsProcessingPromise || Promise.resolve();
@@ -2305,45 +2283,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
-  const speakOnlineInterviewResponse = (text: string) => new Promise<void>((resolve) => {
-    if (!('speechSynthesis' in window)) {
-      resolve();
-      return;
-    }
-    setIsAiSpeaking(true);
-    isAiSpeakingRef.current = true;
-
-    const utterance = new SpeechSynthesisUtterance(text.replace(/[*_#]/g, '').trim());
-    utterance.lang = 'en-US';
-    utterance.rate = CLEAR_AI_SPEECH_RATE;
-    utterance.pitch = CLEAR_AI_SPEECH_PITCH;
-    utterance.volume = CLEAR_AI_SPEECH_VOLUME;
-    const voices = window.speechSynthesis.getVoices();
-    const preferredVoice = voices.find(voice =>
+  const speakOnlineInterviewResponse = (text: string) => speakBrowserText(text.replace(/[*_#]/g, '').trim(), {
+    rate: CLEAR_AI_SPEECH_RATE,
+    pitch: CLEAR_AI_SPEECH_PITCH,
+    volume: CLEAR_AI_SPEECH_VOLUME,
+    maxDurationMs: getClearSpeechTimeoutMs(text),
+    selectVoice: (voices) => voices.find(voice =>
       voice.lang.startsWith('en') && /aria|ava|emma|jenny|joanna|samantha|zira|female/i.test(voice.name)
-    ) || voices.find(voice => voice.lang.startsWith('en'));
-    if (preferredVoice) utterance.voice = preferredVoice;
-
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      window.clearTimeout(fallbackTimer);
-      resolve();
-    };
-    const fallbackTimer = window.setTimeout(() => {
-      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) window.speechSynthesis.cancel();
-      finish();
-    }, getClearSpeechTimeoutMs(text));
-    utterance.onend = finish;
-    utterance.onerror = finish;
-    try {
-      window.speechSynthesis.resume();
-      window.speechSynthesis.speak(utterance);
-    } catch (error) {
-      console.error('Speech synthesis could not start.', error);
-      finish();
-    }
+    ) || voices.find(voice => voice.lang.startsWith('en')),
+    onPending: () => {
+      setIsAiSpeaking(true);
+      isAiSpeakingRef.current = true;
+    },
   });
 
   const selectCachedOfflineInterviewEngine = async (): Promise<{
@@ -2565,6 +2516,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
 
     const isFinal = appended.responseCount === OFFLINE_INTERVIEW_RESPONSE_LIMIT;
+    setTypedInterviewAnswer('');
     sendOnlineInterviewResponse(mode, text, isFinal);
     offlineAnswerSubmissionRef.current = false;
     return true;
@@ -2980,7 +2932,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     activeEnrollmentFinalGenerationRef.current = null;
     enrollmentFinalGenerationSequenceRef.current += 1;
     setIsEnrollmentFinalProfessorTurnReady(false);
-    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
+    cancelBrowserSpeech();
     cancelSpeechInput();
     setLatestOfflineRecordingUrl(null);
     setIsLeaveModalOpen(false);
@@ -3382,7 +3334,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     setLatestOfflineRecordingUrl(null);
     const shouldReleaseOfflineEngine = activeActivityCheckpointRef.current?.type === 'thesis'
       && readOfflineInterviewActivityState(activeActivityCheckpointRef.current)?.offlineEngine === 'webllm';
-    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
+    cancelBrowserSpeech();
     cancelSpeechInput();
     if (thesisTimerRef.current) { clearInterval(thesisTimerRef.current); thesisTimerRef.current = null; }
     setThesisIsLeaveModalOpen(false);
@@ -3775,14 +3727,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const renderOfflineInterviewInput = (type: OfflineInterviewKind) => {
     const checkpoint = activeActivityCheckpoint;
-    if (!checkpoint || checkpoint.type !== type || checkpoint.mode !== 'offline') return null;
+    if (!checkpoint || checkpoint.type !== type) return null;
     const answersComplete = checkpoint.responseCount >= OFFLINE_INTERVIEW_RESPONSE_LIMIT;
     const isThesis = type === 'thesis';
     return (
       <div className={`mb-3 rounded-lg border p-3 ${isThesis ? 'border-slate-700 bg-slate-900' : 'border-[var(--interview-border)] bg-[var(--interview-card)]'}`}>
         <div className="mb-2 flex items-center justify-between gap-3">
           <span className="program-accent-on-dark text-[10px] font-bold uppercase tracking-wider">
-            Offline · {readOfflineInterviewActivityState(checkpoint)?.offlineEngine === 'webllm' ? 'Cached Local AI' : 'Fallback Questions'}
+            {checkpoint.mode === 'offline'
+              ? `Offline · ${readOfflineInterviewActivityState(checkpoint)?.offlineEngine === 'webllm' ? 'Cached Local AI' : 'Fallback Questions'}`
+              : 'Typed answer fallback'}
           </span>
           <button
             type="button"
@@ -3803,14 +3757,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
             type="text"
             value={typedInterviewAnswer}
             onChange={event => setTypedInterviewAnswer(event.target.value)}
-            disabled={answersComplete || isSubmittingOfflineAnswer || isAiSpeaking}
+            disabled={answersComplete || isSubmittingOfflineAnswer || isAiSpeaking || isListening || isMicTransitioning}
             placeholder={answersComplete ? 'All five responses are recorded' : 'Type an answer if microphone input is unavailable'}
-            aria-label="Typed offline interview answer"
+            aria-label="Typed interview answer"
             className={`min-w-0 flex-1 rounded-lg border px-3 py-2 text-xs outline-none focus:border-[var(--program-accent-on-dark)] disabled:opacity-60 ${isThesis ? 'border-slate-700 bg-slate-800 text-slate-100 placeholder:text-slate-500' : 'border-[var(--interview-border)] bg-[var(--interview-elevated)] text-[var(--interview-text-primary)] placeholder:text-[var(--interview-text-muted)]'}`}
           />
           <button
             type="submit"
-            disabled={!typedInterviewAnswer.trim() || answersComplete || isSubmittingOfflineAnswer || isAiSpeaking}
+            disabled={!typedInterviewAnswer.trim() || answersComplete || isSubmittingOfflineAnswer || isAiSpeaking || isListening || isMicTransitioning}
             className="program-accent-interview-active flex h-9 w-9 shrink-0 items-center justify-center rounded-lg disabled:cursor-not-allowed disabled:opacity-50"
             title="Submit typed answer"
             aria-label="Submit typed answer"
@@ -3818,7 +3772,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <Send className="h-4 w-4" />
           </button>
         </form>
-        {latestOfflineRecordingUrl && (
+        {checkpoint.mode === 'offline' && latestOfflineRecordingUrl && (
           <audio
             className="mt-2 h-8 w-full"
             controls

@@ -14,7 +14,7 @@ const speechSource = readFileSync(
 test('fresh online Who Am I starts without fabricating a transcript', () => {
   assert.match(preTestSource, /const restoredIntroTranscript = exercise\.kind === 'intro'[\s\S]*?session\.transcript\?\.trim\(\) \|\| ''/);
   assert.match(preTestSource, /setNotice\('Who Am I\? started\. Use the mic to introduce yourself\.'\)/);
-  assert.match(preTestSource, /Press the mic and speak your self-introduction\./);
+  assert.match(preTestSource, /Speak with the mic or type your self-introduction here\./);
 });
 
 test('a final online Who Am I response is persisted before frontend checkpoint state advances', () => {

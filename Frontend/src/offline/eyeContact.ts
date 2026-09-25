@@ -3,20 +3,22 @@ export interface EyeContactSummary {
   samples: number;
 }
 
+export const shouldCheckpointEyeContact = (currentSamples: number, lastSavedSamples: number) =>
+  Number.isSafeInteger(currentSamples) && currentSamples > 0
+  && currentSamples - lastSavedSamples >= 8;
+
 type EyeContactWindow = {
   hits: number;
   samples: number;
 };
 
 const toWindow = (summary: EyeContactSummary | null): EyeContactWindow => {
-  if (!summary || !Number.isFinite(summary.samples) || summary.samples <= 0) {
+  if (!summary || !Number.isFinite(summary.samples) || summary.samples <= 0
+    || typeof summary.score !== 'number' || !Number.isFinite(summary.score)) {
     return { hits: 0, samples: 0 };
   }
   const samples = Math.max(0, Math.round(summary.samples));
-  const numericScore = typeof summary.score === 'number' && Number.isFinite(summary.score)
-    ? summary.score
-    : 0;
-  const boundedScore = Math.min(100, Math.max(0, numericScore));
+  const boundedScore = Math.min(100, Math.max(0, summary.score));
   const hits = Math.min(samples, Math.max(0, Math.round((boundedScore / 100) * samples)));
   return { hits, samples };
 };

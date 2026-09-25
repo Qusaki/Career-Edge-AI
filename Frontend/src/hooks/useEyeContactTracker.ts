@@ -106,6 +106,28 @@ export const isLookingAtCamera = (landmarks: FaceLandmark[]): boolean => {
     && leftIrisCentered;
 };
 
+// A detector invocation is not a measurement unless it found a usable face.
+// A valid face looking away still counts and can produce a genuine 0% score.
+export const hasTrackableFace = (landmarks: FaceLandmark[] | undefined): landmarks is FaceLandmark[] => {
+  if (!landmarks || landmarks.length < 264) return false;
+  return landmarks.every(point =>
+    point && Number.isFinite(point.x) && Number.isFinite(point.y)
+  );
+};
+
+export type EyeContactCounters = { hits: number; samples: number };
+
+export const countEyeContactFrame = (
+  previous: EyeContactCounters,
+  landmarks: FaceLandmark[] | undefined,
+): EyeContactCounters => {
+  if (!hasTrackableFace(landmarks)) return previous;
+  return {
+    hits: previous.hits + (isLookingAtCamera(landmarks) ? 1 : 0),
+    samples: previous.samples + 1,
+  };
+};
+
 export function useEyeContactTracker(enabled: boolean) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [score, setScore] = useState(0);
@@ -150,6 +172,14 @@ export function useEyeContactTracker(enabled: boolean) {
         return;
       }
 
+      const cameraTrack = stream.getVideoTracks()[0];
+      if (cameraTrack) cameraTrack.onended = () => {
+        if (cancelled) return;
+        if (timer) clearInterval(timer);
+        timer = null;
+        setStatus('unavailable');
+      };
+
       const video = videoRef.current;
       if (!video) {
         stream.getTracks().forEach(track => track.stop());
@@ -161,16 +191,20 @@ export function useEyeContactTracker(enabled: boolean) {
         video.srcObject = stream;
         await video.play();
         const landmarker = await loadFaceLandmarker();
-        if (cancelled) return;
+        if (cancelled || cameraTrack?.readyState === 'ended') return;
 
         setStatus('tracking');
         timer = setInterval(() => {
-          if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+          if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth <= 0 || video.videoHeight <= 0) return;
           try {
             const result = landmarker.detectForVideo(video, performance.now());
-            const faceLandmarks = result.faceLandmarks[0];
-            samplesRef.current += 1;
-            if (faceLandmarks && isLookingAtCamera(faceLandmarks)) hitsRef.current += 1;
+            const next = countEyeContactFrame(
+              { hits: hitsRef.current, samples: samplesRef.current },
+              result.faceLandmarks[0],
+            );
+            if (next.samples === samplesRef.current) return;
+            hitsRef.current = next.hits;
+            samplesRef.current = next.samples;
             setSamples(samplesRef.current);
             setScore(Math.round((hitsRef.current / samplesRef.current) * 100));
           } catch (error) {
@@ -179,6 +213,8 @@ export function useEyeContactTracker(enabled: boolean) {
         }, 750);
       } catch (error) {
         console.error('Eye-contact tracker failed to initialize:', error);
+        stream?.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
         setStatus('unavailable');
       }
     };
