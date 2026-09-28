@@ -95,12 +95,13 @@ test('No speech detected is reserved for a started recognition session with no f
   assert.match(hookSource, /Speech recognition is unavailable in this browser/);
 });
 
-test('Pre-Test and Drills use speech-only input while other flows retain their scoped typed fallback', () => {
+test('Pre-Test, Drills, and Post-Test use speech-only input while other flows retain their scoped typed fallback', () => {
   assert.doesNotMatch(preTestSource, /<textarea|saveTypedIntro|Or type your summary if the microphone is unavailable/);
   assert.doesNotMatch(drillsSource, /<textarea|saveTypedDrillResponse|negotiationReply/);
   assert.doesNotMatch(preTestSource, /Save Typed Answer|onClick=\{\(\) => void sendReply\(\)\}/);
   assert.doesNotMatch(drillsSource, /onClick=\{\(\) => void sendNegotiationReply\(\)\}|onClick=\{\(\) => void saveTypedDrillResponse\(\)\}/);
-  assert.match(postTestSource, /Or type your answer if the microphone is unavailable/);
+  assert.doesNotMatch(postTestSource, /<textarea|Or type your answer if the microphone is unavailable/);
+  assert.match(postTestSource, /speechOnlyFallback: true/);
   assert.match(dashboardSource, /Typed answer fallback/);
   assert.match(dashboardSource, /renderOfflineInterviewInput\('thesis'\)/);
   assert.match(dashboardSource, /renderOfflineInterviewInput\('upcoming'\)/);

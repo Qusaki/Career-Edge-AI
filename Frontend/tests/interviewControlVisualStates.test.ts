@@ -40,7 +40,7 @@ test('Enrollment mic appearance and disabled prop share one complete authority',
   assert.ok(micButton);
   const disabledDefinition = source.match(/const isEnrollmentMicDisabled = ([^;]+);/)?.[1];
   assert.ok(disabledDefinition);
-  for (const condition of ['isMicTransitioning', 'isAiSpeaking', 'isSubmittingOfflineAnswer', 'enrollmentResponseCount >= 5']) {
+  for (const condition of ['isMicTransitioning', 'isProcessingEnrollmentAudio', 'isAiSpeaking', 'isSubmittingOfflineAnswer', 'enrollmentResponseCount >= 5']) {
     assert.ok(disabledDefinition.includes(condition), `${condition} must visibly disable the mic`);
   }
   assert.match(micButton, /disabled=\{isEnrollmentMicDisabled\}/);

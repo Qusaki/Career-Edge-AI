@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, Headphones, LoaderCircle, Mic, MicOff, RefreshCw } from 'lucide-react';
-import { useSpeechInput } from '../hooks/useSpeechInput';
+import { mergeSpeechFragments, useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
@@ -1262,10 +1262,11 @@ export function PreTestPage({
                     {PRETEST_WHO_AM_I_PROMPT}
                   </p>
                 </div>
-                <div className="mt-4 min-h-36 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink sm:min-h-44">
-                  {introTranscript || <span className="text-muted">Press the mic and speak your self-introduction.</span>}
+                <div className="mt-4 min-h-36 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink sm:min-h-44" aria-live="polite">
+                  {(isListening || isFinalizing ? mergeSpeechFragments(introTranscript, liveTranscript) : introTranscript)
+                    || <span className="text-muted">Press the mic and speak your self-introduction.</span>}
                 </div>
-                {(isListening || isFinalizing || hasUnfinalizedTranscript) && (
+                {hasUnfinalizedTranscript && !isListening && !isFinalizing && (
                   <div className="mt-3 rounded-lg border border-line bg-card p-3 text-sm leading-relaxed text-ink" aria-live="polite">
                     <p className="text-program-accent mb-1 text-xs font-bold uppercase tracking-wider">
                       {isFinalizing ? 'Finalizing...' : isListening ? 'Listening...' : 'Unfinalized speech'}
@@ -1310,6 +1311,14 @@ export function PreTestPage({
                   </p>
                 )}
                 <div className="mt-3 min-h-32 max-h-52 overflow-y-auto rounded-lg border border-line bg-background p-4 sm:min-h-36">
+                  {(isListening || isFinalizing) && liveTranscript && (
+                    <div className="mb-3 flex justify-end" aria-live="polite">
+                      <div className="program-accent-fill max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed">
+                        <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">You</p>
+                        {liveTranscript}
+                      </div>
+                    </div>
+                  )}
                   {visibleActiveListeningMessages.length === 0 && error ? (
                     <div className="flex h-full items-center justify-center text-center text-sm leading-relaxed text-rose-700">
                       {error}
@@ -1336,7 +1345,7 @@ export function PreTestPage({
                   ))}
                 </div>
 
-                {(isListening || isFinalizing || hasUnfinalizedTranscript) && (
+                {hasUnfinalizedTranscript && !isListening && !isFinalizing && (
                   <div className="mt-3 rounded-lg border border-line bg-card p-3 text-sm leading-relaxed text-ink" aria-live="polite">
                     <p className="text-program-accent mb-1 text-xs font-bold uppercase tracking-wider">
                       {isFinalizing ? 'Finalizing...' : isListening ? 'Listening...' : 'Unfinalized speech'}

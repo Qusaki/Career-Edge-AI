@@ -63,6 +63,7 @@ class DrillCompleteRequest(BaseModel):
     eye_contact_samples: Optional[int] = Field(default=None, ge=0, le=1_000_000)
 
 class NegotiationTurnRequest(BaseModel):
+    session_id: int = Field(gt=0)
     user_message: str
-    turn_number: int
-    current_offer: int
+    turn_number: int = Field(ge=0)
+    current_offer: int = Field(gt=0)

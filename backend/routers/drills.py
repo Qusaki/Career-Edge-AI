@@ -19,6 +19,7 @@ from core.drill_progression import (
     is_drill_type_unlocked,
 )
 from core.drill_scoring import calculate_drill_score
+from core.negotiation import advance_negotiation, load_negotiation_snapshot, serialize_negotiation_snapshot, turn_response
 from services.assessment_scoring import score_drill
 from models.user import User
 from models.drills import DrillSession
@@ -224,49 +225,33 @@ def initialize_legacy_canonical_prompt(session_id: int, db: Session) -> DrillSes
     return locked_session
 
 @router.post("/hard/negotiation/turn")
-def negotiation_turn(request: NegotiationTurnRequest):
-    """Simple logic tree to simulate a negotiation bot."""
-    msg = request.user_message.lower()
-    
-    if request.turn_number >= 5:
-        return {
-            "response": "This is our final offer. We cannot negotiate further and will have to rescind the offer. Have a good day.", 
-            "agreement_reached": False, 
-            "new_offer": request.current_offer, 
-            "is_game_over": True
-        }
-        
-    if "agree" in msg or "accept" in msg or "deal" in msg or "sounds good" in msg:
-        return {
-            "response": "Great, we have a deal! Welcome to the team.", 
-            "agreement_reached": True, 
-            "new_offer": request.current_offer, 
-            "is_game_over": True
-        }
-        
-    if "benefits" in msg or "stock" in msg or "equity" in msg or "vacation" in msg or "bonus" in msg:
-        return {
-            "response": "We can offer 5 extra vacation days and some stock options, but the base salary remains strictly fixed. Does that work for you?", 
-            "agreement_reached": False, 
-            "new_offer": request.current_offer,
-            "is_game_over": False
-        }
-        
-    if request.current_offer < 40000:
-        new_offer = request.current_offer + 2000
-        return {
-            "response": f"We can bump it up slightly to ₱{new_offer}, but that is absolutely our ceiling given our budget constraint. Take it or leave it.", 
-            "agreement_reached": False, 
-            "new_offer": new_offer,
-            "is_game_over": False
-        }
-        
-    return {
-        "response": "That's completely out of our budget given the current market conditions. What else can you offer to justify that rate?", 
-        "agreement_reached": False, 
-        "new_offer": request.current_offer,
-        "is_game_over": False
-    }
+def negotiation_turn(request: NegotiationTurnRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Advance only the authenticated session's persisted negotiation state."""
+    session = db.query(DrillSession).filter(
+        DrillSession.id == request.session_id,
+        DrillSession.user_id == current_user.id,
+        DrillSession.drill_type == "negotiation",
+        DrillSession.status == "active",
+    ).with_for_update().first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Active negotiation session not found.")
+    if (datetime.datetime.utcnow() - session.start_time).total_seconds() > 3600:
+        session.status = "expired"
+        session.end_time = datetime.datetime.utcnow()
+        db.commit()
+        raise HTTPException(status_code=409, detail="This negotiation session has expired.")
+
+    snapshot = load_negotiation_snapshot(session.evaluation_data)
+    if request.turn_number < snapshot.turn_number:
+        return turn_response(snapshot)
+    if request.turn_number != snapshot.turn_number or request.current_offer != snapshot.current_offer:
+        raise HTTPException(status_code=409, detail="The negotiation state changed. Reopen this Drill to continue.")
+    if snapshot.status == "closed":
+        return turn_response(snapshot)
+    updated = advance_negotiation(snapshot, request.user_message)
+    session.evaluation_data = serialize_negotiation_snapshot(updated)
+    db.commit()
+    return turn_response(updated)
 
 
 # --- Session Endpoints ---

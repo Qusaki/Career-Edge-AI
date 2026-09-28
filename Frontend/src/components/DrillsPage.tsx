@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clock3, Dumbbell, LoaderCircle, Lock, Mic, MicOff, RefreshCw, Sparkles } from 'lucide-react';
-import { useSpeechInput } from '../hooks/useSpeechInput';
+import { mergeSpeechFragments, useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
@@ -9,7 +9,7 @@ import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
 import { createClientSessionId } from '../offline/sessionFoundation';
 import { combineEyeContactSummaries, shouldCheckpointEyeContact, type EyeContactSummary } from '../offline/eyeContact';
-import { evaluateDrill, getOfflineNegotiationTurn } from '../offline/localEvaluation';
+import { evaluateDrill, getOfflineNegotiationTurn, type NegotiationTurnResult } from '../offline/localEvaluation';
 import { DRILLS_VERSION, getOfflineDrillPrompt, hasCurrentQuestionPack, NEGOTIATION_OPENING_PROMPT } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
 import { resolveDrillSessionExecution } from '../utils/drillSessionExecution';
@@ -93,6 +93,37 @@ type DrillTypeProgress = {
 type NegotiationMessage = {
   sender: 'user' | 'bot';
   text: string;
+};
+
+type NegotiationStatus = NegotiationTurnResult['status'];
+
+const readSavedNegotiation = (raw: string | null | undefined) => {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !('negotiation_state' in parsed)) return null;
+    const state = parsed.negotiation_state;
+    if (!state || typeof state !== 'object' || !('status' in state) || !('current_offer' in state)
+      || !('accepted_salary' in state) || !('turn_number' in state) || !('messages' in state)) return null;
+    if (state.status !== 'negotiating' && state.status !== 'agreed' && state.status !== 'closed') return null;
+    if (typeof state.current_offer !== 'number' || !Number.isSafeInteger(state.current_offer) || state.current_offer <= 0
+      || typeof state.turn_number !== 'number' || !Number.isSafeInteger(state.turn_number) || state.turn_number < 0
+      || (state.accepted_salary !== null && state.accepted_salary !== state.current_offer)
+      || (state.status === 'agreed' && state.accepted_salary === null)
+      || !Array.isArray(state.messages)
+      || !state.messages.every((message: unknown) => message !== null && typeof message === 'object'
+        && 'sender' in message && (message.sender === 'user' || message.sender === 'bot')
+        && 'text' in message && typeof message.text === 'string')) return null;
+    return {
+      status: state.status as NegotiationStatus,
+      currentOffer: state.current_offer,
+      acceptedSalary: state.accepted_salary as number | null,
+      turnNumber: state.turn_number,
+      messages: state.messages as NegotiationMessage[],
+    };
+  } catch {
+    return null;
+  }
 };
 
 const speechOnlyErrorMessage = (message: string): string => message
@@ -362,6 +393,8 @@ export function DrillsPage({
   const [negotiationTurn, setNegotiationTurn] = useState(0);
   const [currentOffer, setCurrentOffer] = useState(35000);
   const [negotiationGameOver, setNegotiationGameOver] = useState(false);
+  const [negotiationStatus, setNegotiationStatus] = useState<NegotiationStatus>('negotiating');
+  const [acceptedSalary, setAcceptedSalary] = useState<number | null>(null);
   const [negotiationLoading, setNegotiationLoading] = useState(false);
   const [isVoiceSpeaking, setIsVoiceSpeaking] = useState(false);
   const [drillTimer, setDrillTimer] = useState<DrillTimerState | null>(null);
@@ -407,9 +440,11 @@ export function DrillsPage({
     negotiationTurn,
     currentOffer,
     negotiationGameOver,
+    negotiationStatus,
+    acceptedSalary,
     ...serializeDrillTimer(timer),
     ...overrides,
-  }), [activePrompt, activeSession, currentOffer, negotiationGameOver, negotiationTurn, spokenResponse]);
+  }), [acceptedSalary, activePrompt, activeSession, currentOffer, negotiationGameOver, negotiationStatus, negotiationTurn, spokenResponse]);
   const getCheckpointEyeContactSummary = (): EyeContactSummary => {
     const liveWindow: EyeContactSummary = {
       score: eyeTracker.samples > 0 ? eyeTracker.score : null,
@@ -530,6 +565,10 @@ export function DrillsPage({
     setNegotiationTurn(Number(resumeSession.activityState.negotiationTurn || 0));
     setCurrentOffer(Number(resumeSession.activityState.currentOffer || 35000));
     setNegotiationGameOver(Boolean(resumeSession.activityState.negotiationGameOver));
+    const restoredStatus = resumeSession.activityState.negotiationStatus;
+    setNegotiationStatus(restoredStatus === 'agreed' || restoredStatus === 'closed' ? restoredStatus : 'negotiating');
+    setAcceptedSalary(typeof resumeSession.activityState.acceptedSalary === 'number'
+      ? resumeSession.activityState.acceptedSalary : null);
     applyDrillTimer(restoreDrillTimer(drill.drillType, resumeSession.activityState));
     setNotice('Your saved offline Drill has been restored from its last checkpoint.');
     onSessionModeChange(true);
@@ -617,6 +656,8 @@ export function DrillsPage({
     setNegotiationTurn(0);
     setCurrentOffer(35000);
     setNegotiationGameOver(false);
+    setNegotiationStatus('negotiating');
+    setAcceptedSalary(null);
     const initialTimer = createDrillTimerState(drill.drillType);
     applyDrillTimer(initialTimer);
     activeOfflineClientSessionIdRef.current = null;
@@ -648,6 +689,8 @@ export function DrillsPage({
             negotiationTurn: 0,
             currentOffer: 35000,
             negotiationGameOver: false,
+            negotiationStatus: 'negotiating',
+            acceptedSalary: null,
             ...serializeDrillTimer(initialTimer),
           },
         });
@@ -704,15 +747,18 @@ export function DrillsPage({
       const formattedPrompt = formatPrompt(session.canonical_prompt);
       setActiveSession(session);
       setActivePrompt(formattedPrompt);
+      const savedNegotiation = drill.isNegotiation ? readSavedNegotiation(session.evaluation_data) : null;
+      const negotiationHistory: NegotiationMessage[] = drill.isNegotiation
+        ? [{ sender: 'bot', text: NEGOTIATION_OPENING_PROMPT }, ...(savedNegotiation?.messages ?? [])]
+        : [];
       if (drill.isNegotiation) {
-        const openingOffer = NEGOTIATION_OPENING_PROMPT;
-        setNegotiationMessages([
-          {
-            sender: 'bot',
-            text: openingOffer,
-          },
-        ]);
-        speakText(openingOffer);
+        setNegotiationMessages(negotiationHistory);
+        setNegotiationTurn(savedNegotiation?.turnNumber ?? 0);
+        setCurrentOffer(savedNegotiation?.currentOffer ?? 35000);
+        setNegotiationStatus(savedNegotiation?.status ?? 'negotiating');
+        setAcceptedSalary(savedNegotiation?.acceptedSalary ?? null);
+        setNegotiationGameOver(savedNegotiation?.status === 'agreed' || savedNegotiation?.status === 'closed');
+        if (!savedNegotiation?.messages.length) speakText(NEGOTIATION_OPENING_PROMPT);
       } else {
         speakText(formattedPrompt);
       }
@@ -721,17 +767,19 @@ export function DrillsPage({
         type: 'drill',
         serverSessionId: execution.serverSessionId,
         questionPackVersion: DRILLS_VERSION,
-        currentQuestion: drill.isNegotiation ? NEGOTIATION_OPENING_PROMPT : formattedPrompt,
-        conversationLog: drill.isNegotiation ? [{ sender: 'ai', text: NEGOTIATION_OPENING_PROMPT }] : [],
-        currentStep: 0,
+        currentQuestion: drill.isNegotiation ? negotiationHistory.at(-1)?.text || NEGOTIATION_OPENING_PROMPT : formattedPrompt,
+        conversationLog: negotiationHistory.map(message => ({ sender: message.sender === 'bot' ? 'ai' as const : 'user' as const, text: message.text })),
+        currentStep: savedNegotiation?.turnNumber ?? 0,
         activityState: {
           drillType: drill.drillType,
           drillLevel: drill.drillLevel,
           prompt: formattedPrompt,
           spokenResponse: '',
-          negotiationTurn: 0,
-          currentOffer: 35000,
-          negotiationGameOver: false,
+          negotiationTurn: savedNegotiation?.turnNumber ?? 0,
+          currentOffer: savedNegotiation?.currentOffer ?? 35000,
+          negotiationGameOver: savedNegotiation?.status === 'agreed' || savedNegotiation?.status === 'closed',
+          negotiationStatus: savedNegotiation?.status ?? 'negotiating',
+          acceptedSalary: savedNegotiation?.acceptedSalary ?? null,
           ...serializeDrillTimer(initialTimer),
         },
       });
@@ -764,6 +812,8 @@ export function DrillsPage({
     setNegotiationTurn(0);
     setCurrentOffer(35000);
     setNegotiationGameOver(false);
+    setNegotiationStatus('negotiating');
+    setAcceptedSalary(null);
     setIsVoiceSpeaking(false);
     applyDrillTimer(null);
     activeOfflineClientSessionIdRef.current = null;
@@ -776,7 +826,7 @@ export function DrillsPage({
   const sendNegotiationReply = async (spokenText: string) => {
     setHasPendingOfflineAudio(false);
     const text = spokenText.trim();
-    if (!text || negotiationLoading || negotiationGameOver) return;
+    if (!text || negotiationLoading || (negotiationGameOver && negotiationStatus !== 'agreed')) return;
 
     setNegotiationLoading(true);
     setError(null);
@@ -800,6 +850,8 @@ export function DrillsPage({
         negotiationTurn,
         currentOffer,
         negotiationGameOver,
+        negotiationStatus,
+        acceptedSalary,
         ...serializeDrillTimer(drillTimerRef.current),
       },
     });
@@ -811,30 +863,49 @@ export function DrillsPage({
     setNegotiationMessages(userMessages);
 
     try {
-      let data: { response: string; new_offer: number; is_game_over: boolean };
+      let data: { response: string; new_offer: number; is_game_over: boolean; negotiation_state: NegotiationStatus; accepted_salary: number | null };
       if (sessionModeRef.current === 'offline') {
-        const localTurn = getOfflineNegotiationTurn(text, negotiationTurn, currentOffer);
+        const localTurn = getOfflineNegotiationTurn(text, negotiationTurn, currentOffer, negotiationStatus, acceptedSalary);
         data = {
           response: localTurn.response,
           new_offer: localTurn.newOffer,
           is_game_over: localTurn.isGameOver,
+          negotiation_state: localTurn.status,
+          accepted_salary: localTurn.acceptedSalary,
         };
       } else {
+        if (!activeSession) throw new Error('The negotiation session is unavailable. Reopen this Drill.');
+        const execution = resolveDrillSessionExecution({
+          sessionMode: sessionModeRef.current,
+          activeSessionId: activeSession.id,
+          knownOfflineClientSessionId: activeOfflineClientSessionIdRef.current,
+        });
+        if (execution.mode !== 'online') throw new Error('The negotiation session could not be verified. Reopen this Drill.');
+        const token = localStorage.getItem('token');
+        if (!token) throw new Error('Sign in again to continue this negotiation.');
         const response = await fetch(`${apiUrl}/drills/hard/negotiation/turn`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_message: text, turn_number: negotiationTurn, current_offer: currentOffer }),
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: execution.serverSessionId, user_message: text, turn_number: negotiationTurn, current_offer: currentOffer }),
         });
         if (!response.ok) throw new Error('Unable to process negotiation turn.');
         data = await response.json();
         if (String(sessionModeRef.current) === 'offline') {
-          const localTurn = getOfflineNegotiationTurn(text, negotiationTurn, currentOffer);
+          const localTurn = getOfflineNegotiationTurn(text, negotiationTurn, currentOffer, negotiationStatus, acceptedSalary);
           data = {
             response: localTurn.response,
             new_offer: localTurn.newOffer,
             is_game_over: localTurn.isGameOver,
+            negotiation_state: localTurn.status,
+            accepted_salary: localTurn.acceptedSalary,
           };
         }
+      }
+      if (typeof data.response !== 'string' || !data.response.trim()
+        || !Number.isSafeInteger(data.new_offer) || data.new_offer <= 0
+        || !['negotiating', 'agreed', 'closed'].includes(data.negotiation_state)
+        || (data.accepted_salary !== null && data.accepted_salary !== data.new_offer)) {
+        throw new Error('The negotiation response was invalid. Reopen this Drill.');
       }
       const nextTurn = negotiationTurn + 1;
       const nextMessages = [...userMessages, { sender: 'bot' as const, text: data.response }];
@@ -855,6 +926,8 @@ export function DrillsPage({
           negotiationTurn: nextTurn,
           currentOffer: data.new_offer,
           negotiationGameOver: data.is_game_over,
+          negotiationStatus: data.negotiation_state,
+          acceptedSalary: data.accepted_salary,
           ...serializeDrillTimer(drillTimerRef.current),
         },
       });
@@ -862,6 +935,8 @@ export function DrillsPage({
       setCurrentOffer(data.new_offer);
       setNegotiationTurn(nextTurn);
       setNegotiationGameOver(data.is_game_over);
+      setNegotiationStatus(data.negotiation_state);
+      setAcceptedSalary(data.accepted_salary);
       setNegotiationMessages(nextMessages);
       speakText(data.response);
     } catch (err) {
@@ -959,6 +1034,7 @@ export function DrillsPage({
   };
 
   const recordNegotiationReply = () => {
+    if (negotiationGameOver && negotiationStatus !== 'agreed') return;
     if (isVoiceSpeaking || window.speechSynthesis?.speaking || window.speechSynthesis?.pending) {
       setError('Wait for the employer audio to finish before starting the microphone.');
       return;
@@ -1028,6 +1104,8 @@ export function DrillsPage({
             negotiationTurn,
             currentOffer,
             negotiationGameOver,
+            negotiationStatus,
+            acceptedSalary,
             ...serializeDrillTimer(drillTimerRef.current),
           },
         });
@@ -1041,6 +1119,8 @@ export function DrillsPage({
         setNegotiationTurn(0);
         setCurrentOffer(35000);
         setNegotiationGameOver(false);
+        setNegotiationStatus('negotiating');
+        setAcceptedSalary(null);
         applyDrillTimer(null);
         activeOfflineClientSessionIdRef.current = null;
         offlineEyeContactBaselineRef.current = null;
@@ -1102,6 +1182,8 @@ export function DrillsPage({
       setNegotiationTurn(0);
       setCurrentOffer(35000);
       setNegotiationGameOver(false);
+      setNegotiationStatus('negotiating');
+      setAcceptedSalary(null);
       applyDrillTimer(null);
       activeOfflineClientSessionIdRef.current = null;
       offlineEyeContactBaselineRef.current = null;
@@ -1231,22 +1313,25 @@ export function DrillsPage({
                 <div className="mt-4 flex flex-col items-center gap-2">
                   <button
                     onClick={isListening ? stopListening : recordNegotiationReply}
-                    disabled={negotiationLoading || negotiationGameOver || isVoiceSpeaking || isFinalizing || isProcessingAudio || Boolean(pendingOnlineAudio)}
+                    disabled={negotiationLoading || (negotiationGameOver && negotiationStatus !== 'agreed') || isVoiceSpeaking || isFinalizing || isProcessingAudio || Boolean(pendingOnlineAudio)}
                     className={`program-accent-focus-ring flex min-h-12 items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-                    {isListening ? 'Stop Recording' : negotiationGameOver ? 'Negotiation Ended' : 'Speak Reply'}
+                    {isListening ? 'Stop Recording' : negotiationStatus === 'agreed' ? 'Speak Closing' : negotiationGameOver ? 'Negotiation Ended' : 'Speak Reply'}
                   </button>
                   {!negotiationMessages.some(message => message.sender === 'user') && <p className="text-center text-xs text-muted">Speak a reply to enable Mark Complete.</p>}
                 </div>
               </>
             ) : (
               <>
-                <div className="min-h-36 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink sm:min-h-44">
+                <div className="min-h-36 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink sm:min-h-44" aria-live={activeSession.drill_level === 'easy' ? 'polite' : undefined}>
                   <p className="text-program-accent mb-2 font-bold">Your spoken response</p>
-                  {spokenResponse || <span className="text-muted">Press the mic and answer the drill out loud.</span>}
+                  {(activeSession.drill_level === 'easy' && (isListening || isFinalizing)
+                    ? mergeSpeechFragments(spokenResponse, liveTranscript)
+                    : spokenResponse) || <span className="text-muted">Press the mic and answer the drill out loud.</span>}
                 </div>
-                {(isListening || isFinalizing || hasUnfinalizedTranscript) && (
+                {((activeSession.drill_level !== 'easy' && (isListening || isFinalizing))
+                  || (hasUnfinalizedTranscript && !isListening && !isFinalizing)) && (
                   <div className="mt-3 rounded-lg border border-line bg-card p-3 text-sm leading-relaxed text-ink" aria-live="polite">
                     <p className="text-program-accent mb-1 text-xs font-bold uppercase tracking-wider">
                       {isFinalizing ? 'Finalizing...' : isListening ? 'Listening...' : 'Unfinalized speech'}
@@ -1302,7 +1387,7 @@ export function DrillsPage({
                 <div className="bg-card/50 px-4 py-2.5">
                   <p className="text-xs font-bold uppercase tracking-wider text-muted">Automatic scoring</p>
                   <p className="mt-1 text-sm leading-relaxed text-muted">
-                    Practice goal: follow the task directions as closely as possible. {activeScoringNote}
+                    Practice goal: Follow the task directions as closely as possible. {activeScoringNote}
                   </p>
                 </div>
               </div>

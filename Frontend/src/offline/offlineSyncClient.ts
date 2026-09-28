@@ -7,6 +7,7 @@ import {
 } from '../db';
 import { isOfflineClientSessionId, isPositiveServerSessionId } from '../utils/sessionIdentity';
 import { SpeechTranscriptionError, transcribeAudioWithToken } from '../utils/transcribeAnswer';
+import { POST_TEST_ANSWER_LIMIT } from './activityRuntime';
 
 interface OfflineSyncResponse {
   synchronized: true;
@@ -119,10 +120,24 @@ export const prepareRecordedAnswers = async (
   if (sortedAnswers.some((answer, index) => answer.step !== index + 1 || !answer.text.trim())) {
     throw new OfflineSyncError('A recorded answer is still awaiting speech processing.', 'incomplete_recorded_answers', false);
   }
+  if (session.type === 'post_test' && sortedAnswers.length !== POST_TEST_ANSWER_LIMIT) {
+    throw new OfflineSyncError('All five recorded Post-Test answers must have canonical transcripts before sync.', 'incomplete_recorded_answers', false);
+  }
   const previousUserTurns = session.conversationLog.filter(turn => turn.sender === 'user').length;
-  const conversationLog = session.type === 'pre_test_active_listening' || session.type === 'drill' && session.activityState.drillType === 'negotiation'
-    ? [...session.conversationLog, ...sortedAnswers.slice(previousUserTurns).map(answer => ({ sender: 'user' as const, text: answer.text }))]
-    : session.conversationLog;
+  const postTestQuestions = session.type === 'post_test'
+    ? session.conversationLog.filter(turn => turn.sender === 'ai').map(turn => turn.text)
+    : [];
+  if (session.type === 'post_test' && postTestQuestions.length !== POST_TEST_ANSWER_LIMIT) {
+    throw new OfflineSyncError('The saved Post-Test question sequence is incomplete.', 'incomplete_recorded_answers', false);
+  }
+  const conversationLog = session.type === 'post_test'
+    ? postTestQuestions.flatMap((question, index) => [
+      { sender: 'ai' as const, text: question },
+      { sender: 'user' as const, text: sortedAnswers[index].text },
+    ])
+    : session.type === 'pre_test_active_listening' || session.type === 'drill' && session.activityState.drillType === 'negotiation'
+      ? [...session.conversationLog, ...sortedAnswers.slice(previousUserTurns).map(answer => ({ sender: 'user' as const, text: answer.text }))]
+      : session.conversationLog;
   const activityState = session.type === 'drill' && session.activityState.drillType !== 'negotiation'
     ? { ...session.activityState, spokenResponse: sortedAnswers[0]?.text || '' }
     : session.activityState;

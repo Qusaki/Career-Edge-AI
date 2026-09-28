@@ -153,32 +153,79 @@ export interface NegotiationTurnResult {
   agreementReached: boolean;
   newOffer: number;
   isGameOver: boolean;
+  status: 'negotiating' | 'agreed' | 'closed';
+  acceptedSalary: number | null;
 }
 
-// Exact local port of backend/routers/drills.py negotiation_turn.
-export const getOfflineNegotiationTurn = (message: string, turnNumber: number, currentOffer: number): NegotiationTurnResult => {
-  const normalized = message.toLowerCase();
+export const isClearNegotiationAcceptance = (message: string, currentOffer: number): boolean => {
+  const text = message.toLowerCase().replace(/’/g, "'").trim();
+  if (!text || text.includes('?')) return false;
+  if (/\b(?:don't|do not|not|can't|cannot|won't)\s+(?:want to\s+)?(?:accept|agree|take)\b/.test(text)) return false;
+  if (/\b(?:too low|still low|think about it|more|higher|increase|raise|counter|negotiate|instead)\b/.test(text)) return false;
+  if (/\b(?:can|could|would)\s+you\b|\bwhat about\b|\bbetter benefits\b/.test(text)) return false;
+  const salaryMentions = [...text.matchAll(/(?:^|[^\w])(?:₱\s*)?(\d{2,3})(?:\s*k|,?000)\b/g)]
+    .map(match => Number(match[1]) * 1000);
+  if (salaryMentions.some(amount => amount !== currentOffer)) return false;
+  return /\b(?:i|we)\s+(?:will\s+|would\s+|can\s+)?accept\b/.test(text)
+    || /\baccept\s+(?:the\s+|your\s+|this\s+)?(?:offer|salary)\b/.test(text)
+    || /\b(?:i'll|i will|we'll|we will)\s+take\s+(?:it|the offer)\b/.test(text)
+    || /\b(?:i|we)\s+agree\b/.test(text)
+    || /\b(?:that|this|the offer|\d{2,3}\s*k|\d{2,3},?000)\s+works\s+for\s+me\b/.test(text)
+    || /^(?:okay[,! ]*)?(?:deal|it's a deal|we have a deal)[.!]*$/.test(text)
+    || /^(?:okay[,! ]*)?sounds good[.!]*$/.test(text);
+};
+
+// Mirror of the deterministic backend negotiation decisions for offline turns.
+export const getOfflineNegotiationTurn = (
+  message: string, turnNumber: number, currentOffer: number,
+  status: NegotiationTurnResult['status'] = 'negotiating', acceptedSalary: number | null = null,
+): NegotiationTurnResult => {
+  if (status === 'closed') return {
+    response: acceptedSalary === null ? 'Thank you for your time. Have a good day.' : "You're welcome. We look forward to working with you.",
+    agreementReached: acceptedSalary !== null, newOffer: currentOffer, isGameOver: true,
+    status: 'closed', acceptedSalary,
+  };
+  if (status === 'agreed') return {
+    response: "You're welcome. We look forward to working with you.",
+    agreementReached: true, newOffer: currentOffer, isGameOver: true,
+    status: 'closed', acceptedSalary: acceptedSalary ?? currentOffer,
+  };
+  if (isClearNegotiationAcceptance(message, currentOffer)) return {
+    response: `Great, we have a deal at ₱${currentOffer.toLocaleString('en-US')}. Welcome to the team.`,
+    agreementReached: true, newOffer: currentOffer, isGameOver: true,
+    status: 'agreed', acceptedSalary: currentOffer,
+  };
   if (turnNumber >= 5) return {
     response: 'This is our final offer. We cannot negotiate further and will have to rescind the offer. Have a good day.',
     agreementReached: false, newOffer: currentOffer, isGameOver: true,
+    status: 'closed', acceptedSalary: null,
   };
-  if (['agree', 'accept', 'deal', 'sounds good'].some(term => normalized.includes(term))) return {
-    response: 'Great, we have a deal! Welcome to the team.',
-    agreementReached: true, newOffer: currentOffer, isGameOver: true,
+  if (/\b(?:goodbye|bye)\b/i.test(message)) return {
+    response: 'Thank you for your time. Have a good day.',
+    agreementReached: false, newOffer: currentOffer, isGameOver: true,
+    status: 'closed', acceptedSalary: null,
   };
-  if (['benefits', 'stock', 'equity', 'vacation', 'bonus'].some(term => normalized.includes(term))) return {
+  if (/\b(?:thank you|thanks)\b/i.test(message)) return {
+    response: "You're welcome. Let me know if you would like to discuss the current offer further.",
+    agreementReached: false, newOffer: currentOffer, isGameOver: false,
+    status: 'negotiating', acceptedSalary: null,
+  };
+  if (/\b(?:benefits|stock|equity|vacation|bonus)\b/i.test(message)) return {
     response: 'We can offer 5 extra vacation days and some stock options, but the base salary remains strictly fixed. Does that work for you?',
     agreementReached: false, newOffer: currentOffer, isGameOver: false,
+    status: 'negotiating', acceptedSalary: null,
   };
   if (currentOffer < 40000) {
     const newOffer = currentOffer + 2000;
     return {
       response: `We can bump it up slightly to ₱${newOffer}, but that is absolutely our ceiling given our budget constraint. Take it or leave it.`,
       agreementReached: false, newOffer, isGameOver: false,
+      status: 'negotiating', acceptedSalary: null,
     };
   }
   return {
     response: "That's completely out of our budget given the current market conditions. What else can you offer to justify that rate?",
     agreementReached: false, newOffer: currentOffer, isGameOver: false,
+    status: 'negotiating', acceptedSalary: null,
   };
 };

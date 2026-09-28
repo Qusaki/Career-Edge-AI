@@ -6,6 +6,10 @@ const dashboardSource = readFileSync(new URL('../src/components/Dashboard.tsx', 
 const sessionStart = dashboardSource.indexOf("activeTab === 'interview-session' && (");
 const sessionEnd = dashboardSource.indexOf('{/* Leave Confirmation Modal */}', sessionStart);
 const sessionSource = dashboardSource.slice(sessionStart, sessionEnd);
+const cameraFramingSource = dashboardSource.slice(
+  dashboardSource.indexOf('function EnrollmentMobileCameraFraming()'),
+  dashboardSource.indexOf('export const Dashboard: React.FC<DashboardProps> ='),
+);
 
 test('Enrollment mobile DOM order follows stage, controls, then transcript', () => {
   assert.ok(sessionStart >= 0 && sessionEnd > sessionStart);
@@ -29,6 +33,18 @@ test('Enrollment reduces stage height only below the small-screen breakpoint', (
   assert.match(sessionSource, /min-h-\[40svh\]/);
   assert.match(sessionSource, /sm:min-h-\[48svh\]/);
   assert.match(sessionSource, /lg:min-h-0/);
+});
+
+test('Enrollment mobile camera frames Maxiel symmetrically without changing the desktop camera', () => {
+  assert.match(sessionSource, /initial=\{\{ opacity: 0, x: window\.matchMedia\('\(max-width: 639px\)'\)\.matches \? 0 : -20 \}\}/);
+  assert.match(sessionSource, /<Canvas shadows camera=\{\{ position: \[0, 0\.5, 3\], fov: 35 \}\}>\s*<EnrollmentMobileCameraFraming \/>/);
+  assert.match(sessionSource, /<ProfessorModel\s/);
+  assert.match(cameraFramingSource, /matchMedia\('\(max-width: 639px\)'\)/);
+  assert.match(cameraFramingSource, /size\.width \/ size\.height/);
+  assert.match(cameraFramingSource, /isMobile \? Math\.min\(3\.6, Math\.max\(3, 4\.5 \/ aspect\)\) : 3/);
+  assert.match(cameraFramingSource, /camera\.position\.set\(0, 0\.5, distance\)/);
+  assert.match(cameraFramingSource, /camera\.lookAt\(0, 0, 0\)/);
+  assert.doesNotMatch(cameraFramingSource, /translateX|position\.x\s*=|target=\{\[[^\]]*[1-9]/);
 });
 
 test('Enrollment microphone remains an accessible off/on control without changing its handler', () => {

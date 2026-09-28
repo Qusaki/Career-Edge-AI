@@ -84,6 +84,8 @@ export class SpeechTranscriptAccumulator {
   private deliveryClaimed = false;
   private recognitionEpoch = 0;
 
+  constructor(private readonly cumulativeResultProtection = false) {}
+
   resetWindow() {
     this.finalParts = [];
     this.interimTranscript = '';
@@ -105,7 +107,15 @@ export class SpeechTranscriptAccumulator {
       const result = event.results[index];
       if (!result?.isFinal || this.committedResultIndexes.has(index)) continue;
       const text = normalizeSpeechWhitespace(result[0]?.transcript ?? '');
-      if (text) this.finalParts.push(text);
+      if (text) {
+        const committed = mergeSpeechFragments(...this.finalParts);
+        if (this.cumulativeResultProtection && committed
+          && (text === committed || text.startsWith(`${committed} `))) {
+          // Some recognizers repeat the whole prior hypothesis at a new result
+          // index. Treat that complete prefix as a revision, not a new segment.
+          this.finalParts = [text];
+        } else this.finalParts.push(text);
+      }
       this.committedResultIndexes.add(index);
     }
 
@@ -122,10 +132,12 @@ export class SpeechTranscriptAccumulator {
 
   snapshot(): SpeechTranscriptState {
     const finalTranscript = mergeSpeechFragments(...this.finalParts);
+    const interimIsCumulative = this.cumulativeResultProtection && finalTranscript
+      && (this.interimTranscript === finalTranscript || this.interimTranscript.startsWith(`${finalTranscript} `));
     return {
       finalTranscript,
       interimTranscript: this.interimTranscript,
-      liveTranscript: mergeSpeechFragments(finalTranscript, this.interimTranscript),
+      liveTranscript: interimIsCumulative ? this.interimTranscript : mergeSpeechFragments(finalTranscript, this.interimTranscript),
     };
   }
 
@@ -304,7 +316,7 @@ const readMicrophonePermissionState = async (): Promise<PermissionState | undefi
   }
 };
 
-export function useSpeechInput() {
+export function useSpeechInput(options?: { cumulativeResultProtection?: boolean }) {
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
   const streamHandlersRef = useRef<SpeechInputStreamHandlers | null>(null);
@@ -585,7 +597,7 @@ export function useSpeechInput() {
       return false;
     }
 
-    const accumulator = new SpeechTranscriptAccumulator();
+    const accumulator = new SpeechTranscriptAccumulator(options?.cumulativeResultProtection === true);
     sessionRef.current = {
       onTranscript,
       onError,
@@ -801,7 +813,7 @@ export function useSpeechInput() {
       ? 'Browser speech recognition is unavailable. Speak your answer; the recording will be processed after you stop.'
       : 'Speech recognition is unavailable offline. Audio will still be saved; type your answer to continue.');
     return true;
-  }, [clearRestart, clearStartTimeout, deliverTranscript, isFinalizing, releaseMicrophone, stopListening]);
+  }, [clearRestart, clearStartTimeout, deliverTranscript, isFinalizing, options?.cumulativeResultProtection, releaseMicrophone, stopListening]);
 
   const enableOfflineRecording = useCallback(async (offlineAudio: OfflineSpeechAudioOptions) => {
     const session = sessionRef.current;

@@ -107,9 +107,10 @@ test('connection recovery and unavailable interview guidance remain explicit', (
   assert.match(dashboard, /id="start-interview-lock-guidance"/);
 });
 
-test('offline Post-Test answer controls stack on narrow screens', () => {
-  assert.match(postTest, /mx-auto mt-4 flex max-w-2xl flex-col gap-2 sm:flex-row/);
-  assert.match(postTest, /program-accent-button w-full[\s\S]*?sm:w-auto sm:self-end/);
+test('offline Post-Test keeps its speech-only control centered on narrow screens', () => {
+  assert.match(postTest, /mt-4 flex flex-col items-center gap-2/);
+  assert.match(postTest, /flex min-h-12 items-center gap-2 rounded-full px-6 py-3/);
+  assert.doesNotMatch(postTest, /<textarea\b/);
 });
 
 test('camera score stays visual without rapid live announcements', () => {

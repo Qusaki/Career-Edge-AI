@@ -154,5 +154,7 @@ test('speech-only pages expose retry controls and no manual text inputs', () => 
     assert.doesNotMatch(source, /<textarea\b|placeholder="Or type/);
   }
   const postTest = readFileSync(new URL('../src/components/PostTestPage.tsx', import.meta.url), 'utf8');
-  assert.doesNotMatch(postTest, /speechOnlyFallback: true/);
+  assert.match(postTest, /speechOnlyFallback: true/);
+  assert.match(postTest, /Retry Speech Processing/);
+  assert.doesNotMatch(postTest, /<textarea\b|placeholder="Or type/);
 });

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, LoaderCircle, Lock, Mic, MicOff, RefreshCw, Volume2 } from 'lucide-react';
 import { useSpeechInput } from '../hooks/useSpeechInput';
+import type { OfflineAudioCapture } from '../offline/offlineAudioRecorder';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
@@ -12,11 +13,11 @@ import { combineEyeContactSummaries, shouldCheckpointEyeContact, type EyeContact
 import { evaluatePostTest } from '../offline/localEvaluation';
 import { getPostTestQuestions, hasCurrentQuestionPack, POST_TEST_VERSION } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
+import { transcribeAnswer } from '../utils/transcribeAnswer';
 import { resolveSessionExecution } from '../utils/sessionExecution';
 import { hasRestorableOfflineIdentity } from '../utils/sessionIdentity';
 import { isPostTestUnlocked, type PostTestAccess } from '../utils/postTestProgress';
 import {
-  appendOfflinePostTestAnswer,
   appendPostTestUserAnswer,
   getPostTestAnswerBoundary,
   getPostTestQuestionForProgress,
@@ -108,6 +109,32 @@ export const isPostTestCompletionDisabled = ({
   || !canComplete
 );
 
+const speechOnlyErrorMessage = (message: string): string => message
+  .replace(/Use the typed answer or clear local site data/gi, 'Clear local site data')
+  .replace(/(?:,?\s+or\s+|,\s+then\s+|;\s*)(?:use the typed answer(?: instead)?|type (?:your|an) answer(?: to continue| if needed)?)/gi, '')
+  .replace(/(?:Try again or |try again or )use the typed answer/gi, 'Try again')
+  .replace(/(?:retry or |retry or )use the typed answer/gi, 'retry')
+  .replace(/(?:;|,)\s*type your answer to continue/gi, '')
+  .replace(/Use the typed answer instead\.?/gi, '')
+  .replace(/,\s*\./g, '.')
+  .replace(/\s{2,}/g, ' ')
+  .trim();
+
+const appendSpokenOfflineAnswer = (
+  conversationLog: ChatMessage[], answer: string, answerIndex: number, questions: readonly string[],
+) => {
+  if (!answer.trim() || answerIndex < 1 || answerIndex > POST_TEST_ANSWER_LIMIT) {
+    throw new Error('A valid Post-Test answer is required.');
+  }
+  const nextQuestion = questions[answerIndex] || '';
+  const withAnswer = [...conversationLog, { sender: 'user' as const, text: answer.trim() }];
+  return {
+    conversationLog: nextQuestion ? [...withAnswer, { sender: 'ai' as const, text: nextQuestion }] : withAnswer,
+    currentQuestion: nextQuestion || questions[answerIndex - 1],
+    nextQuestion,
+  };
+};
+
 type PostTestActivityProps = OfflineActivityBridgeProps & {
   apiUrl: string;
   userDepartment: string;
@@ -162,7 +189,12 @@ function PostTestActivity({
   const [completing, setCompleting] = useState(false);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [reply, setReply] = useState('');
+  const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+  const [pendingOnlineAudio, setPendingOnlineAudio] = useState<{ capture: OfflineAudioCapture; answerIndex: number } | null>(null);
+  const [hasPendingOfflineAudio, setHasPendingOfflineAudio] = useState(false);
+  const [recordedAnswerCount, setRecordedAnswerCount] = useState(0);
+  const recordedAnswerCountRef = useRef(0);
+  const canonicalAnswersRef = useRef<Array<{ step: number; text: string; createdAt: number }>>([]);
   const [isAiResponding, setIsAiResponding] = useState(false);
   const [isVoiceSpeaking, setIsVoiceSpeaking] = useState(false);
   const [connectionState, setConnectionState] = useState<RealtimeConnectionState>('idle');
@@ -195,8 +227,7 @@ function PostTestActivity({
     stopListening,
     cancelListening,
     resetTranscript: resetSpeechTranscript,
-    enableOfflineRecording,
-  } = useSpeechInput();
+  } = useSpeechInput({ cumulativeResultProtection: true });
   const eyeTracker = useEyeContactTracker(Boolean(activeSession));
   const getCheckpointEyeContactSummary = (): EyeContactSummary => {
     const liveWindow: EyeContactSummary = {
@@ -220,18 +251,6 @@ function PostTestActivity({
     void onActivityCheckpoint({ eyeContactSummary: getCheckpointEyeContactSummary() });
   }, [activeSession, eyeTracker.samples, onActivityCheckpoint, sessionMode]);
 
-  useEffect(() => {
-    if (sessionMode !== 'offline' || !isListening || !activeSession) return;
-    const answerIndex = messagesRef.current.filter(message => message.sender === 'user').length + 1;
-    void enableOfflineRecording({
-      enabled: true,
-      activityType: 'post_test',
-      turnId: `post-test-${answerIndex}`,
-      answerIndex,
-      persistAudio: onOfflineAudioCaptured,
-    });
-  }, [activeSession, enableOfflineRecording, isListening, onOfflineAudioCaptured, sessionMode]);
-
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   useEffect(() => {
@@ -251,6 +270,15 @@ function PostTestActivity({
       return;
     }
     const restoredMessages = resumeSession.conversationLog as ChatMessage[];
+    const restoredRecordedCount = Math.max(
+      resumeSession.answers.length,
+      ...resumeSession.audioReferences.map(reference => reference.answerIndex),
+      restoredMessages.filter(message => message.sender === 'user').length,
+    );
+    canonicalAnswersRef.current = resumeSession.answers;
+    recordedAnswerCountRef.current = restoredRecordedCount;
+    setRecordedAnswerCount(restoredRecordedCount);
+    setHasPendingOfflineAudio(resumeSession.audioReferences.some(reference => reference.transcriptStatus === 'pending'));
     activeOfflineClientSessionIdRef.current = resumeSession.clientSessionId;
     offlineEyeContactBaselineRef.current = resumeSession.eyeContactSummary
       ? { ...resumeSession.eyeContactSummary }
@@ -284,7 +312,7 @@ function PostTestActivity({
     if (sessionMode !== 'offline' || !activeSession) return;
     const alignWithOfflinePack = async () => {
       const questions = getPostTestQuestions(userDepartment);
-      const answerCount = messagesRef.current.filter(message => message.sender === 'user').length;
+      const answerCount = recordedAnswerCountRef.current;
       if (answerCount >= questions.length) return;
       const expectedQuestion = questions[answerCount];
       const currentMessages = messagesRef.current;
@@ -584,6 +612,11 @@ function PostTestActivity({
     setNotice(null);
     setMessages([]);
     setLatestAiQuestion('');
+    recordedAnswerCountRef.current = 0;
+    canonicalAnswersRef.current = [];
+    setRecordedAnswerCount(0);
+    setHasPendingOfflineAudio(false);
+    setPendingOnlineAudio(null);
     activeOfflineClientSessionIdRef.current = null;
     cancelSpeech();
     cancelListening();
@@ -662,6 +695,8 @@ function PostTestActivity({
       })) as ChatMessage[];
       messagesRef.current = restoredMessages;
       setMessages(restoredMessages);
+      recordedAnswerCountRef.current = restoredMessages.filter(message => message.sender === 'user').length;
+      setRecordedAnswerCount(recordedAnswerCountRef.current);
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
       setActiveSession({ ...session, id: serverSessionId });
       onSessionModeChange(true);
@@ -698,7 +733,11 @@ function PostTestActivity({
     activeOfflineClientSessionIdRef.current = null;
     setActiveSession(null);
     setMessages([]);
-    setReply('');
+    recordedAnswerCountRef.current = 0;
+    canonicalAnswersRef.current = [];
+    setRecordedAnswerCount(0);
+    setHasPendingOfflineAudio(false);
+    setPendingOnlineAudio(null);
     setIsAiResponding(false);
     setIsVoiceSpeaking(false);
     setConnectionState('idle');
@@ -709,7 +748,7 @@ function PostTestActivity({
     void loadSessions();
   };
 
-  const sendReply = async (spokenText = reply) => {
+  const sendReply = async (spokenText: string, answerIndex: number) => {
     const text = spokenText.trim();
     if (!text || isAiResponding || isVoiceSpeaking) return;
     const intendedSocket = sessionMode === 'offline' ? null : wsRef.current;
@@ -720,8 +759,11 @@ function PostTestActivity({
     if (answerSubmissionInFlightRef.current) return;
     const currentMessages = messagesRef.current;
     const currentBoundary = getPostTestAnswerBoundary(currentMessages);
-    if (!currentBoundary.canAcceptAnswer) {
-      setReply('');
+    const expectedAnswerIndex = sessionMode === 'offline'
+      ? recordedAnswerCountRef.current + 1
+      : currentBoundary.answerCount + 1;
+    if (answerIndex !== expectedAnswerIndex) return;
+    if (expectedAnswerIndex > POST_TEST_ANSWER_LIMIT || !currentBoundary.canAcceptAnswer) {
       if (currentBoundary.hasTooManyAnswers) {
         setError('This saved Post-Test contains more than five answers. It was preserved and requires manual recovery.');
         setNotice(null);
@@ -740,29 +782,33 @@ function PostTestActivity({
       aiSpeechBufferRef.current = '';
       const questions = getPostTestQuestions(userDepartment);
       const offlineTurn = sessionMode === 'offline'
-        ? appendOfflinePostTestAnswer(currentMessages, text, questions)
+        ? appendSpokenOfflineAnswer(currentMessages, text, answerIndex, questions)
         : null;
       const onlineTurn = sessionMode === 'offline'
         ? null
         : appendPostTestUserAnswer(currentMessages, text);
       const checkpointMessages = offlineTurn?.conversationLog ?? onlineTurn?.conversationLog ?? currentMessages;
-      const answerCount = offlineTurn?.answerCount ?? onlineTurn?.answerCount ?? currentBoundary.answerCount;
+      const answerCount = sessionMode === 'offline' ? answerIndex : onlineTurn?.answerCount ?? currentBoundary.answerCount;
       const nextQuestion = offlineTurn?.nextQuestion || '';
+      const canonicalAnswers = sessionMode === 'offline'
+        ? [...canonicalAnswersRef.current, { step: answerIndex, text, createdAt: Date.now() }]
+        : checkpointMessages.filter(message => message.sender === 'user')
+          .map((message, index) => ({ step: index + 1, text: message.text, createdAt: Date.now() }));
       const saved = await onActivityCheckpoint({
         conversationLog: checkpointMessages,
         currentQuestion: offlineTurn?.currentQuestion || questions[Math.min(answerCount - 1, POST_TEST_ANSWER_LIMIT - 1)],
         currentStep: answerCount,
-        responseCount: answerCount,
-        answers: checkpointMessages
-          .filter(message => message.sender === 'user')
-          .map((message, index) => ({ step: index + 1, text: message.text, createdAt: Date.now() })),
+        responseCount: canonicalAnswers.length,
+        answers: canonicalAnswers,
         eyeContactSummary: getCheckpointEyeContactSummary(),
       });
       if (!saved) return;
       resetSpeechTranscript();
       messagesRef.current = checkpointMessages;
       setMessages(checkpointMessages);
-      setReply('');
+      canonicalAnswersRef.current = canonicalAnswers;
+      recordedAnswerCountRef.current = answerCount;
+      setRecordedAnswerCount(answerCount);
       if (sessionMode === 'offline') {
         setLatestAiQuestion(nextQuestion);
         if (nextQuestion) speakText(nextQuestion);
@@ -785,6 +831,64 @@ function PostTestActivity({
     }
   };
 
+  const processOnlineAudio = async (capture: OfflineAudioCapture, answerIndex: number): Promise<string | null> => {
+    setPendingOnlineAudio({ capture, answerIndex });
+    setIsProcessingAudio(true);
+    setError(null);
+    try {
+      const transcript = await transcribeAnswer(apiUrl, capture);
+      setPendingOnlineAudio(null);
+      return transcript;
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Speech processing failed. Retry your saved recording.');
+      return null;
+    } finally {
+      setIsProcessingAudio(false);
+    }
+  };
+
+  const retryOnlineAudio = async () => {
+    if (!pendingOnlineAudio || isProcessingAudio) return;
+    const transcript = await processOnlineAudio(pendingOnlineAudio.capture, pendingOnlineAudio.answerIndex);
+    if (transcript) await sendReply(transcript, pendingOnlineAudio.answerIndex);
+  };
+
+  const advancePendingOfflineAnswer = async (answerIndex: number) => {
+    if (answerIndex !== recordedAnswerCountRef.current + 1 || answerIndex > POST_TEST_ANSWER_LIMIT
+      || answerSubmissionInFlightRef.current) return;
+    answerSubmissionInFlightRef.current = true;
+    setIsSubmittingAnswer(true);
+    try {
+      const questions = getPostTestQuestions(userDepartment);
+      const nextQuestion = questions[answerIndex] || '';
+      const nextMessages: ChatMessage[] = nextQuestion
+        ? [...messagesRef.current, { sender: 'ai', text: nextQuestion }]
+        : messagesRef.current;
+      const saved = await onActivityCheckpoint({
+        conversationLog: nextMessages,
+        currentQuestion: nextQuestion || questions[answerIndex - 1],
+        currentStep: answerIndex,
+        responseCount: canonicalAnswersRef.current.length,
+        answers: canonicalAnswersRef.current,
+        eyeContactSummary: getCheckpointEyeContactSummary(),
+      });
+      if (!saved) {
+        setError('The recorded answer could not be checkpointed. Please retry this question.');
+        return;
+      }
+      recordedAnswerCountRef.current = answerIndex;
+      setRecordedAnswerCount(answerIndex);
+      setHasPendingOfflineAudio(true);
+      messagesRef.current = nextMessages;
+      setMessages(nextMessages);
+      if (nextQuestion) speakText(nextQuestion);
+      else setNotice('All five responses are recorded. Finish recording to queue speech processing.');
+    } finally {
+      answerSubmissionInFlightRef.current = false;
+      setIsSubmittingAnswer(false);
+    }
+  };
+
   const recordAndSendReply = () => {
     if (isVoiceSpeaking || isAiResponding || window.speechSynthesis?.speaking || window.speechSynthesis?.pending) {
       setError('Wait for the audio interviewer to finish before starting the microphone.');
@@ -792,7 +896,8 @@ function PostTestActivity({
     }
     setError(null);
     const boundary = getPostTestAnswerBoundary(messagesRef.current);
-    if (!boundary.canAcceptAnswer || answerSubmissionInFlightRef.current) {
+    if (recordedAnswerCountRef.current >= POST_TEST_ANSWER_LIMIT || !boundary.canAcceptAnswer || answerSubmissionInFlightRef.current
+      || isProcessingAudio || pendingOnlineAudio) {
       if (boundary.hasTooManyAnswers) {
         setError('This saved Post-Test contains more than five answers. It was preserved and requires manual recovery.');
       } else if (boundary.canComplete) {
@@ -800,14 +905,22 @@ function PostTestActivity({
       }
       return;
     }
-    const answerIndex = boundary.answerCount + 1;
-    startListening(transcript => void sendReply(transcript), setError, sessionMode === 'offline' && activeSession ? {
+    const answerIndex = sessionMode === 'offline' ? recordedAnswerCountRef.current + 1 : boundary.answerCount + 1;
+    startListening(transcript => void sendReply(transcript, answerIndex), message => {
+      const guidance = speechOnlyErrorMessage(message);
+      if (guidance.startsWith('Answer saved on this device.')) {
+        setError(null);
+        setNotice(guidance);
+      } else setError(guidance);
+    }, sessionMode === 'offline' && activeSession ? {
       enabled: true,
+      speechOnlyFallback: true,
       activityType: 'post_test',
       turnId: `post-test-${answerIndex}`,
       answerIndex,
       persistAudio: onOfflineAudioCaptured,
-    } : undefined);
+      onPendingAudio: () => { void advancePendingOfflineAnswer(answerIndex); },
+    } : { enabled: true, transcribeCapture: capture => processOnlineAudio(capture, answerIndex) });
   };
 
   const completePostTest = async () => {
@@ -819,6 +932,8 @@ function PostTestActivity({
       || isFinalizing
       || isSubmittingAnswer
       || isAiResponding
+      || isProcessingAudio
+      || pendingOnlineAudio
     ) return;
     const checkpointOfflineClientSessionId = resumeSession?.type === 'post_test' && resumeSession.mode === 'offline'
       ? resumeSession.clientSessionId
@@ -833,6 +948,41 @@ function PostTestActivity({
       return;
     }
     const currentMessages = messagesRef.current;
+    if (execution.mode === 'offline' && hasPendingOfflineAudio) {
+      if (recordedAnswerCountRef.current !== POST_TEST_ANSWER_LIMIT) {
+        setError('Record all five Post-Test answers before finishing this session.');
+        return;
+      }
+      completionInFlightRef.current = true;
+      setCompleting(true);
+      setError(null);
+      try {
+        if (!await onActivityEnd('recorded_local')) {
+          throw new Error('The recorded answers could not be queued safely. Please retry.');
+        }
+        cancelListening();
+        cancelSpeech();
+        setActiveSession(null);
+        setMessages([]);
+        messagesRef.current = [];
+        setLatestAiQuestion('');
+        setHasPendingOfflineAudio(false);
+        recordedAnswerCountRef.current = 0;
+        canonicalAnswersRef.current = [];
+        setRecordedAnswerCount(0);
+        offlineEyeContactBaselineRef.current = null;
+        activeOfflineClientSessionIdRef.current = null;
+        setConnectionState('idle');
+        setNotice('Answers saved on this device. Speech will be processed when you are back online.');
+        onSessionModeChange(false);
+      } catch (completionError) {
+        setError(completionError instanceof Error ? completionError.message : 'Unable to queue the recorded Post-Test.');
+      } finally {
+        completionInFlightRef.current = false;
+        setCompleting(false);
+      }
+      return;
+    }
     try {
       requireExactPostTestAnswerCount(currentMessages);
     } catch (completionError) {
@@ -867,6 +1017,9 @@ function PostTestActivity({
         setActiveSession(null);
         setMessages([]);
         messagesRef.current = [];
+        recordedAnswerCountRef.current = 0;
+        canonicalAnswersRef.current = [];
+        setRecordedAnswerCount(0);
         setLatestAiQuestion('');
         offlineEyeContactBaselineRef.current = null;
         activeOfflineClientSessionIdRef.current = null;
@@ -924,6 +1077,9 @@ function PostTestActivity({
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
       setActiveSession(null);
       setMessages([]);
+      recordedAnswerCountRef.current = 0;
+      canonicalAnswersRef.current = [];
+      setRecordedAnswerCount(0);
       setLatestAiQuestion('');
       offlineEyeContactBaselineRef.current = null;
       activeOfflineClientSessionIdRef.current = null;
@@ -948,7 +1104,7 @@ function PostTestActivity({
     isAiResponding,
     isListening,
     isFinalizing,
-    canComplete: answerBoundary.canComplete,
+    canComplete: answerBoundary.canComplete || (sessionMode === 'offline' && hasPendingOfflineAudio && recordedAnswerCount === POST_TEST_ANSWER_LIMIT),
   });
   const askedQuestionCount = messages.filter(message =>
     message.sender === 'ai' && !message.text.startsWith('You have completed all five Post-Test questions.')
@@ -973,7 +1129,7 @@ function PostTestActivity({
               className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
-              {completing ? 'Completing…' : 'Complete Interview'}
+              {completing ? 'Completing…' : sessionMode === 'offline' && hasPendingOfflineAudio ? 'Finish Recording' : 'Complete Interview'}
             </button>
           </div>
 
@@ -1005,6 +1161,13 @@ function PostTestActivity({
                   </button>
                 )}
               </div>
+            )}
+
+            {pendingOnlineAudio && (
+              <button type="button" onClick={() => void retryOnlineAudio()} disabled={isProcessingAudio}
+                className="program-accent-focus-ring mb-4 rounded-lg border border-line px-4 py-2 text-sm font-semibold disabled:opacity-60">
+                {isProcessingAudio ? 'Processing speech...' : 'Retry Speech Processing'}
+              </button>
             )}
 
             <SoundWaveInterviewer
@@ -1072,17 +1235,13 @@ function PostTestActivity({
             <div className="mt-4 flex flex-col items-center gap-2">
               <button
                 onClick={isListening ? stopListening : recordAndSendReply}
-                disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking || isSubmittingAnswer || isFinalizing || !answerBoundary.canAcceptAnswer}
+                disabled={connectionState !== 'ready' || isAiResponding || isVoiceSpeaking || isSubmittingAnswer || isFinalizing || isProcessingAudio || Boolean(pendingOnlineAudio) || recordedAnswerCount >= POST_TEST_ANSWER_LIMIT || !answerBoundary.canAcceptAnswer}
                 className={`program-accent-focus-ring flex min-h-12 items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
               >
                 {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-                {isListening ? 'Stop Recording' : answerBoundary.canAcceptAnswer ? 'Speak Answer' : 'All Answers Recorded'}
+                {isListening ? 'Stop Recording' : recordedAnswerCount < POST_TEST_ANSWER_LIMIT && answerBoundary.canAcceptAnswer ? 'Speak Answer' : 'All Answers Recorded'}
               </button>
-              <p className="text-center text-xs text-muted">{visibleUserMessages.length} of 5 answers recorded. Complete Interview unlocks after all five.</p>
-            </div>
-            <div className="mx-auto mt-4 flex max-w-2xl flex-col gap-2 sm:flex-row">
-              <textarea value={reply} onChange={event => setReply(event.target.value)} disabled={isListening || isFinalizing || isSubmittingAnswer || isAiResponding || isVoiceSpeaking || !answerBoundary.canAcceptAnswer} placeholder={answerBoundary.canAcceptAnswer ? 'Or type your answer if the microphone is unavailable.' : 'All five answers are recorded.'} className="min-h-20 w-full flex-1 resize-y rounded-lg border border-line bg-background p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--program-accent)] disabled:cursor-not-allowed disabled:opacity-60" />
-              <button type="button" onClick={() => void sendReply()} disabled={!reply.trim() || isListening || isFinalizing || isSubmittingAnswer || isAiResponding || isVoiceSpeaking || !answerBoundary.canAcceptAnswer} className="program-accent-button w-full rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-50 sm:w-auto sm:self-end">Submit</button>
+              <p className="text-center text-xs text-muted">{recordedAnswerCount} of 5 answers recorded. {hasPendingOfflineAudio ? 'Recorded audio awaits transcription.' : 'Complete Interview unlocks after all five.'}</p>
             </div>
           </section>
         </div>

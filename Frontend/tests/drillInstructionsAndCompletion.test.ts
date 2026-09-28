@@ -79,7 +79,8 @@ test('supporting guidance reads How to answer, Answer format, then Automatic sco
 
 test('task directions and automatic scoring transparency remain visibly separate', () => {
   assert.match(source, />Automatic scoring<\/p>/);
-  assert.match(source, /Practice goal: follow the task directions as closely as possible\./);
+  assert.match(source, /Practice goal: Follow the task directions as closely as possible\./);
+  assert.doesNotMatch(source, /Practice goal: follow the task directions as closely as possible\./);
   assert.match(source, /response completion and speaking length/);
   assert.match(source, /completed conversation turns/);
   assert.match(source, /const activeScoringNote = getDrillScoringNote\(activeSession\.drill_type\)/);

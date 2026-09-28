@@ -117,7 +117,8 @@ test('K: every canonical department pack still contains exactly five questions',
 test('PostTestPage applies the answer boundary before microphone, checkpoint, completion, and WebSocket actions', () => {
   const source = readFileSync(new URL('../src/components/PostTestPage.tsx', import.meta.url), 'utf8');
   assert.match(source, /answerSubmissionInFlightRef\.current/);
-  assert.match(source, /if \(!currentBoundary\.canAcceptAnswer\)/);
+  assert.match(source, /!currentBoundary\.canAcceptAnswer/);
+  assert.match(source, /answerIndex !== expectedAnswerIndex/);
   assert.match(source, /appendPostTestUserAnswer\(currentMessages, text\)/);
   assert.match(source, /requireExactPostTestAnswerCount\(currentMessages\)/);
   assert.match(source, /!answerBoundary\.canAcceptAnswer/);

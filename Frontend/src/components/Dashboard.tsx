@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useThree } from '@react-three/fiber';
 import { Environment, OrbitControls, useEnvironment } from '@react-three/drei';
 import { clearProfessorModelCache, ProfessorModel, ProfessorModelPreloader } from './ProfessorModel';
 import { PreTestPage } from './PreTestPage';
@@ -10,6 +10,7 @@ import { AppUpdateNotice, type UpdateBlockReason } from './AppUpdateNotice';
 import { useWebLLM } from '../hooks/useWebLLM';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { cancelBrowserSpeech, speakBrowserText } from '../utils/browserSpeech';
+import { selectRestoredEnrollmentPrompt, type RestoredEnrollmentPrompt } from '../utils/enrollmentResumeSpeech';
 import type { MLCEngine } from '@mlc-ai/web-llm';
 import { useConnectivity } from '../hooks/useConnectivity';
 import {
@@ -46,7 +47,9 @@ import {
   hasStorageCapacity,
   OFFLINE_AUDIO_STORAGE_HEADROOM_BYTES,
   toOfflineAudioRecord,
+  type OfflineAudioCapture,
 } from '../offline/offlineAudioRecorder';
+import { transcribeAnswer } from '../utils/transcribeAnswer';
 import {
   createActivityCheckpoint,
   createCompletedLocalCheckpoint,
@@ -304,6 +307,12 @@ interface ProfessorAssetErrorBoundaryState {
   hasError: boolean;
 }
 
+type PendingEnrollmentAudio = {
+  capture: OfflineAudioCapture;
+  clientSessionId: string;
+  answerIndex: number;
+};
+
 class ProfessorAssetErrorBoundary extends React.Component<
   ProfessorAssetErrorBoundaryProps,
   ProfessorAssetErrorBoundaryState
@@ -322,6 +331,29 @@ class ProfessorAssetErrorBoundary extends React.Component<
     return this.state.hasError ? null : this.props.children;
   }
 }
+
+function EnrollmentMobileCameraFraming() {
+  const { camera, size } = useThree();
+
+  useEffect(() => {
+    // The desktop camera crops the sides of Maxiel on a narrow mobile stage.
+    // Pull back just enough for the available aspect ratio, without offsetting the model.
+    const isMobile = window.matchMedia('(max-width: 639px)').matches;
+    const aspect = size.height > 0 ? size.width / size.height : 1;
+    const distance = isMobile ? Math.min(3.6, Math.max(3, 4.5 / aspect)) : 3;
+    camera.position.set(0, 0.5, distance);
+    camera.lookAt(0, 0, 0);
+  }, [camera, size.width, size.height]);
+
+  return null;
+}
+
+const enrollmentSpeechErrorMessage = (message: string): string => message
+  .replace(/Use the typed answer or clear local site data/gi, 'Free up browser storage')
+  .replace(/(?:,?\s+or\s+|,\s+then\s+|;\s*)(?:use the typed answer(?: instead)?|type (?:your|an) answer(?: to continue| if needed)?)/gi, '')
+  .replace(/Use the typed answer instead\.?/gi, '')
+  .replace(/,\s*\./g, '.')
+  .trim();
 
 export const Dashboard: React.FC<DashboardProps> = ({
   onLogout,
@@ -344,6 +376,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
     if (window.location.pathname === '/profile') return 'profile';
     return 'dashboard';
   });
+  const activeTabRef = React.useRef(activeTab);
+  activeTabRef.current = activeTab;
   const {
     engine: webLLMEngine,
     isLoading: isLlmLoading,
@@ -749,7 +783,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
     const current = activeActivityCheckpointRef.current;
     if (!current || current.mode !== 'offline' || current.type !== input.activityType) return false;
     if (!await hasStorageCapacity(input.capture.sizeBytes + OFFLINE_AUDIO_STORAGE_HEADROOM_BYTES)) {
-      setOfflineFoundationError('Browser storage is too low to save this recording. Your session remains open; use the typed answer or clear local site data.');
+      setOfflineFoundationError(current.type === 'upcoming'
+        ? 'Browser storage is too low to save this recording. Your session remains open; free up browser storage and retry.'
+        : 'Browser storage is too low to save this recording. Your session remains open; use the typed answer or clear local site data.');
       return false;
     }
     const { record, reference } = toOfflineAudioRecord({
@@ -775,7 +811,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
       return true;
     } catch (error) {
       console.error('Unable to persist offline audio metadata.', error);
-      setOfflineFoundationError('The recording could not be saved locally. Your activity has not advanced; retry or use the typed answer.');
+      setOfflineFoundationError(current.type === 'upcoming'
+        ? 'The recording could not be saved locally. Your activity has not advanced; retry the recording.'
+        : 'The recording could not be saved locally. Your activity has not advanced; retry or use the typed answer.');
       return false;
     }
   }, [persistActivityCheckpoint, queueCheckpointOperation]);
@@ -1689,6 +1727,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [isEnrollmentFinalProfessorTurnReady, setIsEnrollmentFinalProfessorTurnReady] = useState(false);
   const [interviewMicFeedback, setInterviewMicFeedback] = useState<string | null>(null);
   const [latestOfflineRecordingUrl, setLatestOfflineRecordingUrl] = useState<string | null>(null);
+  const [pendingEnrollmentAudio, setPendingEnrollmentAudio] = useState<PendingEnrollmentAudio | null>(null);
+  const pendingEnrollmentAudioRef = React.useRef<PendingEnrollmentAudio | null>(null);
+  const [isProcessingEnrollmentAudio, setIsProcessingEnrollmentAudio] = useState(false);
+  const enrollmentAudioProcessingRef = React.useRef(false);
+  const enrollmentAudioGenerationRef = React.useRef(0);
+  const clearPendingEnrollmentAudio = () => {
+    enrollmentAudioGenerationRef.current += 1;
+    enrollmentAudioProcessingRef.current = false;
+    pendingEnrollmentAudioRef.current = null;
+    setPendingEnrollmentAudio(null);
+    setIsProcessingEnrollmentAudio(false);
+  };
   const [onlineInterviewError, setOnlineInterviewError] = useState<string | null>(null);
   const [canRetryOnlineResponse, setCanRetryOnlineResponse] = useState(false);
   const [typedInterviewAnswer, setTypedInterviewAnswer] = useState('');
@@ -1717,6 +1767,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const onlineResponseBufferRef = React.useRef('');
   const onlinePreviousAiResponseRef = React.useRef('');
   const onlinePendingUserTextRef = React.useRef('');
+  const pendingRestoredEnrollmentPromptRef = React.useRef<RestoredEnrollmentPrompt | null>(null);
+  const spokenRestoredEnrollmentPromptRef = React.useRef<string | null>(null);
+  const restoredEnrollmentPlaybackGenerationRef = React.useRef(0);
+  const resetRestoredEnrollmentPlayback = () => {
+    restoredEnrollmentPlaybackGenerationRef.current += 1;
+    pendingRestoredEnrollmentPromptRef.current = null;
+    spokenRestoredEnrollmentPromptRef.current = null;
+  };
   const onlineResponseFinalTurnRef = React.useRef(false);
   const thesisAbstractTextRef = React.useRef('');
   const offlineWebLLMEngineRef = React.useRef<MLCEngine | null>(null);
@@ -1787,6 +1845,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
     resetTranscript: resetSpeechTranscript,
     enableOfflineRecording: enableOfflineSpeechRecording,
   } = useSpeechInput();
+  const isMicTransitioningRef = React.useRef(isMicTransitioning);
+  isMicTransitioningRef.current = isMicTransitioning;
 
   useEffect(() => {
     isListeningRef.current = isListening;
@@ -2309,6 +2369,51 @@ export const Dashboard: React.FC<DashboardProps> = ({
     },
   });
 
+  const speakRestoredEnrollmentPrompt = async () => {
+    const pending = pendingRestoredEnrollmentPromptRef.current;
+    if (!pending || spokenRestoredEnrollmentPromptRef.current === pending.identity
+      || activeTabRef.current !== 'interview-session' || activeInterviewModeRef.current !== 'enrollment') return;
+    const checkpoint = activeActivityCheckpointRef.current;
+    if (checkpoint?.type !== 'upcoming' || checkpoint.status !== 'in_progress') return;
+    const sessionKey = checkpoint.mode === 'offline'
+      ? `local:${checkpoint.clientSessionId}`
+      : `server:${sessionIdRef.current}`;
+    const turns = conversationLogRef.current;
+    const responseCount = checkpoint.mode === 'offline'
+      ? checkpoint.responseCount
+      : turns.filter(turn => turn.sender === 'user').length;
+    const currentPrompt = selectRestoredEnrollmentPrompt(
+      sessionKey,
+      turns,
+      responseCount,
+      checkpoint.mode === 'offline' ? checkpoint.currentQuestion : undefined,
+    );
+    if (!currentPrompt || currentPrompt.identity !== pending.identity || currentPrompt.text !== pending.text) {
+      pendingRestoredEnrollmentPromptRef.current = null;
+      return;
+    }
+    if (isAiSpeakingRef.current || isListeningRef.current || isMicTransitioningRef.current
+      || enrollmentAudioProcessingRef.current || offlineAnswerSubmissionRef.current) return;
+
+    pendingRestoredEnrollmentPromptRef.current = null;
+    spokenRestoredEnrollmentPromptRef.current = pending.identity;
+    const playbackGeneration = restoredEnrollmentPlaybackGenerationRef.current;
+    setIsAiSpeaking(true);
+    isAiSpeakingRef.current = true;
+    try {
+      await speakOnlineInterviewResponse(pending.text);
+    } finally {
+      if (playbackGeneration === restoredEnrollmentPlaybackGenerationRef.current) {
+        setIsAiSpeaking(false);
+        isAiSpeakingRef.current = false;
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'interview-session') void speakRestoredEnrollmentPrompt();
+  }, [activeTab, isListening, isMicTransitioning, isProcessingEnrollmentAudio, conversationLog, isAiSpeaking]);
+
   const selectCachedOfflineInterviewEngine = async (): Promise<{
     engineName: OfflineInterviewEngine;
     engine: MLCEngine | null;
@@ -2463,7 +2568,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const submitInterviewAnswer = async (rawText: string) => {
     const text = rawText.replace(/\s+/g, ' ').trim();
     if (!text || offlineAnswerSubmissionRef.current) {
-      if (!text) setInterviewMicFeedback('Enter or record an answer before submitting.');
+      if (!text) setInterviewMicFeedback(activeInterviewModeRef.current === 'thesis'
+        ? 'Enter or record an answer before submitting.'
+        : 'Record an answer before submitting.');
       return false;
     }
     const mode = activeInterviewModeRef.current;
@@ -2536,11 +2643,28 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const submitTypedInterviewAnswer = (event: React.FormEvent) => {
     event.preventDefault();
+    if (activeInterviewModeRef.current !== 'thesis') return;
     void submitInterviewAnswer(typedInterviewAnswer);
   };
 
+  const getCurrentRepeatQuestion = () => {
+    const checkpoint = activeActivityCheckpointRef.current;
+    if (!checkpoint) return '';
+    if (activeInterviewModeRef.current === 'enrollment' && checkpoint.mode === 'online') {
+      const turns = conversationLogRef.current;
+      return selectRestoredEnrollmentPrompt(
+        `server:${sessionIdRef.current}`,
+        turns,
+        turns.filter(turn => turn.sender === 'user').length,
+      )?.text || '';
+    }
+    return checkpoint.currentQuestion.trim();
+  };
+
   const repeatStoredOfflineQuestion = async () => {
-    const currentQuestion = activeActivityCheckpointRef.current?.currentQuestion.trim();
+    if (activeInterviewModeRef.current === 'enrollment'
+      && (isListeningRef.current || isMicTransitioning || enrollmentAudioProcessingRef.current)) return;
+    const currentQuestion = getCurrentRepeatQuestion();
     if (!currentQuestion) return;
     setAiResponseText(currentQuestion);
     setIsAiSpeaking(true);
@@ -2624,6 +2748,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
       setConversationLog(turns);
       conversationLogRef.current = turns;
       const userTurns = turns.filter(turn => turn.sender === 'user').length;
+      pendingRestoredEnrollmentPromptRef.current = sessionIdRef.current
+        ? selectRestoredEnrollmentPrompt(`server:${sessionIdRef.current}`, turns, userTurns)
+        : null;
       setIsEnrollmentFinalProfessorTurnReady(
         userTurns >= 5 && turns[turns.length - 1]?.sender === 'ai'
       );
@@ -2651,6 +2778,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       if (payload.type === 'session_ready') {
         setIsAiSpeaking(false);
         isAiSpeakingRef.current = false;
+        if (mode === 'enrollment') void speakRestoredEnrollmentPrompt();
         return;
       }
       if (payload.type === 'error') {
@@ -2803,6 +2931,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
     // Unlock speech synthesis immediately on user click
     unlockBrowserSpeech();
+    resetRestoredEnrollmentPlayback();
     setIsStartingInterview(true);
 
     try {
@@ -2825,6 +2954,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       resetSpeechTranscript();
       setInterviewMicFeedback(null);
       setOnlineInterviewError(null);
+      clearPendingEnrollmentAudio();
       setTypedInterviewAnswer('');
       conversationLogRef.current = [];
       setConversationLog([]);
@@ -2896,6 +3026,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       resetSpeechTranscript();
       setInterviewMicFeedback(null);
       setOnlineInterviewError(null);
+      clearPendingEnrollmentAudio();
       conversationLogRef.current = [];
       setConversationLog([]);
       setAiResponseText('');
@@ -2944,9 +3075,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
     activeEnrollmentFinalGenerationRef.current = null;
     enrollmentFinalGenerationSequenceRef.current += 1;
     setIsEnrollmentFinalProfessorTurnReady(false);
+    resetRestoredEnrollmentPlayback();
     cancelBrowserSpeech();
     cancelSpeechInput();
     setLatestOfflineRecordingUrl(null);
+    clearPendingEnrollmentAudio();
     setIsLeaveModalOpen(false);
     setIsAiSpeaking(false);
     isAiSpeakingRef.current = false;
@@ -3476,8 +3609,54 @@ export const Dashboard: React.FC<DashboardProps> = ({
     else startWaveform();
   };
 
+  const processEnrollmentAudio = async (pending: PendingEnrollmentAudio): Promise<string | null> => {
+    const checkpoint = activeActivityCheckpointRef.current;
+    if (enrollmentAudioProcessingRef.current || checkpoint?.type !== 'upcoming'
+      || checkpoint.mode !== 'online' || checkpoint.clientSessionId !== pending.clientSessionId
+      || checkpoint.responseCount + 1 !== pending.answerIndex) return null;
+    if (isAiSpeakingRef.current || window.speechSynthesis?.speaking || window.speechSynthesis?.pending) {
+      setInterviewMicFeedback('Wait for Professor Maxiel to finish speaking, then record your answer again.');
+      return null;
+    }
+    enrollmentAudioProcessingRef.current = true;
+    const generation = enrollmentAudioGenerationRef.current;
+    pendingEnrollmentAudioRef.current = pending;
+    setPendingEnrollmentAudio(pending);
+    setIsProcessingEnrollmentAudio(true);
+    setInterviewMicFeedback(null);
+    try {
+      const transcript = await transcribeAnswer(API_URL, pending.capture);
+      const active = activeActivityCheckpointRef.current;
+      if (generation !== enrollmentAudioGenerationRef.current || active?.clientSessionId !== pending.clientSessionId
+        || active.responseCount + 1 !== pending.answerIndex) return null;
+      pendingEnrollmentAudioRef.current = null;
+      setPendingEnrollmentAudio(null);
+      return transcript;
+    } catch (error) {
+      if (generation === enrollmentAudioGenerationRef.current) {
+        const message = error instanceof Error ? error.message : '';
+        setInterviewMicFeedback(message.includes('No speech was detected')
+          ? "We couldn't process your speech. Retry Speech Processing or record your answer again."
+          : message || "We couldn't process your speech. Retry Speech Processing or record your answer again.");
+      }
+      return null;
+    } finally {
+      if (generation === enrollmentAudioGenerationRef.current) {
+        enrollmentAudioProcessingRef.current = false;
+        setIsProcessingEnrollmentAudio(false);
+      }
+    }
+  };
+
+  const retryEnrollmentAudio = async () => {
+    const pending = pendingEnrollmentAudioRef.current;
+    if (!pending || enrollmentAudioProcessingRef.current) return;
+    const transcript = await processEnrollmentAudio(pending);
+    if (transcript) void submitInterviewAnswer(transcript);
+  };
+
   const toggleListening = async () => {
-    if (isMicTransitioning) return;
+    if (isMicTransitioning || enrollmentAudioProcessingRef.current) return;
     if (isListeningRef.current) {
       isListeningRef.current = false;
       stopSpeechInput();
@@ -3503,20 +3682,31 @@ export const Dashboard: React.FC<DashboardProps> = ({
         onlinePendingUserTextRef.current = '';
         void submitInterviewAnswer(transcript);
       },
-      setInterviewMicFeedback,
+      current.type === 'upcoming'
+        ? message => setInterviewMicFeedback(enrollmentSpeechErrorMessage(message))
+        : setInterviewMicFeedback,
       current.mode === 'offline' ? {
         enabled: true,
+        speechOnlyFallback: current.type === 'upcoming' ? true : undefined,
         activityType: current.type,
         turnId: `${current.type}-answer-${answerIndex}`,
         answerIndex,
         persistAudio: persistOfflineAudioCapture,
         onAudioCaptured: showOfflineRecordingPreview,
+      } : current.type === 'upcoming' && typeof MediaRecorder !== 'undefined' ? {
+        enabled: true,
+        transcribeCapture: capture => processEnrollmentAudio({
+          capture,
+          clientSessionId: current.clientSessionId,
+          answerIndex,
+        }),
       } : undefined,
       {
         onStreamReady: attachInterviewWaveform,
         onStreamReleased: releaseInterviewMicrophone,
       },
     );
+    if (started && current.type === 'upcoming') clearPendingEnrollmentAudio();
     isListeningRef.current = started;
   };
 
@@ -3658,6 +3848,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
       }
       restoredEyeContactSummaryRef.current = resumable.eyeContactSummary;
       activeInterviewModeRef.current = mode;
+      if (type === 'upcoming') {
+        clearPendingEnrollmentAudio();
+        resetRestoredEnrollmentPlayback();
+      }
       setTypedInterviewAnswer('');
       setOnlineInterviewError(null);
       setCanRetryOnlineResponse(false);
@@ -3703,6 +3897,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
       const latest = activeActivityCheckpointRef.current?.conversationLog.at(-1);
       if (latest?.sender === 'user') {
         await generateOfflineProfessorTurn(type, resumable.responseCount);
+      } else if (type === 'upcoming') {
+        const current = activeActivityCheckpointRef.current;
+        pendingRestoredEnrollmentPromptRef.current = current?.status === 'in_progress'
+          ? selectRestoredEnrollmentPrompt(
+            `local:${current.clientSessionId}`,
+            current.conversationLog,
+            current.responseCount,
+            current.currentQuestion,
+          )
+          : null;
+        void speakRestoredEnrollmentPrompt();
       }
     }
   };
@@ -3718,7 +3923,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   ];
 
   const enrollmentResponseCount = conversationLog.filter(message => message.sender === 'user').length;
-  const isEnrollmentMicDisabled = isMicTransitioning || isAiSpeaking || isSubmittingOfflineAnswer || enrollmentResponseCount >= 5;
+  const isEnrollmentMicDisabled = isMicTransitioning || isProcessingEnrollmentAudio || isAiSpeaking || isSubmittingOfflineAnswer || enrollmentResponseCount >= 5;
   const enrollmentInstruction = isFinishingInterview
     ? activeActivityCheckpoint?.mode === 'offline'
       ? 'Saving your provisional interview result locally...'
@@ -3727,6 +3932,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
       ? 'All five responses are recorded. Click “Validate Responses” in the transcript panel to receive your result.'
       : enrollmentResponseCount >= 5
         ? 'Professor Maxiel is finishing the interview. Validation will be available after the closing response.'
+      : isProcessingEnrollmentAudio
+        ? 'Processing speech...'
       : isMicTransitioning
         ? 'Submitting your response. Please wait for Professor Maxiel’s next question.'
         : interviewMicFeedback
@@ -3748,23 +3955,33 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <span className="program-accent-on-dark text-[10px] font-bold uppercase tracking-wider">
             {checkpoint.mode === 'offline'
               ? `Offline · ${readOfflineInterviewActivityState(checkpoint)?.offlineEngine === 'webllm' ? 'Cached Local AI' : 'Fallback Questions'}`
-              : 'Typed answer fallback'}
+              : isThesis ? 'Typed answer fallback' : 'Interview question'}
           </span>
           <button
             type="button"
             onClick={() => void repeatStoredOfflineQuestion()}
-            disabled={!checkpoint.currentQuestion || isAiSpeaking}
+            disabled={!getCurrentRepeatQuestion() || isAiSpeaking || (!isThesis && (isListening || isMicTransitioning || isProcessingEnrollmentAudio))}
             className={`text-[10px] font-bold underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${isThesis ? 'text-slate-400' : 'text-[var(--interview-text-secondary)]'}`}
           >
             Repeat question
           </button>
         </div>
+        {!isThesis && pendingEnrollmentAudio && (
+          <button
+            type="button"
+            onClick={() => void retryEnrollmentAudio()}
+            disabled={isProcessingEnrollmentAudio}
+            className="mt-2 text-xs font-bold underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isProcessingEnrollmentAudio ? 'Processing speech...' : 'Retry Speech Processing'}
+          </button>
+        )}
         {isThesis && checkpoint.currentQuestion && (
           <p className="mb-2 text-xs leading-relaxed text-slate-100">
             {checkpoint.currentQuestion}
           </p>
         )}
-        <form onSubmit={submitTypedInterviewAnswer} className="flex gap-2">
+        {isThesis && <form onSubmit={submitTypedInterviewAnswer} className="flex gap-2">
           <input
             type="text"
             value={typedInterviewAnswer}
@@ -3783,7 +4000,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           >
             <Send className="h-4 w-4" />
           </button>
-        </form>
+        </form>}
         {checkpoint.mode === 'offline' && latestOfflineRecordingUrl && (
           <audio
             className="mt-2 h-8 w-full"
@@ -4880,13 +5097,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                   {/* Primary 3D interview stage */}
                   <motion.div
-                    initial={{ opacity: 0, x: -20 }}
+                    initial={{ opacity: 0, x: window.matchMedia('(max-width: 639px)').matches ? 0 : -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     className="relative m-3 flex min-h-[40svh] items-center justify-center overflow-hidden rounded-xl border border-[var(--interview-border)] bg-[var(--interview-stage)] p-0 sm:min-h-[48svh] lg:col-start-1 lg:row-start-1 lg:m-5 lg:min-h-0"
                     style={{ backgroundColor: 'var(--interview-stage)' }}
                   >
                     <div className={`absolute inset-0 h-full w-full transition-opacity duration-200 ${isProfessorFirstFrameReady ? 'opacity-100' : 'opacity-0'}`}>
                       <Canvas shadows camera={{ position: [0, 0.5, 3], fov: 35 }}>
+                        <EnrollmentMobileCameraFraming />
                         <ambientLight intensity={0.8} />
                         <pointLight position={[10, 10, 10]} intensity={1} />
                         <directionalLight position={[5, 10, 5]} intensity={2.0} castShadow />
@@ -4981,6 +5199,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         title={
                           isListening
                             ? 'Stop recording and submit answer'
+                            : isProcessingEnrollmentAudio
+                              ? 'Processing speech'
                             : isMicTransitioning
                               ? 'Submitting answer'
                               : 'Start recording your answer'
@@ -4988,6 +5208,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         aria-label={
                           isListening
                             ? 'Stop recording and submit answer'
+                            : isProcessingEnrollmentAudio
+                              ? 'Processing speech'
                             : isMicTransitioning
                               ? 'Submitting answer'
                               : enrollmentResponseCount >= 5
@@ -5033,7 +5255,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       </button>
                       <div className="min-h-7 text-center leading-tight">
                         <span className={`block text-[11px] font-bold ${isListening ? 'program-accent-on-dark' : 'text-[var(--interview-text-primary)]'}`}>
-                          {isListening ? 'Recording...' : isMicTransitioning ? 'Submitting...' : enrollmentResponseCount >= 5 ? 'Answers Complete' : 'Start Answer'}
+                          {isListening ? 'Recording...' : isProcessingEnrollmentAudio ? 'Processing speech...' : isMicTransitioning ? 'Submitting...' : enrollmentResponseCount >= 5 ? 'Answers Complete' : 'Start Answer'}
                         </span>
                         {isListening && <span className="mt-0.5 block text-[10px] font-medium text-[var(--interview-text-secondary)]">Click to submit</span>}
                       </div>
