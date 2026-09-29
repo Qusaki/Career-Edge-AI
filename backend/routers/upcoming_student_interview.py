@@ -18,12 +18,17 @@ from services.interview_ai import collect_ai_response, parse_evaluation_response
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+INTERVIEW_TIME_LIMIT_SECONDS = 3600
 
 ENROLLMENT_FINAL_TURN_INSTRUCTION = (
     "The student has submitted their fifth and final answer. Do not ask another "
     "question. Give one brief supportive closing statement and tell the student "
     "they can continue to validation."
 )
+
+
+def is_interview_expired(start_time: datetime.datetime, now: datetime.datetime) -> bool:
+    return (now - start_time).total_seconds() > INTERVIEW_TIME_LIMIT_SECONDS
 
 
 def get_evaluation_score_keys(department: str) -> list[str]:
@@ -102,12 +107,17 @@ def start_interview(db: Session = Depends(get_db), current_user: User = Depends(
     if not current_user.department or current_user.department.upper() not in ["CCIT", "CTE", "CBAPA"]:
         raise HTTPException(status_code=403, detail="Forbidden: This interview simulation is only available to CCIT, CTE, and CBAPA students.")
 
+    # Serialize starts for this account so two requests cannot both replace the
+    # same expired session (or create separate first sessions on PostgreSQL).
+    db.query(User).filter(User.id == current_user.id).with_for_update().first()
     active_session = db.query(UpcomingStudentInterviewSession).filter(
         UpcomingStudentInterviewSession.user_id == current_user.id,
         UpcomingStudentInterviewSession.status == "active",
     ).order_by(UpcomingStudentInterviewSession.start_time.desc()).first()
     if active_session:
-        return active_session
+        if not is_interview_expired(active_session.start_time, datetime.datetime.utcnow()):
+            return active_session
+        active_session.status = "expired"
 
     session = UpcomingStudentInterviewSession(user_id=current_user.id)
     db.add(session)
@@ -145,8 +155,7 @@ async def interview_chat_ws(
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=f"Interview is already {session.status}.")
         return
         
-    time_elapsed = datetime.datetime.utcnow() - session.start_time
-    if time_elapsed.total_seconds() > 3600: # 1 hour
+    if is_interview_expired(session.start_time, datetime.datetime.utcnow()):
         session.status = "expired"
         db.commit()
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Interview time limit (1 hour) exceeded.")
