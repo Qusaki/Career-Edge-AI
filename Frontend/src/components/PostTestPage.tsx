@@ -1187,7 +1187,7 @@ function PostTestActivity({
               }
             />
 
-            <div className="mt-4 flex min-h-44 max-h-[32rem] flex-col items-center justify-center overflow-y-auto rounded-lg border border-line bg-background p-4 text-center sm:min-h-52 sm:p-6">
+            <div className="mt-4 flex min-h-44 flex-col items-center justify-center rounded-lg border border-line bg-background p-4 text-center sm:min-h-52 sm:p-6">
               {messages.length === 0 ? (
                 <div className="flex h-full items-center justify-center gap-2 text-muted">
                   <LoaderCircle className="h-5 w-5 animate-spin" /> Preparing audio question...
@@ -1210,7 +1210,7 @@ function PostTestActivity({
                     <Volume2 className="h-4 w-4" /> Replay Question
                   </button>
                   {visibleUserMessages.length > 0 && (
-                    <div className="mt-6 w-full max-w-2xl space-y-3 border-t border-line pt-5 text-left">
+                    <div className="mt-6 max-h-80 w-full max-w-2xl space-y-3 overflow-y-auto border-t border-line pt-5 text-left">
                       {visibleUserMessages.map((message, index) => (
                         <div key={index} className="program-accent-fill ml-auto max-w-[82%] rounded-lg px-4 py-3 text-sm leading-relaxed">
                           <p className="mb-1 text-xs font-bold uppercase tracking-wider opacity-70">You</p>
