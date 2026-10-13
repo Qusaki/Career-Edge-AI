@@ -56,7 +56,7 @@ test('online history restores the saved turn and session_ready speaks it without
   assert.match(onlineHistory, /payload\.type === 'session_ready'[\s\S]*?mode === 'enrollment'\) void speakRestoredEnrollmentPrompt\(\)/);
   assert.match(playback, /await speakOnlineInterviewResponse\(pending\.text\)/);
   assert.doesNotMatch(playback, /connectOnlineInterview|sendOnlineInterviewResponse|generateOfflineProfessorTurn|setConversationLog|setChatMessages/);
-  assert.match(source, /await speakOnlineInterviewResponse\(responseText\)/);
+  assert.match(source, /await speakOnlineInterviewResponse\(responseText, enrollmentPerf/);
 });
 
 test('offline restore replays only the current saved AI question, without another generation', () => {

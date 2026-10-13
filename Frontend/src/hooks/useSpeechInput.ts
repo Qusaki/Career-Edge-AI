@@ -172,6 +172,9 @@ export interface OnlineFallbackAudioOptions {
 
 type SpeechAudioOptions = OfflineSpeechAudioOptions | OnlineFallbackAudioOptions;
 
+export type SpeechInputTimingEvent = 'micStop' | 'canonicalTranscriptReady' | 'recorderStopStart'
+  | 'recorderStopEnd' | 'transcriptionUsed';
+
 const isOfflineAudio = (value: SpeechAudioOptions): value is OfflineSpeechAudioOptions =>
   'persistAudio' in value;
 
@@ -226,8 +229,11 @@ export type SpeechInputStreamHandlers = {
 type RecognitionSession = {
   onTranscript: TranscriptHandler;
   onError?: ErrorHandler;
+  onTiming?: (event: SpeechInputTimingEvent, used?: boolean) => void;
   accumulator: SpeechTranscriptAccumulator;
   retryCount: number;
+  lastSpeechProgress: SpeechTranscriptState;
+  resetRestartStreakOnSpeechProgress: boolean;
   fatalError: boolean;
   failureMessage: string | null;
   recognitionReadyEver: boolean;
@@ -242,6 +248,14 @@ const RECOGNITION_FINALIZATION_TIMEOUT_MS = 3000;
 
 export const canRetryRecognition = (retryCount: number, userStillListening: boolean, voiceActive: boolean) =>
   userStillListening && !voiceActive && retryCount <= MAX_RECOGNITION_RESTARTS;
+
+export const hasMeaningfulRecognitionProgress = (
+  previous: SpeechTranscriptState,
+  current: SpeechTranscriptState,
+) => Boolean(
+  (current.finalTranscript && current.finalTranscript !== previous.finalTranscript)
+  || (current.interimTranscript && current.interimTranscript !== previous.interimTranscript),
+);
 
 export const selectSpeechRecognition = (host: Pick<Window, 'SpeechRecognition' | 'webkitSpeechRecognition'>) =>
   host.SpeechRecognition ?? host.webkitSpeechRecognition ?? null;
@@ -371,6 +385,10 @@ export function useSpeechInput(options?: { cumulativeResultProtection?: boolean 
     const deliveryGeneration = requestGenerationRef.current;
     const canonicalTranscript = session.accumulator.claimCanonicalTranscript();
     if (canonicalTranscript === null) return;
+    if (canonicalTranscript) {
+      session.onTiming?.('canonicalTranscriptReady');
+      session.onTiming?.('transcriptionUsed', false);
+    }
 
     const snapshot = session.accumulator.snapshot();
     setTranscriptState(snapshot);
@@ -387,7 +405,9 @@ export function useSpeechInput(options?: { cumulativeResultProtection?: boolean 
     audioEvidenceRef.current?.stop();
     audioEvidenceRef.current = null;
     if (session.offlineAudio) {
+      session.onTiming?.('recorderStopStart');
       const capture = await offlineRecorderRef.current?.stopRecording() ?? null;
+      session.onTiming?.('recorderStopEnd');
       if (capture && (!speechOnlyFallback || canonicalTranscript
         || (!clearlySilent && capture.sizeBytes >= 256 && capture.durationMs >= 200))) {
         if (isOfflineAudio(session.offlineAudio)) {
@@ -467,6 +487,7 @@ export function useSpeechInput(options?: { cumulativeResultProtection?: boolean 
     }
     listeningRef.current = false;
     startingRef.current = false;
+    sessionRef.current?.onTiming?.('micStop');
     clearRestart();
     clearStartTimeout();
     setIsListening(false);
@@ -549,6 +570,10 @@ export function useSpeechInput(options?: { cumulativeResultProtection?: boolean 
     onError?: ErrorHandler,
     offlineAudio?: SpeechAudioOptions,
     streamHandlers?: SpeechInputStreamHandlers,
+    startOptions?: {
+      resetRestartStreakOnSpeechProgress?: boolean;
+      onTiming?: (event: SpeechInputTimingEvent, used?: boolean) => void;
+    },
   ) => {
     const supportMessage = getSpeechSupportMessage();
     if (supportMessage && (!offlineAudio?.enabled || !window.isSecureContext || !navigator.mediaDevices?.getUserMedia)) {
@@ -601,8 +626,11 @@ export function useSpeechInput(options?: { cumulativeResultProtection?: boolean 
     sessionRef.current = {
       onTranscript,
       onError,
+      onTiming: startOptions?.onTiming,
       accumulator,
       retryCount: 0,
+      lastSpeechProgress: EMPTY_TRANSCRIPT_STATE,
+      resetRestartStreakOnSpeechProgress: startOptions?.resetRestartStreakOnSpeechProgress === true,
       fatalError: false,
       failureMessage: SpeechRecognition ? null : offlineAudio && isSpeechOnlyFallback(offlineAudio)
         ? 'Browser speech recognition is unavailable. Your recorded answer can still be processed.'
@@ -743,7 +771,13 @@ export function useSpeechInput(options?: { cumulativeResultProtection?: boolean 
         if (session.cancelled || recognitionRef.current !== recognition) return;
         clearStartTimeout();
         session.recognitionReadyEver = true;
-        setTranscriptState(session.accumulator.applyResults(event, recognitionEpoch));
+        const transcript = session.accumulator.applyResults(event, recognitionEpoch);
+        if (session.resetRestartStreakOnSpeechProgress
+          && hasMeaningfulRecognitionProgress(session.lastSpeechProgress, transcript)) {
+          session.retryCount = 0;
+          session.lastSpeechProgress = transcript;
+        }
+        setTranscriptState(transcript);
       };
       recognition.onerror = event => {
         if (session.cancelled || recognitionRef.current !== recognition) return;

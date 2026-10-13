@@ -127,6 +127,53 @@ def stored_message(message_model, session_id, role, content):
 
 
 class OnlineConversationTests(unittest.TestCase):
+    def test_enrollment_answer_perf_records_one_chunk_without_logging_content(self):
+        session = active_session(19)
+        database = FakeInterviewDatabase(
+            session, UpcomingStudentInterviewSession, UpcomingStudentInterviewMessage,
+            messages=[stored_message(UpcomingStudentInterviewMessage, session.id, "ai", "Question one")],
+        )
+        websocket = FakeWebSocket([{"text": json.dumps({
+            "type": "message", "text": "Private student answer", "turn_perf_id": "abcdef123456",
+            "final_turn": False,
+        })}])
+
+        class ChunkedProvider:
+            def __init__(self):
+                self.calls = 0
+
+            async def stream_chat(self, messages, workload=None):
+                del messages, workload
+                self.calls += 1
+                yield "Private "
+                yield "AI response"
+
+        provider = ChunkedProvider()
+        with patch.object(upcoming_student_interview, "_ENROLLMENT_PERF_ENABLED", True), \
+             patch.object(upcoming_student_interview, "get_ai_provider", return_value=provider), \
+             patch.object(upcoming_student_interview.logger, "info") as info:
+            asyncio.run(upcoming_student_interview.interview_chat_ws(
+                websocket=websocket,
+                session_id=session.id,
+                db=database,
+                current_user=SimpleNamespace(id=7, department="CCIT"),
+            ))
+
+        events = [call.args[2] for call in info.call_args_list]
+        self.assertEqual(events.count("firstProviderChunk"), 1)
+        self.assertEqual(events.count("turnCompleteSent"), 1)
+        self.assertLess(events.index("providerStart"), events.index("firstProviderChunk"))
+        self.assertLess(events.index("firstProviderChunk"), events.index("providerComplete"))
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual([message.role for message in database.messages], ["ai", "user", "ai"])
+        self.assertEqual(database.commit_count, 2)
+        self.assertEqual(
+            [call.args[0] for call in websocket.send_json.await_args_list],
+            [{"text": "Private "}, {"text": "AI response"}, {"type": "turn_complete"}],
+        )
+        self.assertNotIn("Private", str(info.call_args_list))
+        self.assertNotIn("Question one", str(info.call_args_list))
+
     def test_enrollment_conversation_uses_ai_provider(self):
         session = active_session(11)
         database = FakeInterviewDatabase(

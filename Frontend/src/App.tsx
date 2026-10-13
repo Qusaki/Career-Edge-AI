@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, useMotionValue, useSpring, useTransform } from 'motion/react';
-import { Mic, FileText, CheckCircle, BarChart, Play, ArrowRight, Github, Facebook, BrainCircuit, Target, GraduationCap, MessageSquare, Video, Plus, Send, MousePointer2, Paperclip, LogOut, MapPin, Phone, Mail, Globe } from 'lucide-react';
+import { Mic, FileText, CheckCircle, BarChart, Play, ArrowRight, BrainCircuit, Target, GraduationCap, MessageSquare, Video, Plus, Send, MousePointer2, Paperclip, LogOut, MapPin, Phone, Mail, Globe } from 'lucide-react';
 import { AuthPage } from './components/AuthPage';
 import { Dashboard } from './components/Dashboard';
 import { AppUpdateNotice, type UpdateBlockReason } from './components/AppUpdateNotice';
@@ -680,14 +680,6 @@ export default function App() {
             <p className="text-sm text-neutral-500">
               © {new Date().getFullYear()} Career Edge Inc. All rights reserved.
             </p>
-            <div className="flex items-center gap-4">
-              <a href="https://www.facebook.com/PRMSUCCITCastillejos" target="_blank" rel="noopener noreferrer" className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center hover:bg-neutral-800 hover:border-neutral-700 transition-all group">
-                <Facebook className="w-4 h-4 text-neutral-400 group-hover:text-violet-400" />
-              </a>
-              <a href="https://github.com/Qusaki/Career-Edge-AI" target="_blank" rel="noopener noreferrer" className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center hover:bg-neutral-800 hover:border-neutral-700 transition-all group">
-                <Github className="w-4 h-4 text-neutral-400 group-hover:text-violet-400" />
-              </a>
-            </div>
           </div>
         </div>
       </footer>

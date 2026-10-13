@@ -1,6 +1,9 @@
 import json
 import datetime
 import logging
+import os
+import re
+import time
 # pyrefly: ignore [missing-import]
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, status
 # pyrefly: ignore [missing-import]
@@ -19,6 +22,34 @@ from services.interview_ai import collect_ai_response, parse_evaluation_response
 router = APIRouter()
 logger = logging.getLogger(__name__)
 INTERVIEW_TIME_LIMIT_SECONDS = 3600
+_ENROLLMENT_PERF_ENABLED = os.getenv("ENROLLMENT_PERF_DEBUG", "").lower() in {"1", "true"}
+_ENROLLMENT_PERF_EVENTS = frozenset({
+    "backendAnswerReceived", "historyLoadStart", "historyLoadEnd",
+    "studentCommitStart", "studentCommitEnd", "providerStart",
+    "firstProviderChunk", "providerComplete", "aiCommitStart",
+    "aiCommitEnd", "turnCompleteSent",
+})
+
+
+class EnrollmentTurnPerf:
+    """Opt-in, content-free monotonic timing for one student answer."""
+
+    def __init__(self, turn_id: str):
+        if not re.fullmatch(r"[0-9a-f]{12}", turn_id):
+            raise ValueError("Invalid Enrollment timing ID")
+        self.turn_id = turn_id
+        self.started = time.perf_counter()
+        self.seen: set[str] = set()
+
+    def mark(self, event: str, *, once: bool = False) -> None:
+        if event not in _ENROLLMENT_PERF_EVENTS or (once and event in self.seen):
+            return
+        self.seen.add(event)
+        elapsed_ms = (time.perf_counter() - self.started) * 1000
+        try:
+            logger.info("[EnrollmentPerf] turn=%s %s +%.1fms", self.turn_id, event, elapsed_ms)
+        except Exception:
+            pass  # Diagnostics must never interrupt an interview turn.
 
 ENROLLMENT_FINAL_TURN_INSTRUCTION = (
     "The student has submitted their fifth and final answer. Do not ask another "
@@ -172,7 +203,17 @@ async def interview_chat_ws(
                 try:
                     data = json.loads(msg["text"])
                     message_type = data.get("type", "message")
+                    perf_id = data.get("turn_perf_id")
+                    perf = EnrollmentTurnPerf(perf_id) if (
+                        _ENROLLMENT_PERF_ENABLED and message_type == "message"
+                        and isinstance(perf_id, str) and re.fullmatch(r"[0-9a-f]{12}", perf_id)
+                    ) else None
+                    if perf:
+                        perf.mark("backendAnswerReceived")
+                        perf.mark("historyLoadStart")
                     stored_messages = get_stored_chat_messages(db, session.id)
+                    if perf:
+                        perf.mark("historyLoadEnd")
                     if message_type == "start" and stored_messages:
                         await websocket.send_json({"type": "history", "messages": stored_messages})
                         if stored_messages[-1]["role"] == "assistant":
@@ -207,7 +248,11 @@ async def interview_chat_ws(
                         db.add(UpcomingStudentInterviewMessage(
                             session_id=session.id, role="user", content=user_text
                         ))
+                        if perf:
+                            perf.mark("studentCommitStart")
                         db.commit()
+                        if perf:
+                            perf.mark("studentCommitEnd")
                         stored_messages.append({"role": "user", "content": user_text})
                         effective_prompt = system_prompt
                         if data.get("final_turn") is True:
@@ -223,11 +268,18 @@ async def interview_chat_ws(
 
                     full_response = ""
                     ai_provider = get_ai_provider()
+                    if perf:
+                        perf.mark("providerStart")
                     async for content in ai_provider.stream_chat(
                         provider_messages, workload="enrollment_interview"
                     ):
+                        if perf:
+                            perf.mark("firstProviderChunk", once=True)
                         full_response += content
                         await websocket.send_json({"text": content})
+
+                    if perf:
+                        perf.mark("providerComplete")
 
                     full_response = full_response.strip()
                     if not full_response:
@@ -235,8 +287,14 @@ async def interview_chat_ws(
                     db.add(UpcomingStudentInterviewMessage(
                         session_id=session.id, role="ai", content=full_response
                     ))
+                    if perf:
+                        perf.mark("aiCommitStart")
                     db.commit()
+                    if perf:
+                        perf.mark("aiCommitEnd")
                     await websocket.send_json({"type": "turn_complete"})
+                    if perf:
+                        perf.mark("turnCompleteSent")
                 except Exception as error:
                     logger.warning(
                         "Enrollment AI stream failed (session_id=%s, error=%s)",

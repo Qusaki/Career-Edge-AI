@@ -10,6 +10,7 @@ import { AppUpdateNotice, type UpdateBlockReason } from './AppUpdateNotice';
 import { useWebLLM } from '../hooks/useWebLLM';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { cancelBrowserSpeech, speakBrowserText } from '../utils/browserSpeech';
+import { EnrollmentPerfTrace, enrollmentPerfEnabled } from '../utils/enrollmentPerf';
 import { selectRestoredEnrollmentPrompt, type RestoredEnrollmentPrompt } from '../utils/enrollmentResumeSpeech';
 import type { MLCEngine } from '@mlc-ai/web-llm';
 import { useConnectivity } from '../hooks/useConnectivity';
@@ -1767,6 +1768,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const onlineResponseBufferRef = React.useRef('');
   const onlinePreviousAiResponseRef = React.useRef('');
   const onlinePendingUserTextRef = React.useRef('');
+  const enrollmentPerfRef = React.useRef<EnrollmentPerfTrace | null>(null);
   const pendingRestoredEnrollmentPromptRef = React.useRef<RestoredEnrollmentPrompt | null>(null);
   const spokenRestoredEnrollmentPromptRef = React.useRef<string | null>(null);
   const restoredEnrollmentPlaybackGenerationRef = React.useRef(0);
@@ -2355,7 +2357,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
-  const speakOnlineInterviewResponse = (text: string) => speakBrowserText(text.replace(/[*_#]/g, '').trim(), {
+  const speakOnlineInterviewResponse = (text: string, onStart?: () => void) => speakBrowserText(text.replace(/[*_#]/g, '').trim(), {
     rate: CLEAR_AI_SPEECH_RATE,
     pitch: CLEAR_AI_SPEECH_PITCH,
     volume: CLEAR_AI_SPEECH_VOLUME,
@@ -2367,6 +2369,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       setIsAiSpeaking(true);
       isAiSpeakingRef.current = true;
     },
+    onStart,
   });
 
   const speakRestoredEnrollmentPrompt = async () => {
@@ -2598,6 +2601,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
       text,
       createdAt: Date.now(),
     };
+    const enrollmentPerf = mode === 'enrollment' && checkpoint.mode === 'online'
+      ? enrollmentPerfRef.current : null;
+    enrollmentPerf?.mark('checkpointStart');
     const saved = await updateActivityCheckpoint({
       conversationLog: appended.conversationLog,
       responseCount: appended.responseCount,
@@ -2605,6 +2611,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       answers: [...checkpoint.answers, nextAnswer],
       eyeContactSummary: getCheckpointEyeContactSummary(),
     });
+    enrollmentPerf?.mark('checkpointEnd');
     if (!saved) {
       offlineAnswerSubmissionRef.current = false;
       setIsSubmittingOfflineAnswer(false);
@@ -2709,7 +2716,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
       return next;
     });
 
-    await speakOnlineInterviewResponse(responseText);
+    const enrollmentPerf = mode === 'enrollment' ? enrollmentPerfRef.current : null;
+    enrollmentPerf?.mark('ttsRequested');
+    await speakOnlineInterviewResponse(responseText, enrollmentPerf
+      ? () => enrollmentPerf.markOnce('ttsStart') : undefined);
     setIsAiSpeaking(false);
     isAiSpeakingRef.current = false;
     setMouthValue(0);
@@ -2792,10 +2802,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
       if (payload.type === 'turn_complete') {
+        if (mode === 'enrollment') enrollmentPerfRef.current?.mark('turnCompleteReceived');
         void finishOnlineInterviewResponse(mode);
         return;
       }
       if (typeof payload.text === 'string' && payload.text) {
+        if (mode === 'enrollment') enrollmentPerfRef.current?.markOnce('frontendFirstChunk');
         onlineResponseBufferRef.current += payload.text;
         setAiResponseText(onlineResponseBufferRef.current);
       }
@@ -2893,7 +2905,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
       isAiSpeakingRef.current = false;
       return;
     }
-    socket.send(JSON.stringify({ type: 'message', text, final_turn: finalTurn }));
+    const enrollmentPerf = mode === 'enrollment' ? enrollmentPerfRef.current : null;
+    enrollmentPerf?.mark('websocketSendStart');
+    socket.send(JSON.stringify({
+      type: 'message', text, final_turn: finalTurn,
+      ...(enrollmentPerf ? { turn_perf_id: enrollmentPerf.id } : {}),
+    }));
+    enrollmentPerf?.mark('websocketSend');
   };
 
   const retryOnlineInterviewResponse = () => {
@@ -3624,6 +3642,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
     setPendingEnrollmentAudio(pending);
     setIsProcessingEnrollmentAudio(true);
     setInterviewMicFeedback(null);
+    const enrollmentPerf = enrollmentPerfRef.current;
+    enrollmentPerf?.transcriptionUsed(true);
+    enrollmentPerf?.mark('transcriptionStart');
     try {
       const transcript = await transcribeAnswer(API_URL, pending.capture);
       const active = activeActivityCheckpointRef.current;
@@ -3641,6 +3662,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       }
       return null;
     } finally {
+      enrollmentPerf?.mark('transcriptionEnd');
       if (generation === enrollmentAudioGenerationRef.current) {
         enrollmentAudioProcessingRef.current = false;
         setIsProcessingEnrollmentAudio(false);
@@ -3677,6 +3699,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
     audioQueueRef.current = [];
 
     const answerIndex = current.responseCount + 1;
+    enrollmentPerfRef.current = null;
+    if (current.type === 'upcoming' && current.mode === 'online' && enrollmentPerfEnabled()) {
+      try { enrollmentPerfRef.current = new EnrollmentPerfTrace(); }
+      catch { /* Diagnostics must never prevent microphone capture. */ }
+    }
+    const turnPerf = enrollmentPerfRef.current;
     const started = await startSpeechInput(
       transcript => {
         onlinePendingUserTextRef.current = '';
@@ -3705,7 +3733,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
         onStreamReady: attachInterviewWaveform,
         onStreamReleased: releaseInterviewMicrophone,
       },
+      {
+        resetRestartStreakOnSpeechProgress: current.type === 'upcoming',
+        onTiming: turnPerf
+          ? (event, used) => {
+            if (event === 'transcriptionUsed') turnPerf.transcriptionUsed(used === true);
+            else turnPerf.mark(event);
+          } : undefined,
+      },
     );
+    if (!started) enrollmentPerfRef.current = null;
     if (started && current.type === 'upcoming') clearPendingEnrollmentAudio();
     isListeningRef.current = started;
   };
