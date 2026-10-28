@@ -597,7 +597,10 @@ export function DrillsPage({
       return;
     }
     const token = localStorage.getItem('token');
-    if (!token) return;
+    if (!token) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -713,7 +716,7 @@ export function DrillsPage({
       }
 
       const token = localStorage.getItem('token');
-      if (!token) return;
+      if (!token) throw new Error('Your session has expired. Please sign in again.');
       const sessionResponse = await fetch(`${apiUrl}/drills/start`, {
         method: 'POST',
         headers: {
