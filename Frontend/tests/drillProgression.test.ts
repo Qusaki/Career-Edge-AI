@@ -71,7 +71,17 @@ test('each level displays authoritative completion counts', () => {
 test('individual completed Drill types are visibly marked', () => {
   assert.match(source, /levelProgress\.drills\.find\(item => item\.type === drill\.drillType\)/);
   assert.match(source, /const isCompleted = Boolean\(drillProgress\?\.completed\)/);
-  assert.match(source, /isCompleted \? 'Completed' : isDrillLocked \? 'Locked' : 'Available'/);
+  assert.match(source, /isCompleted \? 'Previously completed' : isDrillLocked \? 'Locked' : 'Available'/);
+  assert.doesNotMatch(source, /isCompleted \? 'Completed' : isDrillLocked/);
+});
+
+test('a previously completed Drill type can show a separate Active replay session', () => {
+  assert.match(source, /const isCompleted = Boolean\(drillProgress\?\.completed\)/);
+  assert.match(source, /isCompleted \? 'Previously completed' : isDrillLocked \? 'Locked' : 'Available'/);
+  assert.match(source, /sessions\.slice\(0, 8\)\.map\(session =>/);
+  assert.match(source, /\{session\.status\}<\/span>/);
+  assert.match(source, /isCompleted \? 'Replay Drill' : 'Start Drill'/);
+  assert.doesNotMatch(source, /disabled=\{[^}]*isCompleted/);
 });
 
 test('locked Drill actions cannot start a session', () => {

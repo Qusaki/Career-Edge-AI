@@ -1468,7 +1468,7 @@ export function DrillsPage({
                             ) : (
                               <span aria-hidden="true">○</span>
                             )}
-                            {isCompleted ? 'Completed' : isDrillLocked ? 'Locked' : 'Available'}
+                            {isCompleted ? 'Previously completed' : isDrillLocked ? 'Locked' : 'Available'}
                           </span>
                         </div>
                         <p className="mt-2 text-sm leading-relaxed text-muted">{drill.description}</p>
