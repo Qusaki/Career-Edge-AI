@@ -6,6 +6,31 @@ const source = readFileSync(
   new URL('../src/components/DrillsPage.tsx', import.meta.url),
   'utf8',
 );
+const startFlow = source.slice(source.indexOf('const startDrill ='), source.indexOf('const quitDrill ='));
+const loadFlow = source.slice(source.indexOf('const loadSessions ='), source.indexOf('useEffect(() => { loadSessions();'));
+
+test('missing online token reports an expired session before any start request and clears Starting', () => {
+  assert.match(startFlow, /const token = localStorage\.getItem\('token'\);\s*if \(!token\) throw new Error\('Your session has expired\. Please sign in again\.'\);\s*const sessionResponse = await fetch\(`\$\{apiUrl\}\/drills\/start`/);
+  assert.match(startFlow, /catch \(err\) \{[\s\S]*?setError\(err instanceof Error \? err\.message/);
+  assert.match(startFlow, /finally \{\s*if \(exerciseGenerationRef\.current === attemptId\) setStarting\(null\)/);
+  assert.match(source, /\{\(error \|\| notice\) && \(/);
+});
+
+test('missing token during Drill list loading clears the loading state', () => {
+  assert.match(loadFlow, /const token = localStorage\.getItem\('token'\);\s*if \(!token\) \{\s*setLoading\(false\);\s*return;\s*\}/);
+  assert.match(loadFlow, /finally \{\s*setLoading\(false\)/);
+});
+
+test('valid-token online start, offline start, guards, resume, and replay paths remain intact', () => {
+  assert.match(startFlow, /if \(!levelProgress\.unlocked\)/);
+  assert.match(startFlow, /if \(!drillProgress\?\.unlocked\)/);
+  assert.match(startFlow, /if \(!effectiveOnline\) \{[\s\S]*?mode: 'offline'/);
+  assert.match(startFlow, /Authorization: `Bearer \$\{token\}`/);
+  assert.match(startFlow, /const session: DrillSession = await sessionResponse\.json\(\)/);
+  assert.match(startFlow, /setActiveSession\(session\)/);
+  assert.match(source, /disabled=\{isDrillLocked \|\| starting !== null \|\| completing !== null\}/);
+  assert.match(source, /isCompleted \? 'Replay Drill' : 'Start Drill'/);
+});
 
 test('Drill progression is loaded from the authenticated backend endpoint', () => {
   assert.match(source, /fetch\(`\$\{apiUrl\}\/drills\/progress`, \{ headers \}\)/);
