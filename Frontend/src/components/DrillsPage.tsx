@@ -133,6 +133,8 @@ const speechOnlyErrorMessage = (message: string): string => message
   .replace(/,\s*\./g, '.')
   .trim();
 
+const DRILL_RECOGNITION_START_OPTIONS = { resetRestartStreakOnSpeechProgress: true };
+
 const drills: Drill[] = [
   {
     title: 'Just-a-Minute Speaking',
@@ -1025,7 +1027,8 @@ export function DrillsPage({
       answerIndex: 1,
       persistAudio: onOfflineAudioCaptured,
       onPendingAudio: () => setHasPendingOfflineAudio(true),
-    } : { enabled: true, transcribeCapture: capture => processOnlineAudio(capture, commitDrillResponse) });
+    } : { enabled: true, transcribeCapture: capture => processOnlineAudio(capture, commitDrillResponse) },
+    undefined, DRILL_RECOGNITION_START_OPTIONS);
   };
 
   const stopDrillResponse = () => {
@@ -1052,7 +1055,8 @@ export function DrillsPage({
       answerIndex,
       persistAudio: onOfflineAudioCaptured,
       onPendingAudio: () => setHasPendingOfflineAudio(true),
-    } : { enabled: true, transcribeCapture: capture => processOnlineAudio(capture, sendNegotiationReply) });
+    } : { enabled: true, transcribeCapture: capture => processOnlineAudio(capture, sendNegotiationReply) },
+    undefined, DRILL_RECOGNITION_START_OPTIONS);
   };
 
   const completeDrill = async () => {
