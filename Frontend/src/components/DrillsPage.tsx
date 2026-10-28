@@ -425,7 +425,7 @@ export function DrillsPage({
     cancelListening,
     resetTranscript: resetSpeechTranscript,
     enableOfflineRecording,
-  } = useSpeechInput();
+  } = useSpeechInput({ cumulativeResultProtection: true });
   const eyeTracker = useEyeContactTracker(Boolean(activeSession));
   const applyDrillTimer = useCallback((nextTimer: DrillTimerState | null) => {
     drillTimerRef.current = nextTimer;

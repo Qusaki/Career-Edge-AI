@@ -91,9 +91,9 @@ test('recoverable restarts leave MediaRecorder and Enrollment listening UI activ
   assert.match(hook, /onAutoStopped: isSpeechOnlyFallback\(offlineAudio\) \? stopListening : undefined/);
 });
 
-test('other activities retain existing hook options, accumulation, finalization, and fallback', () => {
+test('Drill cumulative mode leaves other hook callers, finalization, and fallback intact', () => {
   assert.match(preTest, /\} = useSpeechInput\(\)/);
-  assert.match(drills, /\} = useSpeechInput\(\)/);
+  assert.match(drills, /\} = useSpeechInput\(\{ cumulativeResultProtection: true \}\)/);
   assert.match(postTest, /\} = useSpeechInput\(\{ cumulativeResultProtection: true \}\)/);
   assert.match(hook, /RECOGNITION_FINALIZATION_TIMEOUT_MS = 3000/);
   assert.match(hook, /session\.accumulator\.claimCanonicalTranscript\(\)/);
