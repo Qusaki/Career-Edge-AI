@@ -78,11 +78,11 @@ test('manual stop, delayed final, recorder, fallback, and JAM timeout retain the
   assert.match(drills, /if \(next\.phase === 'expired'\) \{[\s\S]*?stopListening\(\)/);
 });
 
-test('other speech callers and Drill canonical answer rules remain unchanged', () => {
+test('other speech callers retain their options and Drill canonical answer rules remain unchanged', () => {
   assert.match(enrollment, /resetRestartStreakOnSpeechProgress: current\.type === 'upcoming'/);
   assert.match(preTest, /\} = useSpeechInput\(\)/);
   assert.match(postTest, /\} = useSpeechInput\(\{ cumulativeResultProtection: true \}\)/);
-  assert.match(drills, /\} = useSpeechInput\(\)/);
+  assert.match(drills, /\} = useSpeechInput\(\{ cumulativeResultProtection: true \}\)/);
   assert.match(hook, /session\.accumulator\.claimCanonicalTranscript\(\)/);
   assert.match(hook, /session\.onTranscript\(canonicalTranscript \|\| fallbackTranscript\)/);
 });
