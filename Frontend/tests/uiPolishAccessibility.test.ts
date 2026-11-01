@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
+import { JsxEmit, transpileModule } from 'typescript';
 
 import { hasCompletedTotalScore } from '../src/utils/analytics';
 
@@ -68,6 +70,82 @@ test('profile fields and upload trigger have explicit accessible labels', () => 
   assert.match(dashboard, /className="hidden"[\s\S]*?tabIndex=\{-1\}/);
   assert.match(dashboard, /flex flex-col items-start gap-5 sm:flex-row sm:items-center/);
   assert.match(dashboard, /break-words text-2xl/);
+});
+
+test('profile password visibility toggles locally without changing its value or save behavior', () => {
+  const profilePassword = dashboard.slice(
+    dashboard.indexOf('<label htmlFor="profile-password"'),
+    dashboard.indexOf('{/* Department */}', dashboard.indexOf('<label htmlFor="profile-password"')),
+  );
+
+  assert.match(dashboard, /const \[showProfilePass, setShowProfilePass\] = useState\(false\)/);
+  assert.match(profilePassword, /type=\{showProfilePass \? 'text' : 'password'\}/);
+  assert.match(profilePassword, /value=\{profile\.password \|\| ''\}/);
+  assert.match(profilePassword, /onChange=\{\(e\) => setProfile\(\{ \.\.\.profile, password: e\.target\.value \}\)\}/);
+  assert.match(profilePassword, /<button\s+type="button"\s+onClick=\{\(\) => setShowProfilePass\(!showProfilePass\)\}/);
+  assert.match(profilePassword, /aria-label=\{showProfilePass \? 'Hide password' : 'Show password'\}/);
+  assert.match(profilePassword, /aria-pressed=\{showProfilePass\}/);
+  assert.match(profilePassword, /program-accent-focus-ring/);
+  assert.match(profilePassword, /showProfilePass \? <EyeOff[^>]+\/> : <Eye[^>]+\/>/);
+  assert.doesNotMatch(profilePassword, /handleSave|formData\.append|console\./);
+  assert.match(dashboard, /if \(profile\.password\) formData\.append\('password', profile\.password\)/);
+  assert.match(auth, /type=\{showPassword \? 'text' : 'password'\}/);
+  assert.match(auth, /aria-label=\{showPassword \? 'Hide password' : 'Show password'\}/);
+});
+
+test('profile visibility button switches the rendered input in both directions without editing its value', () => {
+  const start = dashboard.indexOf('<label htmlFor="profile-password"');
+  const end = dashboard.indexOf('{/* Department */}', start);
+  const markup = dashboard.slice(start, end).match(/<div className="relative">[\s\S]*?<\/div>/)?.[0];
+  assert.ok(markup);
+
+  const code = transpileModule(
+    `const render = (showProfilePass, setShowProfilePass, profile, setProfile) => (${markup}); render;`,
+    { compilerOptions: { jsx: JsxEmit.React } },
+  ).outputText;
+  const React = {
+    createElement: (type: string, props: Record<string, unknown>, ...children: unknown[]) => ({
+      type,
+      props: { ...props, children },
+    }),
+  };
+  const render = runInNewContext(`${code}\nrender;`, { React, Eye: 'Eye', EyeOff: 'EyeOff' }) as (
+    visible: boolean,
+    setVisible: (next: boolean) => void,
+    profile: { password: string },
+    setProfile: () => void,
+  ) => { props: { children: Array<{ type: string; props: Record<string, unknown> }> } };
+
+  let visible = false;
+  let profileUpdates = 0;
+  const readControl = () => {
+    const wrapper = render(visible, next => { visible = next; }, { password: 'new-password' }, () => { profileUpdates += 1; });
+    return {
+      input: wrapper.props.children.find(child => child.type === 'input'),
+      button: wrapper.props.children.find(child => child.type === 'button'),
+    };
+  };
+
+  let { input, button } = readControl();
+  assert.equal(input?.props.type, 'password');
+  assert.equal(button?.props.type, 'button');
+  assert.equal(button?.props['aria-label'], 'Show password');
+  assert.equal(button?.props['aria-pressed'], false);
+  (button?.props.onClick as () => void)();
+
+  ({ input, button } = readControl());
+  assert.equal(input?.props.type, 'text');
+  assert.equal(input?.props.value, 'new-password');
+  assert.equal(button?.props['aria-label'], 'Hide password');
+  assert.equal(button?.props['aria-pressed'], true);
+  (button?.props.onClick as () => void)();
+
+  ({ input, button } = readControl());
+  assert.equal(input?.props.type, 'password');
+  assert.equal(input?.props.value, 'new-password');
+  assert.equal(button?.props['aria-label'], 'Show password');
+  assert.equal(button?.props['aria-pressed'], false);
+  assert.equal(profileUpdates, 0);
 });
 
 test('connection and leave overlays are modal dialogs with focus and Escape handling', () => {

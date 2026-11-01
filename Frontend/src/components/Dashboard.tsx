@@ -6170,14 +6170,25 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                     <div className="space-y-2">
                       <label htmlFor="profile-password" className="text-sm font-medium text-slate-300">Password</label>
-                      <input
-                        id="profile-password"
-                        type="password"
-                        value={profile.password || ''}
-                        onChange={(e) => setProfile({ ...profile, password: e.target.value })}
-                        className="program-accent-focus w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 text-slate-200 transition-all duration-300"
-                        placeholder="••••••••"
-                      />
+                      <div className="relative">
+                        <input
+                          id="profile-password"
+                          type={showProfilePass ? 'text' : 'password'}
+                          value={profile.password || ''}
+                          onChange={(e) => setProfile({ ...profile, password: e.target.value })}
+                          className="program-accent-focus w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 pr-12 text-slate-200 transition-all duration-300"
+                          placeholder="••••••••"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowProfilePass(!showProfilePass)}
+                          aria-label={showProfilePass ? 'Hide password' : 'Show password'}
+                          aria-pressed={showProfilePass}
+                          className="program-accent-focus-ring absolute inset-y-0 right-0 flex items-center pr-3 text-slate-500 transition-colors hover:text-slate-300"
+                        >
+                          {showProfilePass ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                        </button>
+                      </div>
                     </div>
 
                     {/* Department */}
