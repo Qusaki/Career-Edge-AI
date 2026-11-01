@@ -148,6 +148,94 @@ test('profile visibility button switches the rendered input in both directions w
   assert.equal(profileUpdates, 0);
 });
 
+test('shared Sign Out menu item has a visible themed card and opens an accessible confirmation', () => {
+  const menu = dashboard.slice(dashboard.indexOf('id="sidebar-account-menu"'), dashboard.indexOf('ref={accountTriggerRef}'));
+  const signOutCard = menu.slice(menu.indexOf('<div className="my-1 border-t border-line" />'));
+  const dialog = dashboard.slice(dashboard.indexOf('{isSignOutDialogOpen && ('), dashboard.indexOf('\n      </div>\n    </>\n  );', dashboard.indexOf('{isSignOutDialogOpen && (')));
+
+  assert.match(menu, /openAuthenticatedTab\('profile'\)/);
+  assert.match(menu, /openAuthenticatedTab\('settings'\)/);
+  assert.match(signOutCard, /<button\s+type="button"\s+role="menuitem"\s+onClick=\{openSignOutDialog\}/);
+  assert.match(signOutCard, /flex w-full[^`]*rounded-md border/);
+  assert.match(signOutCard, /appTheme === 'dark'[\s\S]*?border-rose-500\/30 bg-rose-500\/10[\s\S]*?border-rose-200 bg-rose-50/);
+  assert.match(signOutCard, /program-accent-focus-ring/);
+  assert.doesNotMatch(signOutCard, /onLogout\(\)/);
+  assert.match(dashboard, /useDialogFocus\(isSignOutDialogOpen, closeSignOutDialog\)/);
+  assert.match(dialog, /role="dialog"\s+aria-modal="true"\s+aria-labelledby="sign-out-dialog-title"/);
+  assert.match(dialog, /aria-describedby=\{syncQueueSessions\.length > 0 \? 'sign-out-dialog-description sign-out-pending-warning' : 'sign-out-dialog-description'\}/);
+  assert.match(dialog, /<h2 id="sign-out-dialog-title"[^>]*>Sign out\?<\/h2>/);
+  assert.match(dialog, /Are you sure you want to sign out\?/);
+  assert.match(dialog, /onClick=\{closeSignOutDialog\}[\s\S]*?Cancel/);
+  assert.match(dialog, /onClick=\{confirmSignOut\}[\s\S]*?Sign Out/);
+  assert.match(dialog, /syncQueueSessions\.length > 0 && \([\s\S]*?activity data waiting to sync/);
+  assert.match(dashboard, /event\.key === 'Escape'[\s\S]*?closeRef\.current\(\)/);
+});
+
+test('Sign Out warning renders only for existing queued synchronization work', () => {
+  const condition = dashboard.match(/\{syncQueueSessions\.length > 0 && \(\s*<p id="sign-out-pending-warning"[\s\S]*?<\/p>\s*\)\}/)?.[0];
+  assert.ok(condition);
+  const code = transpileModule(
+    `const render = (syncQueueSessions) => (${condition.slice(1, -1)}); render;`,
+    { compilerOptions: { jsx: JsxEmit.React } },
+  ).outputText;
+  const render = runInNewContext(`${code}\nrender;`, {
+    React: { createElement: (_type: string, props: Record<string, unknown>, ...children: unknown[]) => ({ props, children }) },
+  }) as (sessions: unknown[]) => false | { props: Record<string, unknown>; children: unknown[] };
+
+  assert.equal(render([]), false);
+  const warning = render([{}]);
+  if (warning === false) assert.fail('Pending work must display the warning.');
+  assert.equal(warning.props.id, 'sign-out-pending-warning');
+  assert.match(String(warning.children[0]), /Signing out will pause synchronization/);
+});
+
+test('Sign Out intent and Cancel preserve login; double confirmation calls logout once on desktop and mobile', () => {
+  const start = dashboard.indexOf('function closeSignOutDialog()');
+  const end = dashboard.indexOf('\n  return (', start);
+  assert.ok(start > 0 && end > start);
+  const handlersSource = `${dashboard.slice(start, end)}\n({ openSignOutDialog, closeSignOutDialog, confirmSignOut });`;
+
+  for (const mobile of [false, true]) {
+    let menuOpen = true;
+    let drawerOpen = mobile;
+    let dialogOpen = false;
+    let logoutCalls = 0;
+    let accountFocused = 0;
+    let mobileFocused = 0;
+    const signOutConfirmedRef = { current: false };
+    const signOutReturnFocusRef = { current: null };
+    const accountTrigger = { focus: () => { accountFocused += 1; } };
+    const mobileTrigger = { focus: () => { mobileFocused += 1; } };
+    const handlers = runInNewContext(handlersSource, {
+      isMobileNavOpen: mobile,
+      signOutConfirmedRef,
+      signOutReturnFocusRef,
+      accountTriggerRef: { current: accountTrigger },
+      mobileNavTriggerRef: { current: mobileTrigger },
+      setIsAccountMenuOpen: (next: boolean) => { menuOpen = next; },
+      setIsMobileNavOpen: (next: boolean) => { drawerOpen = next; },
+      setIsSignOutDialogOpen: (next: boolean) => { dialogOpen = next; },
+      onLogout: () => { logoutCalls += 1; },
+      window: { requestAnimationFrame: (callback: () => void) => callback() },
+    }) as { openSignOutDialog: () => void; closeSignOutDialog: () => void; confirmSignOut: () => void };
+
+    handlers.openSignOutDialog();
+    assert.equal(menuOpen, false);
+    assert.equal(drawerOpen, false);
+    assert.equal(dialogOpen, true);
+    assert.equal(logoutCalls, 0);
+    handlers.closeSignOutDialog();
+    assert.equal(dialogOpen, false);
+    assert.equal(logoutCalls, 0);
+    assert.equal(mobile ? mobileFocused : accountFocused, 1);
+
+    handlers.openSignOutDialog();
+    handlers.confirmSignOut();
+    handlers.confirmSignOut();
+    assert.equal(logoutCalls, 1);
+  }
+});
+
 test('connection and leave overlays are modal dialogs with focus and Escape handling', () => {
   assert.ok((dashboard.match(/role="dialog"/g) ?? []).length >= 3);
   assert.ok((dashboard.match(/aria-modal="true"/g) ?? []).length >= 3);

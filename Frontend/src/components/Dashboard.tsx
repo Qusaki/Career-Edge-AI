@@ -394,6 +394,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [isSignOutDialogOpen, setIsSignOutDialogOpen] = useState(false);
+  const signOutConfirmedRef = React.useRef(false);
+  const signOutReturnFocusRef = React.useRef<HTMLButtonElement | null>(null);
   const [appTheme, setAppTheme] = useState<AppTheme>(() => {
     const savedTheme = localStorage.getItem(APP_THEME_STORAGE_KEY);
     return savedTheme === 'dark' ? 'dark' : 'light';
@@ -1835,6 +1838,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const connectionLossDialogRef = useDialogFocus(showConnectionLossPrompt, () => setShowConnectionLossPrompt(false));
   const thesisLeaveDialogRef = useDialogFocus(thesisIsLeaveModalOpen, () => setThesisIsLeaveModalOpen(false));
   const interviewLeaveDialogRef = useDialogFocus(isLeaveModalOpen, () => setIsLeaveModalOpen(false));
+  const signOutDialogRef = useDialogFocus(isSignOutDialogOpen, closeSignOutDialog);
 
   const {
     isListening,
@@ -4074,6 +4078,25 @@ export const Dashboard: React.FC<DashboardProps> = ({
     setIsMobileNavOpen(false);
   };
 
+  function closeSignOutDialog() {
+    setIsSignOutDialogOpen(false);
+    window.requestAnimationFrame(() => signOutReturnFocusRef.current?.focus());
+  }
+
+  const openSignOutDialog = () => {
+    signOutReturnFocusRef.current = isMobileNavOpen ? mobileNavTriggerRef.current : accountTriggerRef.current;
+    signOutConfirmedRef.current = false;
+    setIsAccountMenuOpen(false);
+    setIsMobileNavOpen(false);
+    setIsSignOutDialogOpen(true);
+  };
+
+  const confirmSignOut = () => {
+    if (signOutConfirmedRef.current) return;
+    signOutConfirmedRef.current = true;
+    onLogout();
+  };
+
   return (
     <>
       <ProfessorAssetErrorBoundary
@@ -4368,12 +4391,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <button
                     type="button"
                     role="menuitem"
-                    onClick={() => {
-                      setIsAccountMenuOpen(false);
-                      setIsMobileNavOpen(false);
-                      onLogout();
-                    }}
-                    className="program-accent-focus-ring flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm font-medium text-ink transition-colors hover:bg-active"
+                    onClick={openSignOutDialog}
+                    className={`program-accent-focus-ring flex w-full items-center gap-3 rounded-md border px-2.5 py-2 text-left text-sm font-semibold transition-colors ${appTheme === 'dark'
+                      ? 'border-rose-500/30 bg-rose-500/10 text-rose-300 hover:border-rose-400/60 hover:bg-rose-500/20'
+                      : 'border-rose-200 bg-rose-50 text-rose-700 hover:border-rose-300 hover:bg-rose-100'
+                    }`}
                   >
                     <LogOut className="h-4 w-4 shrink-0" />
                     Sign Out
@@ -6232,6 +6254,46 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
           </div>
         </main>
+        {isSignOutDialogOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+            <div
+              ref={signOutDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="sign-out-dialog-title"
+              aria-describedby={syncQueueSessions.length > 0 ? 'sign-out-dialog-description sign-out-pending-warning' : 'sign-out-dialog-description'}
+              tabIndex={-1}
+              className="w-full max-w-sm rounded-2xl border border-line bg-card p-6 text-ink outline-none"
+            >
+              <h2 id="sign-out-dialog-title" className="text-xl font-bold">Sign out?</h2>
+              <p id="sign-out-dialog-description" className="mt-3 text-sm text-muted">Are you sure you want to sign out?</p>
+              {syncQueueSessions.length > 0 && (
+                <p id="sign-out-pending-warning" className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-ink">
+                  You have activity data waiting to sync. Signing out will pause synchronization until you sign in again.
+                </p>
+              )}
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeSignOutDialog}
+                  className="program-accent-focus-ring rounded-lg border border-line bg-card px-4 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-active"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmSignOut}
+                  className={`program-accent-focus-ring rounded-lg border px-4 py-2.5 text-sm font-semibold transition-colors ${appTheme === 'dark'
+                    ? 'border-rose-500/50 bg-rose-500/20 text-rose-200 hover:bg-rose-500/30'
+                    : 'border-rose-600 bg-rose-600 text-white hover:bg-rose-700'
+                  }`}
+                >
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </>
   );
