@@ -9,11 +9,21 @@ const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const reset = readFileSync(new URL('../src/components/ResetPasswordPage.tsx', import.meta.url), 'utf8');
 
 test('Sign In exposes an accessible forgot-password control and keeps normal auth branches', () => {
-  assert.match(auth, /mode === 'signin' && \([\s\S]*?<button type="button"[\s\S]*?Forgot password\?/);
+  assert.match(auth, /mode === 'signin' && \([\s\S]*?<a href="#\/forgot-password" target="_blank" rel="noopener noreferrer"[\s\S]*?Forgot password\?/);
+  assert.doesNotMatch(auth, /onClick=\{\(\) => \{ setMode\('forgot'\)/);
   assert.doesNotMatch(auth, /Recovery unavailable/);
   assert.match(auth, /else if \(mode === 'signup'\)/);
   assert.match(auth, /onSuccess\(\{ isNewSignup: true \}\)/);
   assert.match(auth, /onSuccess\(\{ isNewSignup: false \}\)/);
+});
+
+test('forgot-password fragment opens recovery before stored-auth auto-login', () => {
+  assert.match(app, /const isForgotPasswordFragment = \(\) => window\.location\.hash === '#\/forgot-password'/);
+  assert.match(app, /isResetPasswordFragment\(\) \? 'reset-password' : isForgotPasswordFragment\(\) \? 'auth' : 'landing'/);
+  assert.match(app, /isForgotPasswordFragment\(\) \? 'forgot' : 'signin'/);
+  assert.match(app, /!isForgotPasswordFragment\(\) && localStorage\.getItem\('token'\)/);
+  assert.match(app, /clearForgotPasswordFragment\(\);\s*setAuthMode\('signin'\)/);
+  assert.match(auth, /onBackToSignIn\(\); setMode\('signin'\)/);
 });
 
 test('forgot view has email submission, duplicate-disable, generic response, safe error and return', () => {
@@ -23,6 +33,7 @@ test('forgot view has email submission, duplicate-disable, generic response, saf
   assert.match(auth, /disabled=\{isLoading\}/);
   assert.match(auth, /Send Reset Link/);
   assert.match(auth, /setForgotSent\(true\)/);
+  assert.match(auth, /if \(mode === 'forgot'\) \{[\s\S]*?if \(!res\.ok\) throw new Error\('Request unavailable'\);\s*setForgotSent\(true\)/);
   assert.match(auth, /If an account exists for that email, you’ll receive a password reset link\./);
   assert.match(auth, /mode === 'forgot' \? "We couldn't process the request right now/);
   assert.match(auth, /Back to Sign In/);
@@ -32,8 +43,8 @@ test('forgot view has email submission, duplicate-disable, generic response, saf
 test('reset fragment wins over stored login and token is removed from URL without storage', () => {
   assert.match(app, /window\.location\.hash\.startsWith\('#\/reset-password'\)/);
   assert.match(app, /new URLSearchParams\(window\.location\.hash\.split\('\?', 2\)\[1\]/);
-  assert.match(app, /\(\) => isResetPasswordFragment\(\) \? 'reset-password' : 'landing'/);
-  assert.match(app, /currentView !== 'reset-password' && localStorage\.getItem\('token'\)/);
+  assert.match(app, /\(\) => isResetPasswordFragment\(\) \? 'reset-password' : isForgotPasswordFragment\(\) \? 'auth' : 'landing'/);
+  assert.match(app, /currentView !== 'reset-password' && !isForgotPasswordFragment\(\) && localStorage\.getItem\('token'\)/);
   assert.match(app, /window\.history\.replaceState\(null, '', `\$\{window\.location\.pathname\}\$\{window\.location\.search\}#\/reset-password`\)/);
   assert.match(app, /onSuccess=\{\(\) => setResetToken\(null\)\}/);
   assert.doesNotMatch(app, /localStorage\.setItem\([^)]*reset|sessionStorage\.setItem|indexedDB.*resetToken/);

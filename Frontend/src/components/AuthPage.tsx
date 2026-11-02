@@ -7,13 +7,14 @@ import { normalizeApiError } from '../utils/httpError';
 
 interface AuthPageProps {
   onBack: () => void;
+  onBackToSignIn: () => void;
   onSuccess: (context: { isNewSignup: boolean }) => void;
   initialMode?: 'signin' | 'signup' | 'forgot';
 }
 
 const DEPARTMENTS = ['CBAPA', 'CCIT', 'CTE'];
 
-export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMode = 'signin' }) => {
+export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onBackToSignIn, onSuccess, initialMode = 'signin' }) => {
   const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>(initialMode);
   const [selectedDept, setSelectedDept] = useState<string>('');
 
@@ -255,10 +256,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
               <div className="flex items-center justify-between">
                 <label htmlFor="auth-password" className="text-sm font-medium text-slate-300">Password</label>
                 {mode === 'signin' && (
-                  <button type="button" onClick={() => { setMode('forgot'); setError(null); setForgotSent(false); }}
+                  <a href="#/forgot-password" target="_blank" rel="noopener noreferrer"
                     className="text-xs font-medium text-sky-400 hover:text-sky-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400">
                     Forgot password?
-                  </button>
+                  </a>
                 )}
               </div>
               <div className="relative">
@@ -340,7 +341,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
           </form>}
 
           {mode === 'forgot' && (
-            <button type="button" onClick={() => { setMode('signin'); setError(null); setForgotSent(false); }}
+            <button type="button" onClick={() => { onBackToSignIn(); setMode('signin'); setError(null); setForgotSent(false); }}
               className="mt-6 flex items-center gap-2 text-sm font-medium text-sky-400 hover:text-sky-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400">
               <ArrowLeft className="h-4 w-4" /> Back to Sign In
             </button>
