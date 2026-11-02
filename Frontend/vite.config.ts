@@ -47,14 +47,7 @@ export default defineConfig(() => {
           name: 'Career-Edge-AI (Offline)',
           short_name: 'Career Edge',
           description: '100% Offline AI Interview Simulation',
-          theme_color: '#071225',
-          icons: [
-            {
-              src: 'vite.svg',
-              sizes: '192x192',
-              type: 'image/svg+xml'
-            }
-          ]
+          theme_color: '#071225'
         }
       })
     ],

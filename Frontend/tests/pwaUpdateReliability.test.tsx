@@ -168,3 +168,11 @@ test('the build marker changes the app shell without precaching the version endp
   assert.match(pwaConfig, /'\*\*\/offline-webllm-\*\.js'/);
   assert.match(hookSource, /The update is not ready yet\. Keep working and try again when connected/);
 });
+
+test('PWA manifest omits the missing Vite icon without changing offline asset precaching', () => {
+  assert.doesNotMatch(pwaConfig, /vite\.svg|icons:/);
+  assert.match(pwaConfig, /theme_color: '#071225'/);
+  assert.match(pwaConfig, /globPatterns: \['\*\*\/\*\.\{js,css,html,ico,png,svg,json,wasm,task\}'\]/);
+  assert.match(pwaConfig, /globIgnores: \['\*\*\/offline-webllm-\*\.js', '\*\*\/version\.json'\]/);
+  assert.match(pwaConfig, /maximumFileSizeToCacheInBytes: 5000000000/);
+});
