@@ -384,6 +384,8 @@ export function DrillsPage({
   const [sessions, setSessions] = useState<DrillSession[]>([]);
   const [progress, setProgress] = useState<DrillProgress>(createInitialProgress);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const refreshInFlightRef = useRef(false);
   const [starting, setStarting] = useState<string | null>(null);
   const [completing, setCompleting] = useState<number | string | null>(null);
   const [activeSession, setActiveSession] = useState<DrillSession | null>(null);
@@ -593,17 +595,17 @@ export function DrillsPage({
     });
   }, []);
 
-  const loadSessions = useCallback(async () => {
+  const loadSessions = useCallback(async (manualRefresh = false) => {
     if (!effectiveOnline) {
-      setLoading(false);
+      if (!manualRefresh) setLoading(false);
       return;
     }
     const token = localStorage.getItem('token');
     if (!token) {
-      setLoading(false);
+      if (!manualRefresh) setLoading(false);
       return;
     }
-    setLoading(true);
+    if (!manualRefresh) setLoading(true);
     setError(null);
     try {
       const headers = { Authorization: `Bearer ${token}` };
@@ -626,9 +628,21 @@ export function DrillsPage({
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load drill sessions.');
     } finally {
-      setLoading(false);
+      if (!manualRefresh) setLoading(false);
     }
   }, [apiUrl, effectiveOnline, onProgressChange]);
+
+  const handleRefresh = async () => {
+    if (loading || refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
+    setIsRefreshing(true);
+    try {
+      await loadSessions(true);
+    } finally {
+      refreshInFlightRef.current = false;
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
 
@@ -1503,10 +1517,11 @@ export function DrillsPage({
       </section>
 
       <section className="mt-6">
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-bold italic tracking-tight text-ink">Recent Drills</h2>
-          <button onClick={loadSessions} className="program-accent-link flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider transition-colors">
-            <RefreshCw className="h-4 w-4" /> Refresh
+          <button type="button" onClick={handleRefresh} disabled={loading || isRefreshing} className="program-accent-link program-accent-focus-ring flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider transition-colors disabled:cursor-not-allowed disabled:opacity-60">
+            {isRefreshing ? <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" /> : <RefreshCw aria-hidden="true" className="h-4 w-4" />}
+            {isRefreshing ? 'Refreshing...' : 'Refresh'}
           </button>
         </div>
         <div className="overflow-hidden rounded-lg border border-line bg-card">

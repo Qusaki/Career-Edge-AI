@@ -17,8 +17,8 @@ test('missing online token reports an expired session before any start request a
 });
 
 test('missing token during Drill list loading clears the loading state', () => {
-  assert.match(loadFlow, /const token = localStorage\.getItem\('token'\);\s*if \(!token\) \{\s*setLoading\(false\);\s*return;\s*\}/);
-  assert.match(loadFlow, /finally \{\s*setLoading\(false\)/);
+  assert.match(loadFlow, /const token = localStorage\.getItem\('token'\);\s*if \(!token\) \{\s*if \(!manualRefresh\) setLoading\(false\);\s*return;\s*\}/);
+  assert.match(loadFlow, /finally \{\s*if \(!manualRefresh\) setLoading\(false\)/);
 });
 
 test('valid-token online start, offline start, guards, resume, and replay paths remain intact', () => {
