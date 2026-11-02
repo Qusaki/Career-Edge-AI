@@ -49,11 +49,39 @@ test('available update shows a compact notice; no update shows none', () => {
   ), '');
 });
 
-test('an idle Dashboard, Profile, Settings, or History allows an explicit Refresh now', () => {
+test('an idle Dashboard, Profile, Settings, or History remains safe without a warning card', () => {
   for (const activeTab of ['dashboard', 'profile', 'settings', 'history']) {
     assert.equal(isUpdateSessionActive(sessionState(activeTab)), false);
   }
-  assert.match(renderNotice(null), /Refresh now/);
+  assert.match(dashboardSource, /updateHasUnsyncedWork === true \|\| Boolean\(updateSafetyError\)/);
+  assert.match(dashboardSource, /available=\{showUpdateNotice\}/);
+});
+
+test('landing, Sign In, Forgot Password, and Reset Password never mount a public update notice', () => {
+  assert.doesNotMatch(appSource, /AppUpdateNotice|publicUpdateNotice|Check again/);
+  assert.doesNotMatch(appSource, /hasAnyUnsyncedOfflineWork/);
+  assert.match(appSource, /usePwaUpdate\(\)/);
+  for (const view of ["currentView === 'auth'", "currentView === 'reset-password'", "currentView === 'dashboard'"]) {
+    assert.match(appSource, new RegExp(view));
+  }
+});
+
+test('notice visibility requires a verified account and actual active, pending, or unverified work', () => {
+  assert.match(dashboardSource, /showUpdateNotice = updateAvailable && authenticatedUserId !== null/);
+  assert.match(dashboardSource, /updateNoticeActiveWork \|\| updateHasUnsyncedWork === true \|\| Boolean\(updateSafetyError\)/);
+  assert.match(dashboardSource, /activeActivityCheckpoint\?\.status === 'in_progress'/);
+  assert.match(dashboardSource, /isModuleSessionMode[\s\S]*?activeActivityCheckpoint\?\.status === 'in_progress'[\s\S]*?isStartingInterview[\s\S]*?thesisIsStarting/);
+  assert.match(dashboardSource, /activeTab === 'interview-session' && !interviewResult/);
+  assert.match(dashboardSource, /activeTab === 'thesis-session' && !thesisResult/);
+  assert.match(dashboardSource, /onSessionModeChange=\{setIsModuleSessionMode\}/);
+  assert.match(dashboardSource, /await accountStorage\.hasUnsyncedOfflineWork\(userId\)/);
+});
+
+test('idle Pre-Test, Drills, and Post-Test screens do not alone trigger the visible warning', () => {
+  const presentation = dashboardSource.slice(dashboardSource.indexOf('const updateNoticeActiveWork ='), dashboardSource.indexOf('const updateBlockReason:', dashboardSource.indexOf('const updateNoticeActiveWork =')));
+  for (const screen of ['pre-test', 'drills', 'post-test']) assert.doesNotMatch(presentation, new RegExp(`activeTab === '${screen}'`));
+  assert.match(presentation, /isModuleSessionMode/);
+  assert.match(presentation, /activeActivityCheckpoint\?\.status === 'in_progress'/);
 });
 
 test('an active interview prevents immediate refresh', () => {
@@ -103,7 +131,9 @@ test('refresh guard reads but never deletes local work', () => {
   assert.match(safetyMethods, /\.toArray\(\)/);
   assert.doesNotMatch(safetyMethods, /\.delete\(|\.clear\(|\.put\(/);
   assert.match(dashboardSource, /await accountStorage\.hasUnsyncedOfflineWork\(userId\)/);
-  assert.match(appSource, /await accountStorage\.hasAnyUnsyncedOfflineWork\(\)/);
+  assert.doesNotMatch(appSource, /hasAnyUnsyncedOfflineWork/);
+  assert.match(dashboardSource, /if \(!userId \|\| updateSessionActiveRef\.current\) return/);
+  assert.match(dashboardSource, /if \(!hasUnsyncedWork && !updateSessionActiveRef\.current\) await onRefreshUpdate\(\)/);
 });
 
 test('activation is attempted only on an explicit refresh and cannot auto-reload in a loop', () => {

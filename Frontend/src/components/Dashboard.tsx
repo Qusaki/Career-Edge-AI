@@ -4115,7 +4115,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const failedSyncSession = syncQueueSessions.find(session => session.status === 'sync_failed');
   const queuedSyncSessions = syncQueueSessions.filter(session => session.status === 'pending_sync');
   const awaitingTranscriptionSessions = syncQueueSessions.filter(session => session.status === 'pending_transcription');
-  const updateBlockReason: UpdateBlockReason = updateSessionActive
+  // Presentation reflects real work; the separate refresh guard remains conservative
+  // while an activity entry screen could be starting a child session.
+  const updateNoticeActiveWork = isModuleSessionMode
+    || activeActivityCheckpoint?.status === 'in_progress'
+    || isStartingInterview
+    || thesisIsStarting
+    || (activeTab === 'interview-session' && !interviewResult)
+    || (activeTab === 'thesis-session' && !thesisResult);
+  const showUpdateNotice = updateAvailable && authenticatedUserId !== null && (
+    updateNoticeActiveWork || updateHasUnsyncedWork === true || Boolean(updateSafetyError)
+  );
+  const updateBlockReason: UpdateBlockReason = updateNoticeActiveWork
     ? 'active-session'
     : updateHasUnsyncedWork === null
       ? 'checking-work'
@@ -4164,7 +4175,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </React.Suspense>
       </ProfessorAssetErrorBoundary>
       <AppUpdateNotice
-        available={updateAvailable}
+        available={showUpdateNotice}
         blockedReason={updateBlockReason}
         isRefreshing={updateRefreshing}
         error={updateSafetyError || updateError}
