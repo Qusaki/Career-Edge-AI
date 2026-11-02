@@ -78,7 +78,7 @@ class PasswordRecoveryTests(unittest.TestCase):
         self.assertTrue(urlsplit(url).fragment.startswith("/reset-password?token="))
         return parse_qs(urlsplit(url).fragment.split("?", 1)[1])["token"][0]
 
-    def reset(self, token: str, password: str = "new password works"):
+    def reset(self, token: str, password: str = "Newpass1!"):
         return self.client.post("/auth/reset-password", json={"token": token, "new_password": password})
 
     def test_known_unknown_and_unconfigured_requests_are_publicly_identical(self) -> None:
@@ -149,10 +149,10 @@ class PasswordRecoveryTests(unittest.TestCase):
     def test_policy_rejects_bad_values_and_preserves_exact_valid_spaces(self) -> None:
         self.request_link()
         raw = self.raw_token()
-        for candidate in ("short", "a" * 73, " " * 15):
+        for candidate in ("short", "abcdef1!", "ABCDEF1!", "Abcdefg!", "Abcdef12", "Ab1!" + "a" * 69, " " * 8):
             with self.subTest(candidate_length=len(candidate)):
                 self.assertEqual(self.reset(raw, candidate).status_code, 422)
-        spaced = "  valid passphrase  "
+        spaced = "  Newpass1!  "
         self.assertEqual(self.reset(raw, spaced).status_code, 200)
         with self.SessionLocal() as db:
             saved = db.query(User).one()
@@ -164,10 +164,10 @@ class PasswordRecoveryTests(unittest.TestCase):
         self.request_link()
         self.assertEqual(self.reset(self.raw_token()).status_code, 200)
         self.assertEqual(self.client.post("/auth/login", data={"username": "existing@example.test", "password": self.old_password}).status_code, 401)
-        self.assertEqual(self.client.post("/auth/login", data={"username": "existing@example.test", "password": "new password works"}).status_code, 200)
-        signup = self.client.post("/users/", json={"email": "new@example.test", "firstname": "New", "lastname": "User", "department": "CCIT", "password": "fifteen characters"})
+        self.assertEqual(self.client.post("/auth/login", data={"username": "existing@example.test", "password": "Newpass1!"}).status_code, 200)
+        signup = self.client.post("/users/", json={"email": "new@example.test", "firstname": "New", "lastname": "User", "department": "CCIT", "password": "Signup1!"})
         self.assertEqual(signup.status_code, 200, signup.text)
-        self.assertEqual(self.client.post("/auth/login", data={"username": "new@example.test", "password": "fifteen characters"}).status_code, 200)
+        self.assertEqual(self.client.post("/auth/login", data={"username": "new@example.test", "password": "Signup1!"}).status_code, 200)
 
     def test_failed_password_hash_rolls_back_claim_and_password_change(self) -> None:
         self.request_link()
@@ -244,7 +244,7 @@ class PasswordRecoveryTests(unittest.TestCase):
                         return False
 
             with ThreadPoolExecutor(max_workers=2) as pool:
-                results = list(pool.map(attempt, ("first password works", "second password works")))
+                results = list(pool.map(attempt, ("Firstpass1!", "Secondpass2!")))
             self.assertEqual(sorted(results), [False, True])
             with session_factory() as db:
                 self.assertIsNotNone(db.query(PasswordResetToken).one().used_at)
