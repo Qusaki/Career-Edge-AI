@@ -91,7 +91,7 @@ test('Who Am I and Active Listening restore one fixed offline baseline and seria
 
   assert.match(source, /offlineEyeContactBaselineRef\.current = resumeSession\.eyeContactSummary/);
   assert.match(source, /combineEyeContactSummaries\(offlineEyeContactBaselineRef\.current, liveWindow\)/);
-  assert.match(source, /const recordIntro = \(\) =>[\s\S]*?eyeContactSummary: getCheckpointEyeContactSummary\(\)/);
+  assert.match(source, /const recordIntro = async \(\) =>[\s\S]*?eyeContactSummary: getCheckpointEyeContactSummary\(\)/);
   assert.match(source, /const sendReply = async[\s\S]*?eyeContactSummary: getCheckpointEyeContactSummary\(\)/);
   assert.match(source, /evaluationAuthority: 'local_provisional',[\s\S]*?eyeContactSummary: getCheckpointEyeContactSummary\(\)/);
 });

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, Headphones, LoaderCircle, Mic, MicOff, RefreshCw } from 'lucide-react';
 import type { ConnectionState } from '../hooks/useConnectivity';
-import { mergeSpeechFragments, useSpeechInput } from '../hooks/useSpeechInput';
+import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
 import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
@@ -142,6 +142,39 @@ type ActiveListeningCompletionState = {
   hasUserResponse: boolean;
 };
 
+type WhoAmICompletionState = {
+  completing: boolean;
+  isRecordingStarting: boolean;
+  isListening: boolean;
+  isFinalizing: boolean;
+  isProcessingAudio: boolean;
+  hasPendingOnlineAudio: boolean;
+  isPersistingIntro: boolean;
+  hasSavedAnswer: boolean;
+  hasPendingOfflineAudio: boolean;
+};
+
+export const isWhoAmICompletionDisabled = ({
+  completing,
+  isRecordingStarting,
+  isListening,
+  isFinalizing,
+  isProcessingAudio,
+  hasPendingOnlineAudio,
+  isPersistingIntro,
+  hasSavedAnswer,
+  hasPendingOfflineAudio,
+}: WhoAmICompletionState): boolean => (
+  completing
+  || isRecordingStarting
+  || isListening
+  || isFinalizing
+  || isProcessingAudio
+  || hasPendingOnlineAudio
+  || isPersistingIntro
+  || (!hasSavedAnswer && !hasPendingOfflineAudio)
+);
+
 export const isActiveListeningCompletionDisabled = ({
   completing,
   isSubmittingAnswer,
@@ -220,6 +253,8 @@ export function PreTestPage({
   const activeOfflineClientSessionIdRef = useRef<string | null>(null);
   const introTranscriptRef = useRef('');
   const introPersistenceInFlightRef = useRef(false);
+  const introRecordingStartingRef = useRef(false);
+  const [isRecordingStartingIntro, setIsRecordingStartingIntro] = useState(false);
   const [isSubmittingAnswer, setIsSubmittingAnswer] = useState(false);
   const [isPersistingIntro, setIsPersistingIntro] = useState(false);
   const [pendingOnlineAudio, setPendingOnlineAudio] = useState<{
@@ -239,6 +274,12 @@ export function PreTestPage({
     resetTranscript: resetSpeechTranscript,
     enableOfflineRecording,
   } = useSpeechInput();
+  useEffect(() => {
+    if ((isListening || isFinalizing) && introRecordingStartingRef.current) {
+      introRecordingStartingRef.current = false;
+      setIsRecordingStartingIntro(false);
+    }
+  }, [isListening, isFinalizing]);
   const eyeTracker = useEyeContactTracker(Boolean(activeExercise && activeSession));
   const getCheckpointEyeContactSummary = (): EyeContactSummary => {
     const liveWindow: EyeContactSummary = {
@@ -661,6 +702,8 @@ export function PreTestPage({
     setIntroTranscript('');
     introTranscriptRef.current = '';
     introPersistenceInFlightRef.current = false;
+    introRecordingStartingRef.current = false;
+    setIsRecordingStartingIntro(false);
     setIsPersistingIntro(false);
     setMessages([]);
     setSpeechFallbackPrompt('');
@@ -835,6 +878,8 @@ export function PreTestPage({
     activeOfflineClientSessionIdRef.current = null;
     introTranscriptRef.current = '';
     introPersistenceInFlightRef.current = false;
+    introRecordingStartingRef.current = false;
+    setIsRecordingStartingIntro(false);
     setIsPersistingIntro(false);
     setActiveExercise(null);
     setActiveSession(null);
@@ -934,34 +979,32 @@ export function PreTestPage({
     if (transcript) await pendingOnlineAudio.commit(transcript);
   };
 
-  const recordIntro = () => {
+  const recordIntro = async () => {
     if (!activeExercise || !activeSession) return;
+    if (introRecordingStartingRef.current || introPersistenceInFlightRef.current) return;
     if (isVoiceSpeaking || window.speechSynthesis?.speaking || window.speechSynthesis?.pending) {
       setError('Wait for the audio prompt to finish before starting the microphone.');
       return;
     }
     setError(null);
     const commitIntroTranscript = async (transcript: string) => {
-      setHasPendingOfflineAudio(false);
-      const nextTranscript = [introTranscriptRef.current, transcript].filter(Boolean).join(' ').trim();
+      const nextTranscript = transcript.trim();
       if (!nextTranscript) return;
+      if (introPersistenceInFlightRef.current) return;
       const execution = resolvePreTestSessionExecution({
         sessionMode,
         activeSessionId: activeSession.id,
         knownOfflineClientSessionId: activeOfflineClientSessionIdRef.current,
       });
       if (execution.mode === 'invalid') {
-        introTranscriptRef.current = nextTranscript;
-        setIntroTranscript(nextTranscript);
         setError(PRE_TEST_SESSION_RECOVERY_ERROR);
         return;
       }
-      if (execution.mode === 'online') {
-        if (introPersistenceInFlightRef.current) return;
-        introPersistenceInFlightRef.current = true;
-        setIsPersistingIntro(true);
-        const lifecycleGeneration = lifecycleGenerationRef.current;
-        try {
+      introPersistenceInFlightRef.current = true;
+      setIsPersistingIntro(true);
+      const lifecycleGeneration = lifecycleGenerationRef.current;
+      try {
+        if (execution.mode === 'online') {
           const token = localStorage.getItem('token');
           if (!token) return;
           const response = await fetch(`${apiUrl}${activeExercise.endpoint}/${execution.serverSessionId}/response`, {
@@ -981,6 +1024,7 @@ export function PreTestPage({
           const canonicalTranscript = persistedSession.transcript?.trim() || nextTranscript;
           introTranscriptRef.current = canonicalTranscript;
           setIntroTranscript(canonicalTranscript);
+          setHasPendingOfflineAudio(false);
           resetSpeechTranscript();
           await onActivityCheckpoint({
             currentStep: 1,
@@ -989,39 +1033,56 @@ export function PreTestPage({
             eyeContactSummary: getCheckpointEyeContactSummary(),
           });
           setNotice('Your Who Am I? response is saved. You can complete the exercise when ready.');
-        } catch (persistenceError) {
-          if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
-          setError(persistenceError instanceof Error ? persistenceError.message : 'Unable to save your Who Am I? response.');
-        } finally {
-          if (lifecycleGenerationRef.current === lifecycleGeneration) {
-            introPersistenceInFlightRef.current = false;
-            setIsPersistingIntro(false);
-          }
+          return;
         }
-        return;
-      }
-
-      const saved = await onActivityCheckpoint({
-        currentStep: 1,
-        responseCount: 1,
-        answers: [{ step: 1, text: nextTranscript, createdAt: Date.now() }],
-        eyeContactSummary: getCheckpointEyeContactSummary(),
-      });
-      if (saved) {
-        introTranscriptRef.current = nextTranscript;
-        setIntroTranscript(nextTranscript);
-        resetSpeechTranscript();
+        const saved = await onActivityCheckpoint({
+          currentStep: 1,
+          responseCount: 1,
+          answers: [{ step: 1, text: nextTranscript, createdAt: Date.now() }],
+          eyeContactSummary: getCheckpointEyeContactSummary(),
+        });
+        if (saved && lifecycleGenerationRef.current === lifecycleGeneration) {
+          introTranscriptRef.current = nextTranscript;
+          setIntroTranscript(nextTranscript);
+          setHasPendingOfflineAudio(false);
+          resetSpeechTranscript();
+        } else if (!saved && lifecycleGenerationRef.current === lifecycleGeneration) {
+          setError('Unable to save your Who Am I? response. Please retry.');
+        }
+      } catch (persistenceError) {
+        if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
+        setError(persistenceError instanceof Error ? persistenceError.message : 'Unable to save your Who Am I? response.');
+      } finally {
+        if (lifecycleGenerationRef.current === lifecycleGeneration) {
+          introPersistenceInFlightRef.current = false;
+          setIsPersistingIntro(false);
+        }
       }
     };
-    startListening(commitIntroTranscript, message => setError(speechOnlyErrorMessage(message)), sessionMode === 'offline' && activeSession ? {
-      enabled: true,
-      speechOnlyFallback: true,
-      activityType: activeExercise.kind === 'intro' ? 'pre_test_intro' : 'pre_test_active_listening',
-      turnId: 'intro-1',
-      answerIndex: 1,
-      persistAudio: onOfflineAudioCaptured,
-      onPendingAudio: () => setHasPendingOfflineAudio(true),
-    } : { enabled: true, transcribeCapture: capture => processOnlineAudio(capture, commitIntroTranscript) });
+    const lifecycleGeneration = lifecycleGenerationRef.current;
+    introRecordingStartingRef.current = true;
+    setIsRecordingStartingIntro(true);
+    let started = false;
+    try {
+      started = await startListening(commitIntroTranscript, message => setError(speechOnlyErrorMessage(message)), sessionMode === 'offline' && activeSession ? {
+        enabled: true,
+        speechOnlyFallback: true,
+        activityType: activeExercise.kind === 'intro' ? 'pre_test_intro' : 'pre_test_active_listening',
+        turnId: 'intro-1',
+        answerIndex: 1,
+        persistAudio: onOfflineAudioCaptured,
+        onPendingAudio: () => setHasPendingOfflineAudio(true),
+      } : { enabled: true, transcribeCapture: capture => processOnlineAudio(capture, commitIntroTranscript) });
+    } catch (recordingError) {
+      if (lifecycleGenerationRef.current === lifecycleGeneration) {
+        setError(recordingError instanceof Error ? recordingError.message : 'Unable to start recording. Please retry.');
+      }
+    } finally {
+      if (!started && lifecycleGenerationRef.current === lifecycleGeneration) {
+        introRecordingStartingRef.current = false;
+        setIsRecordingStartingIntro(false);
+      }
+    }
   };
 
   const recordAndSendReply = () => {
@@ -1050,7 +1111,9 @@ export function PreTestPage({
     if (!activeSession || !activeExercise) return;
     if (isProcessingAudio || pendingOnlineAudio) return;
     if (completing || completionInFlightRef.current) return;
-    if (activeExercise.kind === 'intro' && introPersistenceInFlightRef.current) return;
+    if (activeExercise.kind === 'intro' && (
+      introRecordingStartingRef.current || isListening || isFinalizing || introPersistenceInFlightRef.current
+    )) return;
     if (
       activeExercise.kind === 'active-listening'
       && (isListening || isFinalizing || isSubmittingAnswer || isAiResponding)
@@ -1225,6 +1288,17 @@ export function PreTestPage({
     isFinalizing,
     hasUserResponse: messages.some(message => message.sender === 'user') || (sessionMode === 'offline' && hasPendingOfflineAudio),
   });
+  const introCompletionDisabled = isWhoAmICompletionDisabled({
+    completing,
+    isRecordingStarting: isRecordingStartingIntro,
+    isListening,
+    isFinalizing,
+    isProcessingAudio,
+    hasPendingOnlineAudio: Boolean(pendingOnlineAudio),
+    isPersistingIntro,
+    hasSavedAnswer: Boolean(introTranscript.trim()),
+    hasPendingOfflineAudio: sessionMode === 'offline' && hasPendingOfflineAudio,
+  });
 
   if (activeExercise && activeSession) {
     return (
@@ -1240,9 +1314,8 @@ export function PreTestPage({
             </button>
             <button
               onClick={completeActiveExercise}
-              disabled={completing || isProcessingAudio || Boolean(pendingOnlineAudio) || (activeExercise.kind === 'intro'
-                ? isPersistingIntro || (!introTranscript.trim() && !(sessionMode === 'offline' && hasPendingOfflineAudio))
-                : activeListeningCompletionDisabled)}
+              disabled={activeExercise.kind === 'intro' ? introCompletionDisabled
+                : completing || isProcessingAudio || Boolean(pendingOnlineAudio) || activeListeningCompletionDisabled}
               className="program-accent-button flex shrink-0 items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {completing ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
@@ -1295,9 +1368,14 @@ export function PreTestPage({
                   </p>
                 </div>
                 <div className="mt-4 min-h-36 rounded-lg border border-line bg-background p-4 text-sm leading-relaxed text-ink sm:min-h-44" aria-live="polite">
-                  {(isListening || isFinalizing ? mergeSpeechFragments(introTranscript, liveTranscript) : introTranscript)
-                    || <span className="text-muted">Press the mic and speak your self-introduction.</span>}
+                  {introTranscript || <span className="text-muted">Press the mic and speak your self-introduction.</span>}
                 </div>
+                {(isListening || isFinalizing) && (
+                  <div className="mt-3 rounded-lg border border-line bg-card p-3 text-sm leading-relaxed text-ink" aria-live="polite">
+                    <p className="text-program-accent mb-1 text-xs font-bold uppercase tracking-wider">New recording</p>
+                    {liveTranscript || <span className="text-muted">Start speaking when you are ready.</span>}
+                  </div>
+                )}
                 {hasUnfinalizedTranscript && !isListening && !isFinalizing && (
                   <div className="mt-3 rounded-lg border border-line bg-card p-3 text-sm leading-relaxed text-ink" aria-live="polite">
                     <p className="text-program-accent mb-1 text-xs font-bold uppercase tracking-wider">
@@ -1309,11 +1387,11 @@ export function PreTestPage({
                 <div className="mt-4 flex flex-col items-center gap-2">
                   <button
                     onClick={isListening ? stopListening : recordIntro}
-                    disabled={isPersistingIntro || isFinalizing || isVoiceSpeaking || isProcessingAudio || Boolean(pendingOnlineAudio)}
+                    disabled={completing || isRecordingStartingIntro || isPersistingIntro || isFinalizing || isVoiceSpeaking || isProcessingAudio || Boolean(pendingOnlineAudio)}
                     className={`program-accent-focus-ring flex min-h-12 items-center gap-2 rounded-full px-6 py-3 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isListening ? 'bg-rose-600 text-white hover:bg-rose-500' : 'program-accent-button'}`}
                   >
                     {isListening ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-                    {isListening ? 'Stop Recording' : 'Speak Answer'}
+                    {isListening ? 'Stop Recording' : introTranscript.trim() || hasPendingOfflineAudio ? 'Re-record Answer' : 'Speak Answer'}
                   </button>
                   {!introTranscript.trim() && <p className="text-center text-xs text-muted">{hasPendingOfflineAudio ? 'Recording saved. Complete to process it when online.' : 'Record your introduction to enable completion.'}</p>}
                 </div>

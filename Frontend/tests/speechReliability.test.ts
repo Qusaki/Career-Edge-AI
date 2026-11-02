@@ -117,7 +117,8 @@ test('Who Am I, Active Listening, normal Drills, and negotiation retain their mi
 });
 
 test('only final recognized or validated transcribed speech reaches answer paths and completion gates', () => {
-  assert.match(preTestSource, /const commitIntroTranscript = async \(transcript: string\) => \{[\s\S]*?const nextTranscript = \[introTranscriptRef\.current, transcript\]/);
+  assert.match(preTestSource, /const commitIntroTranscript = async \(transcript: string\) => \{[\s\S]*?const nextTranscript = transcript\.trim\(\)/);
+  assert.doesNotMatch(preTestSource, /\[introTranscriptRef\.current, transcript\]/);
   assert.match(preTestSource, /startListening\(transcript => void sendReply\(transcript\)/);
   assert.match(drillsSource, /const commitDrillResponse = async \(transcript: string\) => \{[\s\S]*?const nextResponse = \[spokenResponse, transcript\]/);
   assert.match(drillsSource, /startListening\(transcript => void sendNegotiationReply\(transcript\)/);

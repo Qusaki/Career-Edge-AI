@@ -11,8 +11,10 @@ const hook = readFileSync(new URL('../src/hooks/useSpeechInput.ts', import.meta.
 const result = (transcript: string, isFinal: boolean): SpeechRecognitionResultLike =>
   Object.assign([{ transcript }], { isFinal });
 
-test('Who Am I displays live speech in its primary response area before stop', () => {
-  assert.match(preTest, /min-h-36 rounded-lg[^\n]*aria-live="polite"[\s\S]*?isListening \|\| isFinalizing \? mergeSpeechFragments\(introTranscript, liveTranscript\)/);
+test('Who Am I displays live retake speech separately from its saved response', () => {
+  assert.match(preTest, /min-h-36 rounded-lg[^\n]*aria-live="polite"[\s\S]*?\{introTranscript \|\| <span/);
+  assert.match(preTest, /\(isListening \|\| isFinalizing\) && \([\s\S]*?New recording[\s\S]*?\{liveTranscript \|\|/);
+  assert.doesNotMatch(preTest, /mergeSpeechFragments\(introTranscript, liveTranscript\)/);
   assert.match(preTest, /hasUnfinalizedTranscript && !isListening && !isFinalizing/);
 });
 
