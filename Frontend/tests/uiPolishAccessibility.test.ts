@@ -81,7 +81,7 @@ test('profile password visibility toggles locally without changing its value or 
   assert.match(dashboard, /const \[showProfilePass, setShowProfilePass\] = useState\(false\)/);
   assert.match(profilePassword, /type=\{showProfilePass \? 'text' : 'password'\}/);
   assert.match(profilePassword, /value=\{profile\.password \|\| ''\}/);
-  assert.match(profilePassword, /onChange=\{\(e\) => setProfile\(\{ \.\.\.profile, password: e\.target\.value \}\)\}/);
+  assert.match(profilePassword, /onChange=\{\(e\) => \{ setProfile\(\{ \.\.\.profile, password: e\.target\.value \}\); setProfilePasswordError\(null\); \}\}/);
   assert.match(profilePassword, /<button\s+type="button"\s+onClick=\{\(\) => setShowProfilePass\(!showProfilePass\)\}/);
   assert.match(profilePassword, /aria-label=\{showProfilePass \? 'Hide password' : 'Show password'\}/);
   assert.match(profilePassword, /aria-pressed=\{showProfilePass\}/);
@@ -100,7 +100,7 @@ test('profile visibility button switches the rendered input in both directions w
   assert.ok(markup);
 
   const code = transpileModule(
-    `const render = (showProfilePass, setShowProfilePass, profile, setProfile) => (${markup}); render;`,
+    `const render = (showProfilePass, setShowProfilePass, profile, setProfile, profilePasswordError, setProfilePasswordError) => (${markup}); render;`,
     { compilerOptions: { jsx: JsxEmit.React } },
   ).outputText;
   const React = {
@@ -114,12 +114,14 @@ test('profile visibility button switches the rendered input in both directions w
     setVisible: (next: boolean) => void,
     profile: { password: string },
     setProfile: () => void,
+    profilePasswordError: string | null,
+    setProfilePasswordError: () => void,
   ) => { props: { children: Array<{ type: string; props: Record<string, unknown> }> } };
 
   let visible = false;
   let profileUpdates = 0;
   const readControl = () => {
-    const wrapper = render(visible, next => { visible = next; }, { password: 'new-password' }, () => { profileUpdates += 1; });
+    const wrapper = render(visible, next => { visible = next; }, { password: 'new-password' }, () => { profileUpdates += 1; }, null, () => {});
     return {
       input: wrapper.props.children.find(child => child.type === 'input'),
       button: wrapper.props.children.find(child => child.type === 'button'),

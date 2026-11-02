@@ -5,6 +5,7 @@ from database import get_db
 from models.user import User
 from schemas.user import UserCreate, UserResponse
 from core.security import get_password_hash
+from core.password_policy import validate_new_password
 from core.deps import get_current_user
 
 
@@ -13,6 +14,11 @@ router = APIRouter()
 
 @router.post("/", response_model=UserResponse)
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
+    try:
+        validate_new_password(user.password)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
     db_user = db.query(User).filter(User.email == user.email).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -56,6 +62,12 @@ def update_user_me(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    if password is not None:
+        try:
+            validate_new_password(password)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
     if file:
         try:
             url = upload_file_to_s3(file)
