@@ -48,9 +48,9 @@ test('reset view uses both password controls and the existing policy without add
   assert.match(reset, /aria-label=\{showConfirmPassword \? 'Hide confirmation password' : 'Show confirmation password'\}/);
   assert.match(reset, /getNewPasswordError\(newPassword\)/);
   assert.match(reset, /newPassword !== confirmPassword/);
-  assert.equal(getNewPasswordError('short'), 'Password must be at least 15 characters.');
-  assert.equal(getNewPasswordError('  valid passphrase  '), null);
-  assert.match(reset, /Use at least 15 characters\. Spaces are allowed; the maximum is 72 UTF-8 bytes\./);
+  assert.equal(getNewPasswordError('short'), 'Password must be at least 8 characters.');
+  assert.equal(getNewPasswordError('  Newpass1!  '), null);
+  assert.match(reset, /\{NEW_PASSWORD_GUIDANCE\}/);
 });
 
 test('reset POST keeps token in body, handles safe errors, and never auto-authenticates', () => {

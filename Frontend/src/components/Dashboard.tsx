@@ -21,7 +21,7 @@ import {
 import { maintainOwnedOfflineStorage } from '../offline/offlineCleanup';
 import { isUpdateSessionActive } from '../offline/updateRefreshSafety';
 import { isPositiveServerSessionId } from '../utils/sessionIdentity';
-import { getNewPasswordError } from '../utils/passwordPolicy';
+import { getNewPasswordError, NEW_PASSWORD_GUIDANCE } from '../utils/passwordPolicy';
 import { normalizeApiError } from '../utils/httpError';
 import { ThesisAbstractFileError, thesisAbstractUploadError, validateThesisAbstractFile } from '../utils/thesisAbstractUpload';
 import { getVerifiedAccountForToken, rememberVerifiedAccount } from '../offline/accountBinding';
@@ -6299,7 +6299,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           {showProfilePass ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                         </button>
                       </div>
-                      <p id="profile-password-help" className="text-xs text-slate-400">Leave blank to keep your password. New passwords need at least 15 characters and may include spaces (maximum 72 UTF-8 bytes).</p>
+                      <p id="profile-password-help" className="text-xs text-slate-400">Leave blank to keep your password. {NEW_PASSWORD_GUIDANCE}</p>
                       {profilePasswordError && <p role="alert" className="text-sm text-rose-300">{profilePasswordError}</p>}
                     </div>
 

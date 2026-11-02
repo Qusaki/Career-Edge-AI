@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { ArrowLeft, Eye, EyeOff, Lock } from 'lucide-react';
 
 import { API_URL } from '../config/api';
-import { getNewPasswordError } from '../utils/passwordPolicy';
+import { getNewPasswordError, NEW_PASSWORD_GUIDANCE } from '../utils/passwordPolicy';
 
 
 const INVALID_LINK_MESSAGE = 'This password reset link is invalid or has expired. Request a new link.';
@@ -91,7 +91,7 @@ export function ResetPasswordPage({ token, onSuccess, onBackToSignIn, onRequestN
                     {showNewPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                   </button>
                 </div>
-                <p className="mt-2 text-xs text-slate-400">Use at least 15 characters. Spaces are allowed; the maximum is 72 UTF-8 bytes.</p>
+                <p className="mt-2 text-xs text-slate-400">{NEW_PASSWORD_GUIDANCE}</p>
               </div>
               <div>
                 <label htmlFor="reset-confirm-password" className="mb-2 block text-sm font-medium text-slate-300">Confirm New Password</label>

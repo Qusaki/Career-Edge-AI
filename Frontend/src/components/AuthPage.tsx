@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { API_URL } from '../config/api';
 import { motion, AnimatePresence } from 'motion/react';
 import { Mail, Lock, User, ArrowRight, ArrowLeft, Eye, EyeOff } from 'lucide-react';
-import { getNewPasswordError } from '../utils/passwordPolicy';
+import { getNewPasswordError, NEW_PASSWORD_GUIDANCE } from '../utils/passwordPolicy';
 import { normalizeApiError } from '../utils/httpError';
 
 interface AuthPageProps {
@@ -285,7 +285,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
                 </button>
               </div>
               {mode === 'signup' && (
-                <p className="mt-2 text-xs text-slate-400">Use at least 15 characters. Spaces are allowed; the maximum is 72 UTF-8 bytes.</p>
+                <p className="mt-2 text-xs text-slate-400">{NEW_PASSWORD_GUIDANCE}</p>
               )}
             </div>}
 
