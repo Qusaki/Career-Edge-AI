@@ -7,6 +7,7 @@ import {
   deriveConnectionState,
   HEALTH_ATTEMPT_TIMEOUTS_MS,
   HEALTH_RETRY_DELAYS_MS,
+  isHealthyResponse,
 } from '../src/hooks/useConnectivity';
 import { createActivityCheckpoint, mergeActivityCheckpoint } from '../src/offline/sessionFoundation';
 
@@ -14,6 +15,50 @@ const hookSource = readFileSync(new URL('../src/hooks/useConnectivity.ts', impor
 const dashboardSource = readFileSync(new URL('../src/components/Dashboard.tsx', import.meta.url), 'utf8');
 
 const noWait = async (_delayMs: number, _signal: AbortSignal) => {};
+
+test('only a successful response with Career Edge healthy JSON confirms reachability', async () => {
+  assert.equal(await isHealthyResponse(new Response('{"status":"healthy"}', { status: 200 })), true);
+  assert.equal(await isHealthyResponse(new Response('<html>Frontend fallback</html>', {
+    status: 200, headers: { 'Content-Type': 'text/html' },
+  })), false);
+  assert.equal(await isHealthyResponse(new Response('{invalid', { status: 200 })), false);
+  assert.equal(await isHealthyResponse(new Response(null, { status: 200 })), false);
+  assert.equal(await isHealthyResponse(new Response('{"status":"unhealthy"}', { status: 200 })), false);
+  assert.equal(await isHealthyResponse(new Response('{}', { status: 200 })), false);
+  assert.equal(await isHealthyResponse(new Response('{"status":"healthy"}', { status: 500 })), false);
+  assert.match(hookSource, /await isHealthyResponse\(response\)/);
+});
+
+test('an invalid health body follows the existing retry path and a later valid body recovers', async () => {
+  const responses = [
+    new Response('<html>Frontend fallback</html>', { status: 200 }),
+    new Response('{"status":"healthy"}', { status: 200 }),
+  ];
+  const timeouts: number[] = [];
+  const delays: number[] = [];
+  const reachable = await confirmBackendReachability({
+    signal: new AbortController().signal,
+    probe: async timeoutMs => {
+      timeouts.push(timeoutMs);
+      const response = responses.shift();
+      assert.ok(response);
+      return isHealthyResponse(response);
+    },
+    wait: async delayMs => { delays.push(delayMs); },
+  });
+  assert.equal(reachable, true);
+  assert.deepEqual(timeouts, [5_000, 20_000]);
+  assert.deepEqual(delays, [1_500]);
+});
+
+test('health timeout, retry-delay, polling, and cancellation configuration remain unchanged', () => {
+  assert.deepEqual([...HEALTH_ATTEMPT_TIMEOUTS_MS], [5_000, 20_000, 45_000]);
+  assert.deepEqual([...HEALTH_RETRY_DELAYS_MS], [1_500, 3_500]);
+  assert.match(hookSource, /const HEALTH_CHECK_THROTTLE_MS = 15_000/);
+  assert.match(hookSource, /const HEALTH_CHECK_INTERVAL_MS = 60_000/);
+  assert.match(hookSource, /const HEALTH_RECOVERY_INTERVAL_MS = 30_000/);
+  assert.match(hookSource, /if \(abortRef\.current === controller && reachable !== null\)/);
+});
 
 test('first health success confirms online without retry', async () => {
   const timeouts: number[] = [];

@@ -19,6 +19,17 @@ export const deriveConnectionState = (
   return backendReachable ? 'online' : 'degraded';
 };
 
+export const isHealthyResponse = async (response: Response): Promise<boolean> => {
+  if (!response.ok) return false;
+  try {
+    const body: unknown = await response.json();
+    return typeof body === 'object' && body !== null
+      && 'status' in body && body.status === 'healthy';
+  } catch {
+    return false;
+  }
+};
+
 // /health only confirms that the API process answered, not database or AI availability.
 export const HEALTH_ATTEMPT_TIMEOUTS_MS = [5_000, 20_000, 45_000] as const;
 export const HEALTH_RETRY_DELAYS_MS = [1_500, 3_500] as const;
@@ -126,7 +137,9 @@ export function useConnectivity(apiUrl: string) {
             cache: 'no-store',
             signal: attemptController.signal,
           });
-          return !attemptController.signal.aborted && response.ok;
+          return !attemptController.signal.aborted
+            && await isHealthyResponse(response)
+            && !attemptController.signal.aborted;
         } catch {
           return false;
         } finally {
