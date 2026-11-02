@@ -20,6 +20,7 @@ const unlocked: PostTestAccess = {
 
 const postTestProps = (access: PostTestAccess | null, progressFetchError: string | null = null) => ({
   apiUrl: 'http://localhost:8000',
+  cloudConnectionState: 'online' as const,
   userDepartment: 'CCIT',
   effectiveOnline: true,
   sessionMode: 'online' as const,

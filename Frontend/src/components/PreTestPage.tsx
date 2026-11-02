@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, Headphones, LoaderCircle, Mic, MicOff, RefreshCw } from 'lucide-react';
+import type { ConnectionState } from '../hooks/useConnectivity';
 import { mergeSpeechFragments, useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
@@ -159,11 +160,15 @@ export const isActiveListeningCompletionDisabled = ({
 
 type PreTestPageProps = OfflineActivityBridgeProps & {
   apiUrl: string;
+  cloudConnectionState: ConnectionState;
   onSessionModeChange?: (isSessionMode: boolean) => void;
 };
 
+const CLOUD_CHECKING_START_MESSAGE = 'Checking Career Edge cloud connection. Please try again in a moment.';
+
 export function PreTestPage({
   apiUrl,
+  cloudConnectionState,
   onSessionModeChange = () => {},
   effectiveOnline,
   sessionMode,
@@ -191,6 +196,11 @@ export function PreTestPage({
   const [connectionState, setConnectionState] = useState<RealtimeConnectionState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (cloudConnectionState !== 'checking') {
+      setError(current => current === CLOUD_CHECKING_START_MESSAGE ? null : current);
+    }
+  }, [cloudConnectionState]);
   const [versionMismatch, setVersionMismatch] = useState(false);
   const resumedSessionRef = useRef<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -636,6 +646,11 @@ export function PreTestPage({
   }
 
   const startExercise = async (exercise: Exercise) => {
+    if (cloudConnectionState === 'checking') {
+      setNotice(null);
+      setError(CLOUD_CHECKING_START_MESSAGE);
+      return;
+    }
     const lifecycleGeneration = lifecycleGenerationRef.current + 1;
     lifecycleGenerationRef.current = lifecycleGeneration;
     setStarting(exercise.endpoint);
