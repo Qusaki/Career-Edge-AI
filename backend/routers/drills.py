@@ -1,6 +1,9 @@
 import json
 import random
 import datetime
+import logging
+import os
+import time
 from typing import Callable, List
 # pyrefly: ignore [missing-import]
 from fastapi import APIRouter, HTTPException, Depends
@@ -26,6 +29,23 @@ from models.drills import DrillSession
 from schemas.drills import DrillCompleteRequest, DrillProgressResponse, DrillPrompt, DrillSessionResponse, DrillStartRequest, NegotiationTurnRequest
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _log_drill_completion_perf(enabled: bool, phase: str, started: float, *,
+                               phase_started: float | None = None, success: bool | None = None) -> None:
+    if not enabled:
+        return
+    now = time.perf_counter()
+    try:
+        logger.info(
+            "[DrillCompletionPerf] phase=%s elapsed_ms=%.1f phase_ms=%.1f success=%s",
+            phase, (now - started) * 1000,
+            (now - (phase_started if phase_started is not None else started)) * 1000,
+            success,
+        )
+    except Exception:
+        pass  # Diagnostics must never interrupt completion.
 
 
 def apply_drill_score(session: DrillSession, evaluation_data: dict) -> None:
@@ -325,16 +345,23 @@ def get_user_drill_sessions(db: Session = Depends(get_db), current_user: User = 
 @router.post("/{session_id}/complete", response_model=DrillSessionResponse)
 async def complete_drill_session(session_id: int, request: DrillCompleteRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Completes the drill session and saves evaluation data."""
+    perf_enabled = os.getenv("DRILL_PERF_DEBUG", "").strip().lower() in {"1", "true"}
+    perf_started = time.perf_counter()
+    _log_drill_completion_perf(perf_enabled, "route_received", perf_started)
+    lookup_started = time.perf_counter()
     session = (
         db.query(DrillSession)
         .filter(DrillSession.id == session_id, DrillSession.user_id == current_user.id)
         .with_for_update()
         .first()
     )
+    _log_drill_completion_perf(perf_enabled, "session_lookup_complete", perf_started, phase_started=lookup_started,
+                               success=session is not None)
     if not session:
         raise HTTPException(status_code=404, detail="Drill session not found.")
         
     if session.status == "completed":
+        _log_drill_completion_perf(perf_enabled, "response_ready", perf_started, success=True)
         return session
         
     if not request.evaluation_data:
@@ -345,17 +372,25 @@ async def complete_drill_session(session_id: int, request: DrillCompleteRequest,
         session.canonical_prompt = require_drill_prompt(session.drill_level, session.drill_type)
     evaluation_data["prompt"] = session.canonical_prompt
 
+    scoring_started = time.perf_counter()
+    _log_drill_completion_perf(perf_enabled, "scoring_start", perf_started)
+    scored = False
     try:
         calculation = await score_drill(session.drill_type, evaluation_data)
         session.score = calculation["score"]
         session.passed = calculation["passed"]
         session.feedback_summary = calculation["feedback_summary"]
         session.evaluation_data = json.dumps({**evaluation_data, "scoring": calculation["scoring"]})
+        scored = True
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    finally:
+        _log_drill_completion_perf(perf_enabled, "scoring_complete", perf_started,
+                                   phase_started=scoring_started, success=scored)
 
     apply_drill_eye_contact(session, request)
 
+    commit_started = time.perf_counter()
     try:
             
         session.status = "completed"
@@ -363,9 +398,13 @@ async def complete_drill_session(session_id: int, request: DrillCompleteRequest,
         
         db.commit()
         db.refresh(session)
-        
+        _log_drill_completion_perf(perf_enabled, "commit_refresh_complete", perf_started,
+                                   phase_started=commit_started, success=True)
+        _log_drill_completion_perf(perf_enabled, "response_ready", perf_started, success=True)
         return session
     except Exception as e:
+        _log_drill_completion_perf(perf_enabled, "commit_refresh_complete", perf_started,
+                                   phase_started=commit_started, success=False)
         raise HTTPException(status_code=500, detail=f"Failed to save drill evaluation: {e}")
 
 @router.get("/{session_id}", response_model=DrillSessionResponse)

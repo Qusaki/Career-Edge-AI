@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { claimDrillCompletion, DrillCompletionPerfTrace, drillCompletionPerfEnabled } from '../src/components/DrillsPage';
 
 const source = readFileSync(
   new URL('../src/components/DrillsPage.tsx', import.meta.url),
@@ -145,4 +146,55 @@ test('invalid online identity preserves the response and cannot create pending s
 test('successful completion refreshes authoritative progression after persistence', () => {
   assert.match(source, /if \(!response\.ok\)[\s\S]*?await response\.json\(\)[\s\S]*?setActiveSession\(null\)[\s\S]*?await loadSessions\(\)/);
   assert.match(source, /normalizeApiError\(body, 'Unable to complete the drill session\.'\)/);
+});
+
+test('completion phases retain the existing close and authoritative refresh order', () => {
+  const completionStart = source.indexOf('const completeDrill = async () =>');
+  const completion = source.slice(completionStart, source.indexOf('if (activeSession) {', completionStart));
+  const scoring = completion.indexOf("setCompletionPhase('scoring')");
+  const request = completion.indexOf('const response = await fetch', scoring);
+  const close = completion.indexOf('setActiveSession(null)', request);
+  const refreshing = completion.indexOf("setCompletionPhase('refreshing')", close);
+  const refresh = completion.indexOf('await loadSessions()', refreshing);
+  assert.ok(scoring >= 0 && request > scoring && close > request && refreshing > close && refresh > refreshing);
+  assert.match(source, /completionPhase === 'saving-local' \? 'Saving locally\.\.\.' : 'Scoring\.\.\.'/);
+  assert.match(source, /: 'Mark Complete'/);
+  assert.match(source, /completionPhase === 'refreshing'[\s\S]*?role="status"[\s\S]*?Refreshing progress\.\.\./);
+  assert.match(source, /disabled=\{completing !== null \|\| isListening/);
+  assert.match(completion, /await loadSessions\(\);[\s\S]*?setCompletionPhase\('idle'\)/);
+});
+
+test('synchronous completion claim allows one request and releases on success or failure', () => {
+  const inFlight = { current: false };
+  let requests = 0;
+  if (claimDrillCompletion(inFlight)) requests += 1;
+  if (claimDrillCompletion(inFlight)) requests += 1;
+  assert.equal(requests, 1);
+  assert.equal(inFlight.current, true);
+  inFlight.current = false;
+  assert.equal(claimDrillCompletion(inFlight), true);
+  const completionStart = source.indexOf('const completeDrill = async () =>');
+  const completion = source.slice(completionStart, source.indexOf('if (activeSession) {', completionStart));
+  assert.match(completion, /if \(completionInFlightRef\.current\) return;/);
+  assert.equal((completion.match(/completionInFlightRef\.current = false;/g) ?? []).length, 2);
+  assert.match(completion, /catch \(err\) \{[\s\S]*?setError\([\s\S]*?finally \{[\s\S]*?completionInFlightRef\.current = false/);
+  assert.match(completion, /setNotice\('Drill was marked complete\.'\)[\s\S]*?await loadSessions\(\)/);
+});
+
+test('Drill timing is opt-in and logs only approved phase metadata', () => {
+  assert.equal(drillCompletionPerfEnabled(undefined), false);
+  assert.equal(drillCompletionPerfEnabled('false'), false);
+  assert.equal(drillCompletionPerfEnabled('true'), true);
+  assert.match(source, /drillCompletionPerfEnabled\(import\.meta\.env\?\.VITE_DRILL_PERF_DEBUG\)/);
+  const lines: string[] = [];
+  let now = 10;
+  const trace = new DrillCompletionPerfTrace(() => now, line => lines.push(line));
+  trace.mark('handlerStart');
+  now = 35;
+  trace.mark('postResponse', true);
+  trace.mark('Private student answer');
+  assert.equal(lines.length, 2);
+  assert.match(lines[1], /postResponse \+25\.0ms success=true/);
+  assert.doesNotMatch(lines.join(' '), /Private student answer|token|Authorization|email/);
+  assert.match(source, /requestAnimationFrame\(\(\) => \{\s*trace\.mark\('uiSettled'/);
 });

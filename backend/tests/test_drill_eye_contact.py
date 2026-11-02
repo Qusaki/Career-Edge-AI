@@ -1,8 +1,10 @@
 import unittest
+import os
+from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -80,6 +82,48 @@ class DrillEyeContactTests(unittest.TestCase):
                 **camera,
             },
         )
+
+    def test_completion_timing_is_disabled_by_default_and_scoring_commits_once(self) -> None:
+        session = self.create_session()
+        commits: list[int] = []
+        def count_commit(_session):
+            commits.append(1)
+        event.listen(self.Session.class_, "after_commit", count_commit)
+        result = {"score": 75.0, "passed": True, "feedback_summary": "Completed.", "scoring": {"authority": "test"}}
+        try:
+            with patch.dict(os.environ, {"DRILL_PERF_DEBUG": ""}), \
+                    patch.object(drills.logger, "info") as log, \
+                    patch.object(drills, "score_drill", new_callable=AsyncMock, return_value=result) as score:
+                first = self.complete(session.id)
+                second = self.complete(session.id)
+            self.assertEqual(first.status_code, 200, first.text)
+            self.assertEqual(second.status_code, 200, second.text)
+            self.assertEqual(first.json()["status"], "completed")
+            score.assert_awaited_once()
+            self.assertEqual(len(commits), 1)
+            log.assert_not_called()
+        finally:
+            event.remove(self.Session.class_, "after_commit", count_commit)
+
+    def test_debug_timing_has_phases_without_spoken_content(self) -> None:
+        session = self.create_session()
+        private_answer = "Private student spoken answer"
+        result = {"score": 75.0, "passed": True, "feedback_summary": "Private scoring feedback", "scoring": {"authority": "test"}}
+        with patch.dict(os.environ, {"DRILL_PERF_DEBUG": "true"}), \
+                patch.object(drills.logger, "info") as log, \
+                patch.object(drills, "score_drill", new_callable=AsyncMock, return_value=result):
+            response = self.client.post(
+                f"/drills/{session.id}/complete",
+                json={"evaluation_data": {"spoken_response": private_answer}},
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        output = " ".join(str(call.args) for call in log.call_args_list)
+        for phase in ("route_received", "session_lookup_complete", "scoring_start", "scoring_complete",
+                      "commit_refresh_complete", "response_ready"):
+            self.assertIn(phase, output)
+        self.assertNotIn(private_answer, output)
+        self.assertNotIn("Private scoring feedback", output)
+        self.assertNotIn("Authorization", output)
 
     def test_completion_persists_and_exposes_eye_contact_without_changing_score_or_prompt(self) -> None:
         session = self.create_session()

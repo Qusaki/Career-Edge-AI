@@ -373,6 +373,39 @@ type DrillsPageProps = OfflineActivityBridgeProps & {
 
 const CLOUD_CHECKING_START_MESSAGE = 'Checking Career Edge cloud connection. Please try again in a moment.';
 
+type DrillCompletionPhase = 'idle' | 'scoring' | 'refreshing' | 'saving-local';
+const DRILL_COMPLETION_PERF_EVENTS = new Set([
+  'handlerStart', 'postStart', 'postResponse', 'responseParsed',
+  'sessionClosed', 'refreshStart', 'refreshComplete', 'completionFailed', 'uiSettled',
+]);
+
+export const drillCompletionPerfEnabled = (flag?: string): boolean => flag === 'true';
+
+export class DrillCompletionPerfTrace {
+  private readonly started: number;
+
+  constructor(
+    private readonly now: () => number = () => performance.now(),
+    private readonly write: (message: string) => void = message => console.info(message),
+  ) {
+    this.started = now();
+  }
+
+  mark(event: string, success?: boolean): void {
+    if (!DRILL_COMPLETION_PERF_EVENTS.has(event)) return;
+    try {
+      const durationMs = (this.now() - this.started).toFixed(1);
+      this.write(`[DrillCompletionPerf] ${event} +${durationMs}ms${success === undefined ? '' : ` success=${success}`}`);
+    } catch { /* Diagnostics must never interrupt Drill completion. */ }
+  }
+}
+
+export const claimDrillCompletion = (inFlight: { current: boolean }): boolean => {
+  if (inFlight.current) return false;
+  inFlight.current = true;
+  return true;
+};
+
 export function DrillsPage({
   apiUrl,
   cloudConnectionState,
@@ -393,6 +426,10 @@ export function DrillsPage({
   const refreshInFlightRef = useRef(false);
   const [starting, setStarting] = useState<string | null>(null);
   const [completing, setCompleting] = useState<number | string | null>(null);
+  const [completionPhase, setCompletionPhase] = useState<DrillCompletionPhase>('idle');
+  const completionInFlightRef = useRef(false);
+  const completionTraceRef = useRef<DrillCompletionPerfTrace | null>(null);
+  const completionSucceededRef = useRef(false);
   const [activeSession, setActiveSession] = useState<DrillSession | null>(null);
   const [activePrompt, setActivePrompt] = useState('');
   const [spokenResponse, setSpokenResponse] = useState('');
@@ -420,6 +457,15 @@ export function DrillsPage({
   } | null>(null);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   const [hasPendingOfflineAudio, setHasPendingOfflineAudio] = useState(false);
+  useEffect(() => {
+    if (completionPhase !== 'idle' || completing !== null || !completionTraceRef.current) return;
+    const trace = completionTraceRef.current;
+    const frame = requestAnimationFrame(() => {
+      trace.mark('uiSettled', completionSucceededRef.current);
+      if (completionTraceRef.current === trace) completionTraceRef.current = null;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [completionPhase, completing]);
   const exerciseGenerationRef = useRef(0);
   const resumedSessionRef = useRef<string | null>(null);
   const sessionModeRef = useRef(sessionMode);
@@ -839,6 +885,8 @@ export function DrillsPage({
     cancelBrowserSpeech();
     setStarting(null);
     setCompleting(null);
+    setCompletionPhase('idle');
+    completionTraceRef.current = null;
     setActiveSession(null);
     setActivePrompt('');
     setSpokenResponse('');
@@ -1089,6 +1137,7 @@ export function DrillsPage({
   };
 
   const completeDrill = async () => {
+    if (completionInFlightRef.current) return;
     if (isProcessingAudio || pendingOnlineAudio) return;
     if (!activeSession || isListening || isFinalizing || savingSpokenResponseRef.current || negotiationLoading) return;
     const checkpointOfflineClientSessionId = resumeSession?.type === 'drill' && resumeSession.mode === 'offline'
@@ -1104,7 +1153,9 @@ export function DrillsPage({
       return;
     }
     if (execution.mode === 'offline') {
+      if (!claimDrillCompletion(completionInFlightRef)) return;
       setCompleting(activeSession.id);
+      setCompletionPhase('saving-local');
       setError(null);
       try {
         if (hasPendingOfflineAudio) {
@@ -1165,15 +1216,24 @@ export function DrillsPage({
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unable to calculate the provisional Drill score.');
       } finally {
+        completionInFlightRef.current = false;
         setCompleting(null);
+        setCompletionPhase('idle');
       }
       return;
     }
     const token = localStorage.getItem('token');
     if (!token) return;
+    if (!claimDrillCompletion(completionInFlightRef)) return;
     const serverSessionId = execution.serverSessionId;
     const attemptId = exerciseGenerationRef.current;
+    const perf = drillCompletionPerfEnabled(import.meta.env?.VITE_DRILL_PERF_DEBUG)
+      ? new DrillCompletionPerfTrace() : null;
+    completionTraceRef.current = perf;
+    completionSucceededRef.current = false;
+    perf?.mark('handlerStart');
     setCompleting(activeSession.id);
+    setCompletionPhase('scoring');
     setError(null);
     setNotice(null);
     try {
@@ -1185,6 +1245,7 @@ export function DrillsPage({
       if (eyeContactScore !== null && (!Number.isFinite(eyeContactScore) || eyeContactScore < 0 || eyeContactScore > 100)) {
         throw new Error('Eye-contact score data is invalid. Your response is still available; restart the camera or retry completion.');
       }
+      perf?.mark('postStart');
       const response = await fetch(`${apiUrl}/drills/${serverSessionId}/complete`, {
         method: 'POST',
         headers: {
@@ -1201,17 +1262,22 @@ export function DrillsPage({
           },
         }),
       });
+      perf?.mark('postResponse', response.ok);
       if (!response.ok) {
         const body = await response.json().catch(() => null);
+        perf?.mark('responseParsed', false);
         throw new Error(normalizeApiError(body, 'Unable to complete the drill session.'));
       }
       await response.json();
+      perf?.mark('responseParsed', true);
       if (exerciseGenerationRef.current !== attemptId) return;
+      completionSucceededRef.current = true;
       cancelListening();
       cancelBrowserSpeech();
       setNotice('Drill was marked complete.');
       void onActivityEnd('cloud_completed');
       setActiveSession(null);
+      perf?.mark('sessionClosed', true);
       setActivePrompt('');
       setSpokenResponse('');
       setNegotiationMessages([]);
@@ -1224,12 +1290,20 @@ export function DrillsPage({
       activeOfflineClientSessionIdRef.current = null;
       offlineEyeContactBaselineRef.current = null;
       onSessionModeChange(false);
+      setCompletionPhase('refreshing');
+      perf?.mark('refreshStart');
       await loadSessions();
+      perf?.mark('refreshComplete');
     } catch (err) {
       if (exerciseGenerationRef.current !== attemptId) return;
+      perf?.mark('completionFailed', false);
       setError(err instanceof Error ? err.message : 'Unable to complete the drill session.');
     } finally {
-      if (exerciseGenerationRef.current === attemptId) setCompleting(null);
+      completionInFlightRef.current = false;
+      if (exerciseGenerationRef.current === attemptId) {
+        setCompleting(null);
+        setCompletionPhase('idle');
+      }
     }
   };
 
@@ -1396,7 +1470,9 @@ export function DrillsPage({
                 className="program-accent-button program-accent-focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-lg px-5 py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               >
                 {completing === activeSession.id ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
-                {completing === activeSession.id ? 'Completing…' : 'Mark Complete'}
+                {completing === activeSession.id
+                  ? completionPhase === 'saving-local' ? 'Saving locally...' : 'Scoring...'
+                  : 'Mark Complete'}
               </button>
               <p className="text-center text-xs text-muted">
                 {activeSession.drill_type === 'negotiation'
@@ -1448,6 +1524,13 @@ export function DrillsPage({
         <div className={`mb-5 rounded-lg border p-3 text-sm ${error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-success'}`}>
           {error || notice}
         </div>
+      )}
+
+      {completionPhase === 'refreshing' && (
+        <p role="status" className="mb-5 flex items-center gap-2 text-sm text-muted">
+          <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+          Refreshing progress...
+        </p>
       )}
 
       <section className="space-y-4">
