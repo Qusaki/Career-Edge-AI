@@ -26,6 +26,7 @@ import models.post_test_interview
 import models.drills
 import models.custom_skills
 import models.offline_sync
+import models.password_reset_token
 
 LOCAL_SCHEMA_ENVIRONMENTS = frozenset({"development", "dev", "local"})
 

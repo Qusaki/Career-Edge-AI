@@ -320,6 +320,7 @@ test('dark system surfaces, honest unavailable affordances, and reduced motion a
   assert.match(styles, /prefers-reduced-motion: reduce/);
   assert.match(dashboard, /Attachments unavailable/);
   assert.doesNotMatch(dashboard, />Local Disk<|>Drive</);
-  assert.match(auth, /Recovery unavailable/);
+  assert.match(auth, /Forgot password\?/);
+  assert.doesNotMatch(auth, /Recovery unavailable/);
   assert.doesNotMatch(auth, /href="#"/);
 });

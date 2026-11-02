@@ -134,6 +134,14 @@ class Settings:
         ENVIRONMENT,
         _parse_origins(os.getenv("CORS_ALLOWED_ORIGINS", "")),
     )
+    FRONTEND_PUBLIC_URL: str = os.getenv("FRONTEND_PUBLIC_URL", "").strip()
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "").strip()
+    SMTP_PORT: str = os.getenv("SMTP_PORT", "").strip()
+    SMTP_USERNAME: str = os.getenv("SMTP_USERNAME", "").strip()
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+    SMTP_FROM_EMAIL: str = os.getenv("SMTP_FROM_EMAIL", "").strip()
+    SMTP_FROM_NAME: str = os.getenv("SMTP_FROM_NAME", "Career Edge AI").strip()
+    SMTP_SECURITY: str = os.getenv("SMTP_SECURITY", "").strip().lower()
     AI_PROVIDER: str = _ai_settings.provider
     AI_API_KEY: str = _ai_settings.api_key
     AI_BASE_URL: str = _ai_settings.base_url

@@ -11,6 +11,7 @@ EXPECTED_TABLES = {
     "custom_skills_sessions",
     "drill_sessions",
     "offline_sync_receipts",
+    "password_reset_tokens",
     "post_test_interview_messages",
     "post_test_interview_sessions",
     "pre_test_active_listening_messages",

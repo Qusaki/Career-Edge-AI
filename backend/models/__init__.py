@@ -6,6 +6,7 @@ from models.user import Base
 from models import custom_skills
 from models import drills
 from models import offline_sync
+from models import password_reset_token
 from models import post_test_interview
 from models import pre_test_active_listening
 from models import pre_test_intro

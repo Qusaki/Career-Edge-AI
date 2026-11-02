@@ -8,13 +8,13 @@ import { normalizeApiError } from '../utils/httpError';
 interface AuthPageProps {
   onBack: () => void;
   onSuccess: (context: { isNewSignup: boolean }) => void;
-  initialMode?: 'signin' | 'signup';
+  initialMode?: 'signin' | 'signup' | 'forgot';
 }
 
 const DEPARTMENTS = ['CBAPA', 'CCIT', 'CTE'];
 
 export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMode = 'signin' }) => {
-  const [mode, setMode] = useState<'signin' | 'signup'>(initialMode);
+  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>(initialMode);
   const [selectedDept, setSelectedDept] = useState<string>('');
 
   // Form states
@@ -28,6 +28,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 
@@ -37,7 +38,15 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
     setIsLoading(true);
 
     try {
-      if (mode === 'signup') {
+      if (mode === 'forgot') {
+        const res = await fetch(`${API_URL}/auth/forgot-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        });
+        if (!res.ok) throw new Error('Request unavailable');
+        setForgotSent(true);
+      } else if (mode === 'signup') {
         const passwordError = getNewPasswordError(password);
         if (passwordError) {
           setError(passwordError);
@@ -109,7 +118,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
         onSuccess({ isNewSignup: false });
       }
     } catch (err: any) {
-      setError(err.message || 'An error occurred');
+      setError(mode === 'forgot' ? "We couldn't process the request right now. Please try again." : err.message || 'An error occurred');
     } finally {
       setIsLoading(false);
     }
@@ -141,10 +150,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
         <div className="p-8">
           <div className="text-center mb-8">
             <h2 className="text-3xl font-bold text-slate-100 mb-2">
-              {mode === 'signin' ? 'Welcome back' : 'Create an account'}
+              {mode === 'forgot' ? 'Forgot password?' : mode === 'signin' ? 'Welcome back' : 'Create an account'}
             </h2>
             <p className="text-slate-400 text-sm">
-              {mode === 'signin'
+              {mode === 'forgot'
+                ? 'Enter your account email to request a password reset link.'
+                : mode === 'signin'
                 ? 'Enter your details to access your account'
                 : 'Sign up to get started with our platform'}
             </p>
@@ -155,7 +166,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
               <p className="text-sm font-medium text-red-500">{error}</p>
             </div>
           )}
-          <form onSubmit={handleSubmit} className="space-y-5">
+          {mode === 'forgot' && forgotSent ? (
+            <p role="status" className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-4 text-sm text-slate-200">
+              If an account exists for that email, you’ll receive a password reset link.
+            </p>
+          ) : <form onSubmit={handleSubmit} className="space-y-5">
               {mode === 'signup' && (
                 <div className="space-y-5 mb-5">
                   {/* Name Inputs */}
@@ -236,13 +251,14 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
             </div>
 
             {/* Password Input */}
-            <div className="space-y-2">
+            {mode !== 'forgot' && <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label htmlFor="auth-password" className="text-sm font-medium text-slate-300">Password</label>
                 {mode === 'signin' && (
-                  <span className="text-xs font-medium text-slate-500" title="Password recovery is not currently available">
-                    Recovery unavailable
-                  </span>
+                  <button type="button" onClick={() => { setMode('forgot'); setError(null); setForgotSent(false); }}
+                    className="text-xs font-medium text-sky-400 hover:text-sky-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400">
+                    Forgot password?
+                  </button>
                 )}
               </div>
               <div className="relative">
@@ -271,7 +287,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
               {mode === 'signup' && (
                 <p className="mt-2 text-xs text-slate-400">Use at least 15 characters. Spaces are allowed; the maximum is 72 UTF-8 bytes.</p>
               )}
-            </div>
+            </div>}
 
               {mode === 'signup' && (
                 <div className="space-y-5 mt-5">
@@ -318,13 +334,20 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
               disabled={isLoading}
               className="w-full flex items-center justify-center gap-2 py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-black bg-sky-500 hover:bg-sky-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 focus:ring-offset-slate-900 transition-all mt-6 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isLoading ? 'Processing...' : (mode === 'signin' ? 'Sign In' : 'Create Account')}
+              {isLoading ? 'Processing...' : mode === 'forgot' ? 'Send Reset Link' : (mode === 'signin' ? 'Sign In' : 'Create Account')}
               {!isLoading && <ArrowRight className="w-4 h-4" />}
             </button>
-          </form>
+          </form>}
+
+          {mode === 'forgot' && (
+            <button type="button" onClick={() => { setMode('signin'); setError(null); setForgotSent(false); }}
+              className="mt-6 flex items-center gap-2 text-sm font-medium text-sky-400 hover:text-sky-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400">
+              <ArrowLeft className="h-4 w-4" /> Back to Sign In
+            </button>
+          )}
 
           {/* Toggle Mode */}
-          <div className="mt-6 text-center">
+          {mode !== 'forgot' && <div className="mt-6 text-center">
             <p className="text-sm text-slate-400">
               {mode === 'signin' ? "Don't have an account? " : "Already have an account? "}
               <button
@@ -335,7 +358,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
                 {mode === 'signin' ? 'Sign up' : 'Sign in'}
               </button>
             </p>
-          </div>
+          </div>}
         </div>
       </motion.div>
     </div>
