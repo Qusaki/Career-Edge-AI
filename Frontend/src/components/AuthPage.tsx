@@ -46,7 +46,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
           email,
           password,
           firstname: firstName,
-          middlename: middleName || null,
+          middlename: middleName.trim() || null,
           lastname: lastName,
           department: selectedDept
         };
@@ -172,7 +172,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
                     </div>
 
                     <div className="space-y-2">
-                      <label htmlFor="signup-middle-name" className="text-sm font-medium text-slate-300">Middle Name</label>
+                      <label htmlFor="signup-middle-name" className="text-sm font-medium text-slate-300">Middle Name (Optional)</label>
                       <div className="relative">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                           <User className="h-5 w-5 text-slate-500" />
@@ -184,7 +184,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
                           onChange={(e) => setMiddleName(e.target.value)}
                           className="block w-full pl-10 pr-3 py-2.5 border border-slate-700 rounded-xl bg-slate-950/50 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-all"
                           placeholder="Robert"
-                          required={mode === 'signup'}
                         />
                       </div>
                     </div>
