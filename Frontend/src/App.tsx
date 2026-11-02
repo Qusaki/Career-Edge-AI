@@ -379,6 +379,12 @@ const FeatureCard = ({ icon, title, description }: { icon: React.ReactNode, titl
 );
 
 const isResetPasswordFragment = () => window.location.hash.startsWith('#/reset-password');
+const isForgotPasswordFragment = () => window.location.hash === '#/forgot-password';
+const clearForgotPasswordFragment = () => {
+  if (isForgotPasswordFragment()) {
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+  }
+};
 const readResetToken = () => {
   if (!isResetPasswordFragment()) return null;
   return new URLSearchParams(window.location.hash.split('?', 2)[1] || '').get('token');
@@ -386,7 +392,7 @@ const readResetToken = () => {
 
 export default function App() {
   const [currentView, setCurrentView] = useState<'landing' | 'auth' | 'dashboard' | 'reset-password'>(
-    () => isResetPasswordFragment() ? 'reset-password' : 'landing',
+    () => isResetPasswordFragment() ? 'reset-password' : isForgotPasswordFragment() ? 'auth' : 'landing',
   );
   const [resetToken, setResetToken] = useState<string | null>(readResetToken);
   const [isNewSignupSession, setIsNewSignupSession] = useState(false);
@@ -400,11 +406,13 @@ export default function App() {
 
   useEffect(() => {
     // Auto-login if token exists
-    if (currentView !== 'reset-password' && localStorage.getItem('token')) {
+    if (currentView !== 'reset-password' && !isForgotPasswordFragment() && localStorage.getItem('token')) {
       setCurrentView('dashboard');
     }
   }, []);
-  const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
+  const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'forgot'>(
+    () => isForgotPasswordFragment() ? 'forgot' : 'signin',
+  );
 
   const openAuth = (mode: 'signin' | 'signup' | 'forgot') => {
     setAuthMode(mode);
@@ -434,7 +442,14 @@ export default function App() {
     return (
       <>
         <AuthPage
-          onBack={() => setCurrentView('landing')}
+          onBack={() => {
+            clearForgotPasswordFragment();
+            setCurrentView('landing');
+          }}
+          onBackToSignIn={() => {
+            clearForgotPasswordFragment();
+            setAuthMode('signin');
+          }}
           onSuccess={({ isNewSignup }) => {
             setIsNewSignupSession(isNewSignup);
             setCurrentView('dashboard');
