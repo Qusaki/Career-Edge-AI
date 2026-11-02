@@ -185,6 +185,8 @@ function PostTestActivity({
 }: PostTestActivityProps) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const refreshInFlightRef = useRef(false);
   const [starting, setStarting] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
@@ -372,14 +374,17 @@ function PostTestActivity({
     speakText(latestAiQuestion);
   };
 
-  const loadSessions = useCallback(async () => {
+  const loadSessions = useCallback(async (manualRefresh = false) => {
     if (!effectiveOnline) {
-      setLoading(false);
+      if (!manualRefresh) setLoading(false);
       return;
     }
     const token = localStorage.getItem('token');
-    if (!token) return;
-    setLoading(true);
+    if (!token) {
+      if (!manualRefresh) setLoading(false);
+      return;
+    }
+    if (!manualRefresh) setLoading(true);
     setError(null);
     try {
       const response = await fetch(`${apiUrl}/post-test-interview/`, {
@@ -390,9 +395,21 @@ function PostTestActivity({
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load post-test sessions.');
     } finally {
-      setLoading(false);
+      if (!manualRefresh) setLoading(false);
     }
   }, [apiUrl, effectiveOnline]);
+
+  const handleRefresh = async () => {
+    if (loading || refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
+    setIsRefreshing(true);
+    try {
+      await loadSessions(true);
+    } finally {
+      refreshInFlightRef.current = false;
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
 
@@ -1290,10 +1307,11 @@ function PostTestActivity({
       </section>
 
       <section className="mt-6">
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-bold italic tracking-tight text-ink">Recent Post-Tests</h2>
-          <button onClick={loadSessions} className="program-accent-link flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider transition-colors">
-            <RefreshCw className="h-4 w-4" /> Refresh
+          <button type="button" onClick={handleRefresh} disabled={loading || isRefreshing} className="program-accent-link program-accent-focus-ring flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider transition-colors disabled:cursor-not-allowed disabled:opacity-60">
+            {isRefreshing ? <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" /> : <RefreshCw aria-hidden="true" className="h-4 w-4" />}
+            {isRefreshing ? 'Refreshing...' : 'Refresh'}
           </button>
         </div>
         <div className="overflow-hidden rounded-lg border border-line bg-card">
