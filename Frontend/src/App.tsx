@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, useMotionValue, useSpring, useTransform } from 'motion/react';
 import { Mic, FileText, CheckCircle, BarChart, Play, ArrowRight, BrainCircuit, Target, GraduationCap, MessageSquare, Video, Plus, Send, MousePointer2, Paperclip, LogOut, MapPin, Phone, Mail, Globe } from 'lucide-react';
 import { AuthPage } from './components/AuthPage';
+import { ResetPasswordPage } from './components/ResetPasswordPage';
 import { Dashboard } from './components/Dashboard';
 import { AppUpdateNotice, type UpdateBlockReason } from './components/AppUpdateNotice';
 import { accountStorage } from './db';
@@ -379,8 +380,17 @@ const FeatureCard = ({ icon, title, description }: { icon: React.ReactNode, titl
   </motion.div>
 );
 
+const isResetPasswordFragment = () => window.location.hash.startsWith('#/reset-password');
+const readResetToken = () => {
+  if (!isResetPasswordFragment()) return null;
+  return new URLSearchParams(window.location.hash.split('?', 2)[1] || '').get('token');
+};
+
 export default function App() {
-  const [currentView, setCurrentView] = useState<'landing' | 'auth' | 'dashboard'>('landing');
+  const [currentView, setCurrentView] = useState<'landing' | 'auth' | 'dashboard' | 'reset-password'>(
+    () => isResetPasswordFragment() ? 'reset-password' : 'landing',
+  );
+  const [resetToken, setResetToken] = useState<string | null>(readResetToken);
   const [isNewSignupSession, setIsNewSignupSession] = useState(false);
   const pwaUpdate = usePwaUpdate();
   const [publicHasUnsyncedWork, setPublicHasUnsyncedWork] = useState<boolean | null>(null);
@@ -430,17 +440,43 @@ export default function App() {
   );
 
   useEffect(() => {
+    if (currentView === 'reset-password' && window.location.hash.includes('?')) {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#/reset-password`);
+    }
+  }, [currentView]);
+
+  useEffect(() => {
     // Auto-login if token exists
-    if (localStorage.getItem('token')) {
+    if (currentView !== 'reset-password' && localStorage.getItem('token')) {
       setCurrentView('dashboard');
     }
   }, []);
-  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
 
-  const openAuth = (mode: 'signin' | 'signup') => {
+  const openAuth = (mode: 'signin' | 'signup' | 'forgot') => {
     setAuthMode(mode);
     setCurrentView('auth');
   };
+
+  if (currentView === 'reset-password') {
+    return <>
+      <ResetPasswordPage
+        token={resetToken}
+        onSuccess={() => setResetToken(null)}
+        onBackToSignIn={() => {
+          setResetToken(null);
+          window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+          openAuth('signin');
+        }}
+        onRequestNewLink={() => {
+          setResetToken(null);
+          window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+          openAuth('forgot');
+        }}
+      />
+      {publicUpdateNotice}
+    </>;
+  }
 
   if (currentView === 'auth') {
     return (
