@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, LoaderCircle, Lock, Mic, MicOff, RefreshCw, Volume2 } from 'lucide-react';
+import type { ConnectionState } from '../hooks/useConnectivity';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import type { OfflineAudioCapture } from '../offline/offlineAudioRecorder';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
@@ -137,9 +138,12 @@ const appendSpokenOfflineAnswer = (
 
 type PostTestActivityProps = OfflineActivityBridgeProps & {
   apiUrl: string;
+  cloudConnectionState: ConnectionState;
   userDepartment: string;
   onSessionModeChange?: (isSessionMode: boolean) => void;
 };
+
+const CLOUD_CHECKING_START_MESSAGE = 'Checking Career Edge cloud connection. Please try again in a moment.';
 
 type PostTestPageProps = PostTestActivityProps & {
   postTestAccess: PostTestAccess | null;
@@ -173,6 +177,7 @@ export function PostTestPage({ postTestAccess, progressChecking, progressFetchEr
 
 function PostTestActivity({
   apiUrl,
+  cloudConnectionState,
   onSessionModeChange = () => {},
   effectiveOnline,
   sessionMode,
@@ -203,6 +208,11 @@ function PostTestActivity({
   const [latestAiQuestion, setLatestAiQuestion] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (cloudConnectionState !== 'checking') {
+      setError(current => current === CLOUD_CHECKING_START_MESSAGE ? null : current);
+    }
+  }, [cloudConnectionState]);
   const wsRef = useRef<WebSocket | null>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
   const aiMessageOpenRef = useRef(false);
@@ -622,6 +632,11 @@ function PostTestActivity({
   }
 
   const startPostTest = async () => {
+    if (cloudConnectionState === 'checking') {
+      setNotice(null);
+      setError(CLOUD_CHECKING_START_MESSAGE);
+      return;
+    }
     const lifecycleGeneration = lifecycleGenerationRef.current + 1;
     lifecycleGenerationRef.current = lifecycleGeneration;
     setStarting(true);

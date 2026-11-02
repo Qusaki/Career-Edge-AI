@@ -163,6 +163,7 @@ const APP_THEME_STORAGE_KEY = 'career-edge-theme';
 const DEFAULT_AVATAR_HOST = 'api.dicebear.com';
 const ENROLLMENT_FINAL_RESPONSE_TIMEOUT_MS = 60_000;
 const ENROLLMENT_FINAL_RESPONSE_FALLBACK = 'Thank you for completing your Career Edge interview. Your five responses have been recorded, and you can now continue to validation.';
+const CLOUD_CHECKING_START_MESSAGE = 'Checking Career Edge cloud connection. Please try again in a moment.';
 const ENROLLMENT_FINAL_TURN_INSTRUCTION = 'The student has just submitted their fifth and final answer. Do not ask another question or request another response. Give one brief, supportive, non-empty closing statement that acknowledges the interview is complete and tells the student they can continue to validation. Keep it concise for speech.';
 
 const getWebSocketUrl = (apiUrl: string, path: string, token: string) => {
@@ -367,6 +368,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const connectivity = useConnectivity(API_URL);
   const connectivityOnlineRef = React.useRef(connectivity.effectiveOnline);
   connectivityOnlineRef.current = connectivity.effectiveOnline;
+  const cloudConnectionStateRef = React.useRef(connectivity.connectionState);
+  cloudConnectionStateRef.current = connectivity.connectionState;
+  const isCloudChecking = () => cloudConnectionStateRef.current === 'checking';
   const [activeTab, setActiveTab] = useState<'dashboard' | 'pre-test' | 'drills' | 'post-test' | 'history' | 'analytics' | 'profile' | 'settings' | 'support' | 'privacy' | 'interview-type' | 'university-setup' | 'new-interview' | 'interview-session' | 'interview-result' | 'thesis-setup' | 'thesis-session'>(() => {
     if (window.location.pathname === '/pre-test') return 'pre-test';
     if (window.location.pathname === '/drills') return 'drills';
@@ -415,6 +419,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const sessionIdRef = React.useRef<number | null>(null);
   const wsRef = React.useRef<WebSocket | null>(null);
   const [isStartingInterview, setIsStartingInterview] = useState(false);
+  const [checkingInterviewStart, setCheckingInterviewStart] = useState<'enrollment' | 'thesis' | null>(null);
   const [professorAssetStatus, setProfessorAssetStatus] = useState<ProfessorAssetStatus>('loading');
   const professorAssetStatusRef = React.useRef<ProfessorAssetStatus>('loading');
   const professorAssetWaitersRef = React.useRef<ProfessorAssetWaiter[]>([]);
@@ -445,6 +450,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [activeActivityCheckpoint, setActiveActivityCheckpoint] = useState<AccountOfflineSession | null>(null);
   const activeActivityCheckpointRef = React.useRef<AccountOfflineSession | null>(null);
   const [showConnectionLossPrompt, setShowConnectionLossPrompt] = useState(false);
+  const [isRetryingConnection, setIsRetryingConnection] = useState(false);
+  const retryConnectionInFlightRef = React.useRef(false);
   const [offlineFoundationError, setOfflineFoundationError] = useState<string | null>(null);
   const [connectionRestoredNotice, setConnectionRestoredNotice] = useState(false);
   const [resumableOfflineSession, setResumableOfflineSession] = useState<AccountOfflineSession | null>(null);
@@ -647,6 +654,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const thesisTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
   const [thesisIsLeaveModalOpen, setThesisIsLeaveModalOpen] = useState(false);
   const [thesisStartError, setThesisStartError] = useState<string | null>(null);
+  useEffect(() => {
+    if (connectivity.connectionState !== 'checking') setCheckingInterviewStart(null);
+  }, [connectivity.connectionState]);
   const [thesisInSessionUploading, setThesisInSessionUploading] = useState(false);
   const [thesisAbstractUpdated, setThesisAbstractUpdated] = useState(false);
   const [thesisUploadError, setThesisUploadError] = useState<string | null>(null);
@@ -2946,11 +2956,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const startInterviewSession = async () => {
-    setLatestOfflineRecordingUrl(null);
     if (professorAssetStatusRef.current === 'error') {
       retryProfessorAssetLoad();
       return;
     }
+    if (isCloudChecking()) {
+      setCheckingInterviewStart('enrollment');
+      return;
+    }
+    setCheckingInterviewStart(null);
+    setLatestOfflineRecordingUrl(null);
     // Unlock speech synthesis immediately on user click
     unlockBrowserSpeech();
     resetRestoredEnrollmentPlayback();
@@ -2963,7 +2978,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
       return;
     }
 
-    if (!connectivity.effectiveOnline) {
+    if (isCloudChecking()) {
+      setCheckingInterviewStart('enrollment');
+      setIsStartingInterview(false);
+      return;
+    }
+
+    if (!connectivityOnlineRef.current) {
       const department = profile.department.trim().toUpperCase();
       if (!['CCIT', 'CTE', 'CBAPA'].includes(department)) {
         setIsStartingInterview(false);
@@ -3357,9 +3378,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const startThesisSession = async () => {
+    setThesisStartError(null);
+    if (isCloudChecking()) {
+      setCheckingInterviewStart('thesis');
+      return;
+    }
+    setCheckingInterviewStart(null);
     setLatestOfflineRecordingUrl(null);
     unlockBrowserSpeech();
-    setThesisStartError(null);
 
     // Pre-flight: department must be CCIT, CTE, or CBAPA
     const dep = (profile.department || '').trim().toUpperCase();
@@ -3391,7 +3417,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
     setThesisAbstractUploading(false);
 
-    if (!connectivity.effectiveOnline) {
+    if (isCloudChecking()) {
+      setCheckingInterviewStart('thesis');
+      setThesisIsStarting(false);
+      return;
+    }
+
+    if (!connectivityOnlineRef.current) {
       setIsCameraEnabled(false);
       restoredEyeContactSummaryRef.current = null;
       thesisSessionIdRef.current = null;
@@ -3838,8 +3870,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const retryCurrentConnection = async () => {
-    const reachable = await connectivity.retryConnection();
-    if (reachable) setShowConnectionLossPrompt(false);
+    if (retryConnectionInFlightRef.current || connectivity.connectionState === 'checking') return;
+    retryConnectionInFlightRef.current = true;
+    setIsRetryingConnection(true);
+    try {
+      const reachable = await connectivity.retryConnection();
+      if (reachable) setShowConnectionLossPrompt(false);
+    } finally {
+      retryConnectionInFlightRef.current = false;
+      setIsRetryingConnection(false);
+    }
   };
 
   const leaveActivityAfterConnectionLoss = () => {
@@ -4121,7 +4161,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             {connectivity.connectionState === 'offline'
               ? 'Device offline'
               : connectivity.connectionState === 'degraded'
-                ? 'Career Edge cloud unavailable'
+                ? 'Could not verify the Career Edge cloud connection.'
                 : 'Connecting to Career Edge cloud…'}
           </p>
           <p className="mt-1 text-slate-300">
@@ -4129,6 +4169,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
               ? 'Checking cloud availability. Please wait.'
               : 'Cloud activities require both network and backend availability.'}
           </p>
+          {(connectivity.connectionState === 'degraded' || isRetryingConnection && connectivity.connectionState === 'checking') && (
+            <button type="button" onClick={() => void retryCurrentConnection()} disabled={isRetryingConnection || connectivity.connectionState === 'checking'} className="program-accent-focus-ring mt-2 inline-flex items-center gap-2 rounded-md border border-current px-3 py-1.5 font-semibold disabled:cursor-not-allowed disabled:opacity-60">
+              {isRetryingConnection && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
+              {isRetryingConnection ? 'Checking...' : 'Retry Connection'}
+            </button>
+          )}
         </div>
       )}
       {connectionRestoredNotice && activeActivityCheckpoint?.mode === 'offline' && (
@@ -4193,7 +4239,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       {showConnectionLossPrompt && activeActivityCheckpoint?.mode === 'online' && (
         <div style={programAccentStyle} className="status-surface-dark fixed inset-0 z-[9998] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
           <div ref={connectionLossDialogRef} role="dialog" aria-modal="true" aria-labelledby="connection-loss-title" tabIndex={-1} className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 text-white shadow-2xl outline-none">
-            <h2 id="connection-loss-title" className="text-xl font-bold">Connection lost</h2>
+            <h2 id="connection-loss-title" className="text-xl font-bold">{connectivity.connectionState === 'checking' ? 'Checking Career Edge cloud connection...' : 'Connection lost'}</h2>
             <p className="mt-2 text-sm leading-relaxed text-slate-300">
               Your current question, transcript, response count, and camera summary are being preserved. Choose how to continue.
             </p>
@@ -4201,8 +4247,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <button type="button" onClick={() => void continueCurrentActivityOffline()} className="program-accent-button rounded-xl px-4 py-3 text-sm font-bold">
                 Continue Offline
               </button>
-              <button type="button" onClick={() => void retryCurrentConnection()} className="rounded-xl border border-slate-600 px-4 py-3 text-sm font-bold hover:bg-slate-800">
-                Retry Connection
+              <button type="button" onClick={() => void retryCurrentConnection()} disabled={isRetryingConnection || connectivity.connectionState === 'checking'} className="program-accent-focus-ring flex items-center justify-center gap-2 rounded-xl border border-slate-600 px-4 py-3 text-sm font-bold hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60">
+                {(isRetryingConnection || connectivity.connectionState === 'checking') && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                {isRetryingConnection || connectivity.connectionState === 'checking' ? 'Checking...' : 'Retry Connection'}
               </button>
               <button type="button" onClick={leaveActivityAfterConnectionLoss} className="rounded-xl px-4 py-3 text-sm font-bold text-rose-300 hover:bg-rose-500/10">
                 Leave Activity
@@ -4532,6 +4579,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             {activeTab === 'pre-test' && (
               <PreTestPage
                 apiUrl={API_URL}
+                cloudConnectionState={connectivity.connectionState}
                 onSessionModeChange={setIsModuleSessionMode}
                 effectiveOnline={connectivity.effectiveOnline}
                 sessionMode={activeActivityCheckpoint?.type === 'pre_test_intro' || activeActivityCheckpoint?.type === 'pre_test_active_listening' ? activeActivityCheckpoint.mode : 'online'}
@@ -4546,6 +4594,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             {activeTab === 'drills' && (
               <DrillsPage
                 apiUrl={API_URL}
+                cloudConnectionState={connectivity.connectionState}
                 onSessionModeChange={setIsModuleSessionMode}
                 onProgressChange={handleDrillProgressChange}
                 effectiveOnline={connectivity.effectiveOnline}
@@ -4561,6 +4610,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             {activeTab === 'post-test' && (
               <PostTestPage
                 apiUrl={API_URL}
+                cloudConnectionState={connectivity.connectionState}
                 postTestAccess={postTestAccess}
                 progressChecking={postTestProgressChecking}
                 progressFetchError={postTestProgressError}
@@ -4626,6 +4676,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <p className="text-slate-400 text-sm">Simulate a formal thesis panel defense with AI. Upload your abstract for targeted questions.</p>
                     </button>
                   </div>
+                  {checkingInterviewStart === 'enrollment' && connectivity.connectionState === 'checking' && (
+                    <p role="status" className="text-center text-sm text-amber-300">{CLOUD_CHECKING_START_MESSAGE}</p>
+                  )}
                 </motion.div>
               </div>
             )}
@@ -4723,6 +4776,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       {!isStartingInterview && professorAssetStatus !== 'error' && <ArrowRight className="w-5 h-5" />}
                     </button>
                   </div>
+                  {checkingInterviewStart === 'enrollment' && connectivity.connectionState === 'checking' && (
+                    <p role="status" className="text-center text-sm text-amber-300">{CLOUD_CHECKING_START_MESSAGE}</p>
+                  )}
                 </motion.div>
               </div>
             )}
@@ -4758,6 +4814,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       </div>
                       <p className="text-sm text-rose-300 leading-relaxed">{thesisStartError}</p>
                     </div>
+                  )}
+                  {checkingInterviewStart === 'thesis' && connectivity.connectionState === 'checking' && (
+                    <p role="status" className="text-sm text-amber-300">{CLOUD_CHECKING_START_MESSAGE}</p>
                   )}
 
                   {/* Department eligibility warning */}

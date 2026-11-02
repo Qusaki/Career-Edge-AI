@@ -194,7 +194,46 @@ test('Drill progress refetch and feature-level error paths remain outside health
   assert.match(dashboardSource, /if \(connectivity\.effectiveOnline\) void refreshPostTestProgress\(authenticatedUserId\)/);
   assert.match(dashboardSource, /connectivity\.effectiveOnline,[\s\S]*?refreshPostTestProgress/);
   assert.match(dashboardSource, /Connecting to Career Edge cloud/);
-  assert.match(dashboardSource, /Career Edge cloud unavailable/);
+  assert.match(dashboardSource, /Could not verify the Career Edge cloud connection\./);
   assert.match(hookSource, /\/health only confirms that the API process answered, not database or AI availability/);
   assert.doesNotMatch(hookSource, /normalizeApiError|\/drills\/progress|\/auth\/login/);
+});
+
+test('degraded global banner explains verification failure and offers the existing retry action', () => {
+  const banner = dashboardSource.slice(
+    dashboardSource.indexOf("{connectivity.connectionState !== 'online' && ("),
+    dashboardSource.indexOf('{connectionRestoredNotice &&'),
+  );
+  assert.match(banner, /Device offline/);
+  assert.match(banner, /Connecting to Career Edge cloud/);
+  assert.match(banner, /Could not verify the Career Edge cloud connection\./);
+  assert.match(banner, /connectivity\.connectionState === 'degraded' \|\| isRetryingConnection/);
+  assert.match(banner, /onClick=\{\(\) => void retryCurrentConnection\(\)\}/);
+  assert.match(banner, /disabled=\{isRetryingConnection \|\| connectivity\.connectionState === 'checking'\}/);
+  assert.match(banner, /isRetryingConnection \? 'Checking\.\.\.' : 'Retry Connection'/);
+  assert.match(banner, /program-accent-focus-ring/);
+  assert.match(banner, /role="status"/);
+  assert.match(dashboardSource, /const reachable = await connectivity\.retryConnection\(\);\s*if \(reachable\) setShowConnectionLossPrompt\(false\)/);
+  assert.match(dashboardSource, /if \(connectivity\.connectionState === 'online'\) \{\s*setShowConnectionLossPrompt\(false\)/);
+});
+
+test('global and activity retry share a synchronous click guard and reset after success or failure', () => {
+  const retry = dashboardSource.slice(
+    dashboardSource.indexOf('const retryCurrentConnection = async () => {'),
+    dashboardSource.indexOf('const leaveActivityAfterConnectionLoss ='),
+  );
+  assert.match(retry, /if \(retryConnectionInFlightRef\.current \|\| connectivity\.connectionState === 'checking'\) return/);
+  assert.match(retry, /retryConnectionInFlightRef\.current = true;\s*setIsRetryingConnection\(true\)/);
+  assert.match(retry, /await connectivity\.retryConnection\(\)/);
+  assert.match(retry, /finally \{\s*retryConnectionInFlightRef\.current = false;\s*setIsRetryingConnection\(false\)/);
+  const dialog = dashboardSource.slice(
+    dashboardSource.indexOf("{showConnectionLossPrompt && activeActivityCheckpoint?.mode === 'online'"),
+    dashboardSource.indexOf('dashboard-shell', dashboardSource.indexOf("{showConnectionLossPrompt && activeActivityCheckpoint?.mode === 'online'")),
+  );
+  assert.match(dialog, /connectivity\.connectionState === 'checking' \? 'Checking Career Edge cloud connection\.\.\.' : 'Connection lost'/);
+  assert.match(dialog, /disabled=\{isRetryingConnection \|\| connectivity\.connectionState === 'checking'\}/);
+  assert.match(dialog, /isRetryingConnection \|\| connectivity\.connectionState === 'checking' \? 'Checking\.\.\.' : 'Retry Connection'/);
+  assert.match(dialog, /Continue Offline/);
+  assert.match(dialog, /Leave Activity/);
+  assert.match(dialog, /program-accent-focus-ring/);
 });

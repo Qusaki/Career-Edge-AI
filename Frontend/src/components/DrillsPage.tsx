@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clock3, Dumbbell, LoaderCircle, Lock, Mic, MicOff, RefreshCw, Sparkles } from 'lucide-react';
+import type { ConnectionState } from '../hooks/useConnectivity';
 import { mergeSpeechFragments, useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
@@ -365,12 +366,16 @@ const formatPrompt = (prompt: Record<string, unknown>) => {
 
 type DrillsPageProps = OfflineActivityBridgeProps & {
   apiUrl: string;
+  cloudConnectionState: ConnectionState;
   onSessionModeChange?: (isSessionMode: boolean) => void;
   onProgressChange?: (progress: PostTestAccess) => void;
 };
 
+const CLOUD_CHECKING_START_MESSAGE = 'Checking Career Edge cloud connection. Please try again in a moment.';
+
 export function DrillsPage({
   apiUrl,
+  cloudConnectionState,
   onSessionModeChange = () => {},
   onProgressChange,
   effectiveOnline,
@@ -404,6 +409,11 @@ export function DrillsPage({
   const [drillTimer, setDrillTimer] = useState<DrillTimerState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (cloudConnectionState !== 'checking') {
+      setError(current => current === CLOUD_CHECKING_START_MESSAGE ? null : current);
+    }
+  }, [cloudConnectionState]);
   const [pendingOnlineAudio, setPendingOnlineAudio] = useState<{
     capture: OfflineAudioCapture;
     commit: (transcript: string) => void | Promise<void>;
@@ -663,6 +673,11 @@ export function DrillsPage({
     }
     if (!drillProgress?.unlocked) {
       setError(getLockedDrillCopy(drillProgress));
+      return;
+    }
+    if (cloudConnectionState === 'checking') {
+      setNotice(null);
+      setError(CLOUD_CHECKING_START_MESSAGE);
       return;
     }
     const attemptId = exerciseGenerationRef.current + 1;
