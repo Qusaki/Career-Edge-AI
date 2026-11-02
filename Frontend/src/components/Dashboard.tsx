@@ -21,6 +21,8 @@ import {
 import { maintainOwnedOfflineStorage } from '../offline/offlineCleanup';
 import { isUpdateSessionActive } from '../offline/updateRefreshSafety';
 import { isPositiveServerSessionId } from '../utils/sessionIdentity';
+import { getNewPasswordError } from '../utils/passwordPolicy';
+import { normalizeApiError } from '../utils/httpError';
 import { ThesisAbstractFileError, thesisAbstractUploadError, validateThesisAbstractFile } from '../utils/thesisAbstractUpload';
 import { getVerifiedAccountForToken, rememberVerifiedAccount } from '../offline/accountBinding';
 import { getQuestionPackVersion, hasCurrentQuestionPack } from '../offline/questionPacks';
@@ -414,6 +416,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [position, setPosition] = useState('');
   const [isSaved, setIsSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [profilePasswordError, setProfilePasswordError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const sessionIdRef = React.useRef<number | null>(null);
@@ -1664,6 +1667,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const handleSave = async () => {
+    if (profile.password) {
+      const passwordError = getNewPasswordError(profile.password);
+      if (passwordError) {
+        setProfilePasswordError(passwordError);
+        return;
+      }
+    }
+    setProfilePasswordError(null);
     setIsSaving(true);
     try {
       const token = localStorage.getItem('token');
@@ -1724,7 +1735,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
           setActiveTab('dashboard');
         }, 1500);
       } else {
-        console.error('Failed to save profile', await res.text());
+        if (profile.password && res.status === 422) {
+          const body: unknown = await res.json().catch(() => null);
+          setProfilePasswordError(normalizeApiError(body, 'Unable to update password.'));
+        } else {
+          console.error('Failed to save profile', await res.text());
+        }
       }
     } catch (error) {
       console.error('Error saving profile', error);
@@ -6256,7 +6272,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           id="profile-password"
                           type={showProfilePass ? 'text' : 'password'}
                           value={profile.password || ''}
-                          onChange={(e) => setProfile({ ...profile, password: e.target.value })}
+                          onChange={(e) => { setProfile({ ...profile, password: e.target.value }); setProfilePasswordError(null); }}
+                          aria-describedby="profile-password-help"
+                          aria-invalid={Boolean(profilePasswordError)}
                           className="program-accent-focus w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-3 pr-12 text-slate-200 transition-all duration-300"
                           placeholder="••••••••"
                         />
@@ -6270,6 +6288,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           {showProfilePass ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                         </button>
                       </div>
+                      <p id="profile-password-help" className="text-xs text-slate-400">Leave blank to keep your password. New passwords need at least 15 characters and may include spaces (maximum 72 UTF-8 bytes).</p>
+                      {profilePasswordError && <p role="alert" className="text-sm text-rose-300">{profilePasswordError}</p>}
                     </div>
 
                     {/* Department */}

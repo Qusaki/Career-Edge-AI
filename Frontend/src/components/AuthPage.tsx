@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { API_URL } from '../config/api';
 import { motion, AnimatePresence } from 'motion/react';
 import { Mail, Lock, User, ArrowRight, ArrowLeft, Eye, EyeOff } from 'lucide-react';
+import { getNewPasswordError } from '../utils/passwordPolicy';
+import { normalizeApiError } from '../utils/httpError';
 
 interface AuthPageProps {
   onBack: () => void;
@@ -36,6 +38,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
 
     try {
       if (mode === 'signup') {
+        const passwordError = getNewPasswordError(password);
+        if (passwordError) {
+          setError(passwordError);
+          return;
+        }
         if (!selectedDept) {
           setError('Please select a department.');
           setIsLoading(false);
@@ -58,8 +65,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
         });
 
         if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.detail || 'Sign up failed');
+          const data: unknown = await res.json().catch(() => null);
+          throw new Error(normalizeApiError(data, 'Sign up failed'));
         }
 
         // Auto-login after successful sign up
@@ -261,6 +268,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onSuccess, initialMo
                   {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                 </button>
               </div>
+              {mode === 'signup' && (
+                <p className="mt-2 text-xs text-slate-400">Use at least 15 characters. Spaces are allowed; the maximum is 72 UTF-8 bytes.</p>
+              )}
             </div>
 
               {mode === 'signup' && (
