@@ -82,6 +82,24 @@ test('pending Who Am I audio becomes canonical text before text-only sync', asyn
   assert.equal(calls, 1);
 });
 
+test('offline Who Am I retake keeps one intro-1 answer and replaces the prior transcript', async () => {
+  const { session, audio } = fixture('pre_test_intro');
+  session.answers = [{ step: 1, text: 'My first introduction.', createdAt: 1 }];
+  session.audioReferences = [{ ...session.audioReferences[0], turnId: 'intro-1', audioId: 'retake-audio' }];
+  const replacementAudio = { ...audio, turnId: 'intro-1', audioId: 'retake-audio' };
+  const storage = store(session, replacementAudio);
+  const prepared = await prepareRecordedAnswers(session, {
+    apiUrl: '/api', token: 'test-token', userId: 7, storage,
+    fetchImpl: (async () => Response.json({ transcript: 'My revised introduction.' })) as typeof fetch,
+  }, storage);
+  assert.deepEqual(prepared.answers.map(answer => answer.text), ['My revised introduction.']);
+  assert.equal(prepared.answers.length, 1);
+  assert.equal(prepared.audioReferences.length, 1);
+  assert.equal(prepared.audioReferences[0].turnId, 'intro-1');
+  const preTest = readFileSync(new URL('../src/components/PreTestPage.tsx', import.meta.url), 'utf8');
+  assert.match(preTest, /turnId: 'intro-1',\s*answerIndex: 1/);
+});
+
 test('reconnect sends only canonical text and retries sync without retranscribing saved audio', async () => {
   const { session, audio } = fixture('pre_test_intro');
   const storage = store(session, audio);

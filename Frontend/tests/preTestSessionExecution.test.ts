@@ -67,11 +67,11 @@ test('only offline checkpoints enter the restored Pre-Test session path', () => 
   assert.match(preTestSource, /activeOfflineClientSessionIdRef\.current = resumeSession\.clientSessionId/);
 });
 
-test('Who Am I persistence uses resolved server identity and retains transcript on invalid identity', () => {
+test('Who Am I persistence uses resolved server identity and retains the prior answer on invalid identity', () => {
   const invalidIndex = preTestSource.indexOf("if (execution.mode === 'invalid')");
   const persistenceIndex = preTestSource.indexOf('${execution.serverSessionId}/response');
   assert.ok(invalidIndex >= 0 && persistenceIndex > invalidIndex);
-  assert.match(preTestSource, /introTranscriptRef\.current = nextTranscript;[\s\S]*?setIntroTranscript\(nextTranscript\);[\s\S]*?setError\(PRE_TEST_SESSION_RECOVERY_ERROR\)/);
+  assert.match(preTestSource, /if \(execution\.mode === 'invalid'\) \{\s*setError\(PRE_TEST_SESSION_RECOVERY_ERROR\);\s*return;\s*\}/);
   assert.match(preTestSource, /\$\{execution\.serverSessionId\}\/response/);
 });
 
