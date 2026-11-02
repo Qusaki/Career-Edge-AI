@@ -37,6 +37,16 @@ test('Drill progression is loaded from the authenticated backend endpoint', () =
   assert.match(source, /setProgress\(progressData\)/);
 });
 
+test('post-completion refresh keeps both requests parallel and cannot resend scoring on refresh failure', () => {
+  const completionStart = source.indexOf('const completeDrill = async () =>');
+  const completion = source.slice(completionStart, source.indexOf('if (activeSession) {', completionStart));
+  assert.match(loadFlow, /const \[sessionsResponse, progressResponse\] = await Promise\.all\(\[/);
+  assert.match(loadFlow, /catch \(err\) \{\s*setError\(/);
+  assert.equal((completion.match(/\/drills\/\$\{serverSessionId\}\/complete/g) ?? []).length, 1);
+  assert.match(completion, /setCompletionPhase\('refreshing'\);[\s\S]*?await loadSessions\(\)/);
+  assert.match(completion, /finally \{\s*completionInFlightRef\.current = false;[\s\S]*?setCompletionPhase\('idle'\)/);
+});
+
 test('canonical level groups keep Positive Framing in Medium and preserve exact order', () => {
   assert.match(source, /easy:\s*\['jam',\s*'fast_word'\]/);
   assert.match(source, /medium:\s*\['emotion',\s*'synonym',\s*'fake_profile',\s*'emoji_story',\s*'positive_framing'\]/);
