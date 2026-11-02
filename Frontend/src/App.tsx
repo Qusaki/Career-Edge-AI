@@ -4,8 +4,6 @@ import { Mic, FileText, CheckCircle, BarChart, Play, ArrowRight, BrainCircuit, T
 import { AuthPage } from './components/AuthPage';
 import { ResetPasswordPage } from './components/ResetPasswordPage';
 import { Dashboard } from './components/Dashboard';
-import { AppUpdateNotice, type UpdateBlockReason } from './components/AppUpdateNotice';
-import { accountStorage } from './db';
 import { usePwaUpdate } from './hooks/usePwaUpdate';
 import { forgetVerifiedAccount } from './offline/accountBinding';
 
@@ -393,51 +391,6 @@ export default function App() {
   const [resetToken, setResetToken] = useState<string | null>(readResetToken);
   const [isNewSignupSession, setIsNewSignupSession] = useState(false);
   const pwaUpdate = usePwaUpdate();
-  const [publicHasUnsyncedWork, setPublicHasUnsyncedWork] = useState<boolean | null>(null);
-  const [publicUpdateSafetyError, setPublicUpdateSafetyError] = useState<string | null>(null);
-
-  const checkPublicSavedWork = async () => {
-    setPublicHasUnsyncedWork(null);
-    setPublicUpdateSafetyError(null);
-    try {
-      setPublicHasUnsyncedWork(await accountStorage.hasAnyUnsyncedOfflineWork());
-    } catch {
-      setPublicUpdateSafetyError('Saved work could not be checked. Try again before refreshing.');
-    }
-  };
-
-  useEffect(() => {
-    if (!pwaUpdate.updateAvailable || currentView === 'dashboard') return;
-    void checkPublicSavedWork();
-  }, [pwaUpdate.updateAvailable, currentView]);
-
-  const publicBlockReason: UpdateBlockReason = publicHasUnsyncedWork === null
-    ? 'checking-work'
-    : publicHasUnsyncedWork ? 'unsynced-work' : null;
-  const publicUpdateNotice = (
-    <AppUpdateNotice
-      available={pwaUpdate.updateAvailable}
-      blockedReason={publicBlockReason}
-      isRefreshing={pwaUpdate.isRefreshing}
-      error={publicUpdateSafetyError || pwaUpdate.error}
-      onRefresh={() => {
-        void (async () => {
-          // Recheck the database immediately before any reload, including after another tab changes it.
-          setPublicHasUnsyncedWork(null);
-          setPublicUpdateSafetyError(null);
-          try {
-            const hasUnsyncedWork = await accountStorage.hasAnyUnsyncedOfflineWork();
-            setPublicHasUnsyncedWork(hasUnsyncedWork);
-            if (hasUnsyncedWork) return;
-            await pwaUpdate.refresh();
-          } catch {
-            setPublicUpdateSafetyError('Saved work could not be checked. Try again before refreshing.');
-          }
-        })();
-      }}
-      onCheckAgain={() => void checkPublicSavedWork()}
-    />
-  );
 
   useEffect(() => {
     if (currentView === 'reset-password' && window.location.hash.includes('?')) {
@@ -474,7 +427,6 @@ export default function App() {
           openAuth('forgot');
         }}
       />
-      {publicUpdateNotice}
     </>;
   }
 
@@ -489,7 +441,6 @@ export default function App() {
           }}
           initialMode={authMode}
         />
-        {publicUpdateNotice}
       </>
     );
   }
@@ -720,6 +671,5 @@ export default function App() {
         </div>
       </footer>
     </div>
-    {publicUpdateNotice}
   </>;
 }
