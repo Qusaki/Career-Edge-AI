@@ -31,11 +31,11 @@ test('guide starts only from verified signup or account pending state when Dashb
   assert.match(auth, /onSuccess\(\{ isNewSignup: true \}\)/);
   assert.match(auth, /onSuccess\(\{ isNewSignup: false \}\)/);
   assert.match(app, /isNewSignupSession=\{isNewSignupSession\}/);
-  assert.match(dashboard, /if \(!authenticatedUserId \|\| !isNewSignupSession\) return;/);
-  assert.match(dashboard, /readOnboardingState\(authenticatedUserId\) === null\) markOnboardingPending\(authenticatedUserId\)/);
+  assert.match(app, /setIsNewSignupSession\(recordAuthenticationEntry\(isNewSignup\)\)/);
+  assert.match(dashboard, /if \(!authenticatedUserId\) return;[\s\S]*?bindNewSignupToVerifiedUser\(authenticatedUserId, isNewSignupSession\)/);
   assert.match(dashboard, /shouldAutoStartOnboarding\(\{[\s\S]*?userId: authenticatedUserId,[\s\S]*?isNewSignupSession,[\s\S]*?state: readOnboardingState\(authenticatedUserId\)/);
   assert.match(dashboard, /activeTab !== 'dashboard' \|\| onboardingBlocked/);
-  assert.match(dashboard, /accountOfflineInspectionUserId !== authenticatedUserId/);
+  assert.match(dashboard, /isOnboardingInspectionPending\([\s\S]*?authenticatedUserId,[\s\S]*?accountOfflineInspectionUserId,[\s\S]*?accountOfflineInspectionFailedUserId/);
 });
 
 test('active work and higher-priority prompts defer the guide without changing them', () => {
@@ -45,6 +45,8 @@ test('active work and higher-priority prompts defer the guide without changing t
     'thesisIsLeaveModalOpen', 'isModuleSessionMode',
   ]) assert.ok(dashboard.includes(guard), `Missing guard: ${guard}`);
   assert.match(dashboard, /onboardingTourUserId !== null[\s\S]*?activeTab === 'dashboard'[\s\S]*?!onboardingBlocked[\s\S]*?<OnboardingGuide/);
+  assert.match(dashboard, /setAccountOfflineInspectionFailedUserId\(authenticatedUserId\)/);
+  assert.match(dashboard, /isOnboardingOfflineErrorBlocking\([\s\S]*?offlineFoundationError,[\s\S]*?authenticatedUserId,[\s\S]*?accountOfflineInspectionFailedUserId,[\s\S]*?OFFLINE_INSPECTION_ERROR_MESSAGE/);
 });
 
 test('mobile navigation target avoids opening the focus-trapped drawer', () => {
@@ -109,6 +111,7 @@ test('Skip, Finish, close and Escape share a completion path; logout and account
   assert.match(dashboard, /const dismissOnboardingGuide = \(\) => \{[\s\S]*?markOnboardingCompleted\(onboardingTourUserId\)/);
   assert.match(dashboard, /onboardingTourUserId !== authenticatedUserId \|\| activeTab !== 'dashboard' \|\| onboardingBlocked/);
   assert.match(app, /onLogout=\{\(\) => \{[\s\S]*?setCurrentView\('landing'\)/);
+  assert.match(app, /onLogout=\{\(\) => \{\s*clearNewSignupHandoff\(\)/);
 });
 
 test('Settings manual replay returns to Dashboard without resetting completed storage', () => {
@@ -120,8 +123,8 @@ test('Settings manual replay returns to Dashboard without resetting completed st
 });
 
 test('onboarding adds no backend request, activity/session creation, sync write, or IndexedDB schema', () => {
-  assert.doesNotMatch(guide + onboardingState, /\bfetch\s*\(|XMLHttpRequest|WebSocket|accountStorage|Dexie|indexedDB|createActivityCheckpoint|pending_sync|startListening|speakBrowserText/);
+  assert.doesNotMatch(guide + onboardingState, /\bfetch\s*\(|XMLHttpRequest|WebSocket|accountStorage\.put|Dexie|indexedDB|createActivityCheckpoint|pending_sync|startListening|speakBrowserText/);
   assert.match(onboardingState, /career-edge:onboarding:v1:/);
-  assert.match(onboardingState, /storage\.setItem\(key, 'pending'\)/);
-  assert.match(onboardingState, /storage\.setItem\(keyForUser\(userId\), 'completed'\)/);
+  assert.match(onboardingState, /accountStorage\.setItem\(key, 'pending'\)/);
+  assert.match(onboardingState, /\(storage \?\? localStorage\)\.setItem\(keyForUser\(userId\), 'completed'\)/);
 });

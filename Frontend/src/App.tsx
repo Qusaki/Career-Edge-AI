@@ -6,6 +6,7 @@ import { ResetPasswordPage } from './components/ResetPasswordPage';
 import { Dashboard } from './components/Dashboard';
 import { usePwaUpdate } from './hooks/usePwaUpdate';
 import { forgetVerifiedAccount } from './offline/accountBinding';
+import { clearNewSignupHandoff, recordAuthenticationEntry } from './utils/onboardingState';
 
 const MorphingGraphic = () => {
   const [isResume, setIsResume] = useState(false);
@@ -451,7 +452,7 @@ export default function App() {
             setAuthMode('signin');
           }}
           onSuccess={({ isNewSignup }) => {
-            setIsNewSignupSession(isNewSignup);
+            setIsNewSignupSession(recordAuthenticationEntry(isNewSignup));
             setCurrentView('dashboard');
           }}
           initialMode={authMode}
@@ -469,6 +470,7 @@ export default function App() {
         updateError={pwaUpdate.error}
         onRefreshUpdate={pwaUpdate.refresh}
         onLogout={() => {
+          clearNewSignupHandoff();
           localStorage.removeItem('token');
           forgetVerifiedAccount();
           setIsNewSignupSession(false);
