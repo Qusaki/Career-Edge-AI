@@ -7,7 +7,7 @@ import { PreTestPage } from './PreTestPage';
 import { DrillsPage } from './DrillsPage';
 import { PostTestPage } from './PostTestPage';
 import { AppUpdateNotice, type UpdateBlockReason } from './AppUpdateNotice';
-import { OnboardingGuide } from './OnboardingGuide';
+import { OnboardingGuide, type OnboardingTab } from './OnboardingGuide';
 import { useWebLLM } from '../hooks/useWebLLM';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { cancelBrowserSpeech, speakBrowserText } from '../utils/browserSpeech';
@@ -1108,8 +1108,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
       profile: '/profile',
     };
     const path = routes[activeTab];
-    if (path && window.location.pathname !== path) window.history.pushState({}, '', path);
-  }, [activeTab]);
+    if (path && window.location.pathname !== path) {
+      if (onboardingTourUserId !== null) window.history.replaceState({}, '', path);
+      else window.history.pushState({}, '', path);
+    }
+  }, [activeTab, onboardingTourUserId]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -4154,6 +4157,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
     'thesis-setup',
     'thesis-session',
   ].includes(activeTab);
+  const onboardingTourTab: OnboardingTab | null = activeTab === 'dashboard'
+    || activeTab === 'pre-test'
+    || activeTab === 'drills'
+    || activeTab === 'history'
+    || activeTab === 'interview-type'
+    || activeTab === 'analytics' ? activeTab : null;
+  const onboardingInterviewEligible = ['CCIT', 'CTE', 'CBAPA'].includes(profile.department?.toUpperCase() || '');
 
   const onboardingBlocked = isModuleSessionMode
     || activeActivityCheckpoint !== null
@@ -4187,10 +4197,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   useEffect(() => {
     if (onboardingTourUserId !== null && (
-      onboardingTourUserId !== authenticatedUserId || activeTab !== 'dashboard' || onboardingBlocked
+      onboardingTourUserId !== authenticatedUserId || onboardingTourTab === null || onboardingBlocked
     )) setOnboardingTourUserId(null);
     if (manualReplayUserId !== null && manualReplayUserId !== authenticatedUserId) setManualReplayUserId(null);
-  }, [authenticatedUserId, activeTab, onboardingBlocked, onboardingTourUserId, manualReplayUserId]);
+  }, [authenticatedUserId, onboardingTourTab, onboardingBlocked, onboardingTourUserId, manualReplayUserId]);
 
   useEffect(() => {
     if (!authenticatedUserId || onboardingTourUserId !== null || activeTab !== 'dashboard' || onboardingBlocked) return;
@@ -4214,7 +4224,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
       markOnboardingCompleted(onboardingTourUserId);
       dismissedOnboardingUserIdRef.current = onboardingTourUserId;
     }
+    window.history.replaceState({}, '', '/dashboard');
+    setActiveTab('dashboard');
+    setIsMobileNavOpen(false);
     setOnboardingTourUserId(null);
+  };
+
+  const navigateOnboardingGuide = (tab: OnboardingTab) => {
+    if (tab === 'interview-type' && !onboardingInterviewEligible) return;
+    setIsMobileNavOpen(false);
+    setActiveTab(tab);
   };
 
   const openAuthenticatedTab = (tab: typeof activeTab) => {
@@ -4471,6 +4490,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 Drills
               </button>
               <button
+                data-onboarding="post-test-navigation"
                 onClick={() => {
                   requestPostTestNavigation(
                     postTestAccess,
@@ -4754,6 +4774,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8 items-stretch">
                     <button
+                      data-onboarding="enrollment-interview"
                       onClick={startInterviewSession}
                       disabled={isStartingInterview}
                       className={`program-accent-focus-ring bg-slate-900 border border-slate-800 rounded-2xl p-8 flex flex-col items-center text-center transition-all duration-300 h-full ${isStartingInterview ? 'cursor-not-allowed opacity-60' : 'program-accent-hover-border group'}`}
@@ -4772,6 +4793,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     </button>
 
                     <button
+                      data-onboarding="thesis-interview"
                       onClick={() => { setThesisAbstractFile(null); setActiveTab('thesis-setup'); }}
                       className="program-accent-focus-ring bg-slate-900 border border-slate-800 hover:border-purple-500 hover:ring-1 hover:ring-purple-500 rounded-2xl p-8 flex flex-col items-center text-center transition-all duration-300 group h-full"
                     >
@@ -5771,7 +5793,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 className="w-full space-y-8"
               >
                 <div>
-                  <h1 className="text-3xl font-bold text-ink tracking-tight sm:text-4xl">Interview Practice</h1>
+                  <h1 data-onboarding="interview-history" className="text-3xl font-bold text-ink tracking-tight sm:text-4xl">Interview Practice</h1>
                   <p className="mt-2 text-base text-muted sm:text-lg">Relive your past sessions and track your progress over time.</p>
                 </div>
 
@@ -5893,7 +5915,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 className="w-full space-y-8"
               >
                 <div>
-                  <h1 className="text-3xl font-bold text-ink tracking-tight sm:text-4xl">Progress</h1>
+                  <h1 data-onboarding="progress" className="text-3xl font-bold text-ink tracking-tight sm:text-4xl">Progress</h1>
                   <p className="mt-2 text-base text-muted sm:text-lg">In-depth overview of all interviews, tests, and drills.</p>
                 </div>
 
@@ -6091,7 +6113,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         </div>
                         <div>
                           <h2 id="onboarding-settings-heading" className="text-lg font-bold text-ink">Onboarding guide</h2>
-                          <p className="mt-1 text-sm text-muted">Review the Dashboard tour whenever you need it.</p>
+                          <p className="mt-1 text-sm text-muted">Review the Career Edge guide whenever you need it.</p>
                         </div>
                       </div>
                       <button
@@ -6489,9 +6511,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
         )}
         {onboardingTourUserId !== null
           && onboardingTourUserId === authenticatedUserId
-          && activeTab === 'dashboard'
+          && onboardingTourTab !== null
           && !onboardingBlocked
-          && <OnboardingGuide onDismiss={dismissOnboardingGuide} />}
+          && <OnboardingGuide
+            onDismiss={dismissOnboardingGuide}
+            onNavigate={navigateOnboardingGuide}
+            activeTab={onboardingTourTab}
+            interviewEligible={onboardingInterviewEligible}
+          />}
       </div>
     </>
   );
