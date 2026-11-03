@@ -3,7 +3,8 @@ import type { OfflineActivityType } from '../db';
 // These copies mirror the canonical backend question/prompt constants. Any
 // backend wording or ordering change must increment the matching version here.
 export const PRETEST_WHO_AM_I_VERSION = 'pretest-who-am-i-v1';
-export const PRETEST_ACTIVE_LISTENING_VERSION = 'pretest-active-listening-v1';
+export const PRETEST_ACTIVE_LISTENING_V1_VERSION = 'pretest-active-listening-v1';
+export const PRETEST_ACTIVE_LISTENING_VERSION = 'pretest-active-listening-v2';
 export const POST_TEST_VERSION = 'posttest-v1';
 export const DRILLS_VERSION = 'drills-v1';
 export const ENROLLMENT_INTERVIEW_VERSION = 'enrollment-interview-v1';
@@ -17,10 +18,16 @@ export const PRETEST_WHO_AM_I_PROMPT =
   'Please introduce yourself. Include your name, course or department, interests, strengths, and why you are preparing for interviews.';
 
 // Canonical source: backend/routers/pre_test_active_listening.py.
-export const ACTIVE_LISTENING_PROMPTS = [
+export const ACTIVE_LISTENING_PROMPTS_V1 = [
   "Listen carefully to this workplace update. On Monday morning, the admissions team received a request to prepare orientation kits for one hundred twenty incoming students. The printed schedules were ready, but the campus maps still had the old library entrance marked, so Mara asked Luis to update the maps before lunch. At two o'clock, the team discovered that thirty scholarship forms were missing signatures from the finance office. Instead of delaying all the kits, they placed a yellow note on those thirty folders and packed the remaining ninety. By four thirty, the updated maps arrived, but only eighty reusable water bottles had been delivered. Mara decided that students from the first two orientation groups would receive bottles immediately, while the rest would pick theirs up the next day at the guidance desk. Now summarize the key details, especially the numbers, times, people, and decisions.",
   'Please listen to these event instructions. A student leadership workshop will begin at eight thirty in the multimedia hall, but participants must arrive by eight fifteen for attendance and seat assignments. Each group should bring one laptop, two printed copies of their action plan, and a backup copy saved on a flash drive. The morning session focuses on problem identification, the lunch break is from twelve to one, and the afternoon session is for presentation practice. If the projector in the multimedia hall is still unavailable, the workshop will move to Room 204, but registration will remain near the main lobby. After the final presentation, group leaders must submit the attendance sheet and revised action plan to Ms. Reyes before leaving. Summarize the schedule, materials, backup location, and final requirements.',
   'Here is a short story to summarize. During the community reading program, Jonah volunteered to manage book donations while Aira handled student registration. They expected fifty pupils, but seventy-two arrived because a nearby school joined at the last minute. The team had enough storybooks, but only forty-eight activity sheets, so Jonah photocopied twenty-five more while Aira divided the pupils into six smaller groups. The guest reader was delayed by heavy rain, so the volunteers started with a vocabulary game and moved the storytelling activity after the snack break. By the end of the program, every pupil received a book, but only the first sixty received certificates because the printer ran out of ink. Please summarize the important events, problems, numbers, and solutions.',
+] as const;
+
+export const ACTIVE_LISTENING_PROMPTS = [
+  'Mara and Luis were preparing 120 orientation kits, but the campus maps showed the wrong library entrance. At 2 p.m., they set aside 30 unsigned scholarship forms and packed the other 90 kits. By 4:30 p.m., only 80 water bottles had arrived, so the first two groups received bottles and the rest would collect theirs tomorrow. Can you summarize the main numbers, timing, and decisions?',
+  'Arrive at the multimedia hall by 8:15 a.m. for an 8:30 student leadership workshop, and bring a laptop, two action-plan copies, and a flash-drive backup. The morning covers problems and the afternoon covers presentations, after lunch from noon to 1 p.m. If the projector fails, use Room 204 but register at the lobby; leaders must give Ms. Reyes the attendance sheet and revised plan before leaving. Can you summarize the schedule, materials, backup room, and final tasks?',
+  'At the community reading event, Jonah managed books and Aira registered pupils; 72 arrived instead of the expected 50. They had enough books but only 48 activity sheets, so Jonah copied 25 more while Aira formed six groups; when rain delayed the reader, they began with a vocabulary game. Everyone got a book, but only 60 received certificates because the printer ran out of ink. Can you summarize the main events, numbers, problems, and solutions?',
 ] as const;
 
 // Canonical source: backend/routers/post_test_interview.py.
@@ -178,11 +185,24 @@ const chooseMany = <T>(items: readonly T[], count: number, seed: string): T[] =>
   return selected;
 };
 
-export const getOfflineActiveListeningPrompt = (clientSessionId: string): string =>
-  choose(ACTIVE_LISTENING_PROMPTS, clientSessionId);
+const getActiveListeningPromptsForVersion = (version: string): readonly string[] => {
+  if (version === PRETEST_ACTIVE_LISTENING_V1_VERSION) return ACTIVE_LISTENING_PROMPTS_V1;
+  if (version === PRETEST_ACTIVE_LISTENING_VERSION) return ACTIVE_LISTENING_PROMPTS;
+  throw new Error('Unsupported Active Listening question-pack version.');
+};
 
-export const getActiveListeningPromptForServerSession = (serverSessionId: number): string =>
-  ACTIVE_LISTENING_PROMPTS[serverSessionId % ACTIVE_LISTENING_PROMPTS.length];
+export const getOfflineActiveListeningPrompt = (
+  clientSessionId: string,
+  version: string = PRETEST_ACTIVE_LISTENING_VERSION,
+): string => choose(getActiveListeningPromptsForVersion(version), clientSessionId);
+
+export const getActiveListeningPromptForServerSession = (
+  serverSessionId: number,
+  version: string = PRETEST_ACTIVE_LISTENING_VERSION,
+): string => {
+  const prompts = getActiveListeningPromptsForVersion(version);
+  return prompts[serverSessionId % prompts.length];
+};
 
 export const getOfflineDrillPrompt = (drillType: string, clientSessionId: string): Record<string, unknown> => {
   const seed = `${clientSessionId}:${drillType}`;
@@ -228,4 +248,5 @@ export const getQuestionPackVersion = (type: OfflineActivityType): string | null
 };
 
 export const hasCurrentQuestionPack = (type: OfflineActivityType, version: string | null): boolean =>
-  getQuestionPackVersion(type) === version;
+  getQuestionPackVersion(type) === version
+  || (type === 'pre_test_active_listening' && version === PRETEST_ACTIVE_LISTENING_V1_VERSION);

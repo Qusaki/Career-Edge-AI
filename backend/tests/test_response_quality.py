@@ -8,7 +8,7 @@ from core.response_quality import (
     repetition_dominated,
     validate_five_point_scores,
 )
-from routers.pre_test_active_listening import ACTIVE_LISTENING_PROMPTS
+from routers.pre_test_active_listening import ACTIVE_LISTENING_PROMPTS, ACTIVE_LISTENING_PROMPTS_V1
 
 
 class ResponseQualityTests(unittest.TestCase):
@@ -33,7 +33,7 @@ class ResponseQualityTests(unittest.TestCase):
         self.assertEqual(intro_quality_cap(answer), (None, None))
 
     def test_listening_coverage_is_derived_from_the_actual_story(self):
-        story = ACTIVE_LISTENING_PROMPTS[1]
+        story = ACTIVE_LISTENING_PROMPTS_V1[1]
         incomplete = "The workshop starts at eight thirty."
         complete = (
             "The student leadership workshop begins at eight thirty in the multimedia hall, with arrival by "
@@ -46,6 +46,16 @@ class ResponseQualityTests(unittest.TestCase):
         self.assertEqual(listening_quality_cap(story, incomplete)[0], 2)
         self.assertIsNone(listening_quality_cap(story, complete)[0])
         self.assertEqual(listening_quality_cap(story, "unrelated banana clouds " * 20)[0], 2)
+
+        shorter_story = ACTIVE_LISTENING_PROMPTS[1]
+        shorter_summary = (
+            "The leadership workshop starts at eight thirty in the multimedia hall, and groups arrive by eight fifteen "
+            "with a laptop, two action-plan copies, and a flash-drive backup. Morning covers problems, afternoon "
+            "covers presentations, and lunch runs from noon to one. If the projector fails, the group moves to "
+            "Room 204 but registers at the lobby; leaders give Ms. Reyes the attendance sheet and revised plan."
+        )
+        self.assertEqual(listening_quality_cap(shorter_story, incomplete)[0], 2)
+        self.assertIsNone(listening_quality_cap(shorter_story, shorter_summary)[0])
 
     def test_post_test_repeated_or_sparse_answers_lose_top_marks(self):
         self.assertEqual(post_test_quality_cap(["I can do it."] * 5)[0], 2)

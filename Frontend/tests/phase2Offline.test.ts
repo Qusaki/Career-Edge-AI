@@ -6,6 +6,7 @@ import { appendOfflinePostTestAnswer } from '../src/offline/activityRuntime';
 import { evaluateActiveListening, evaluateDrill, evaluatePostTest, evaluateWhoAmI, getOfflineNegotiationTurn } from '../src/offline/localEvaluation';
 import {
   ACTIVE_LISTENING_PROMPTS,
+  ACTIVE_LISTENING_PROMPTS_V1,
   DRILLS_VERSION,
   getOfflineActiveListeningPrompt,
   getOfflineDrillPrompt,
@@ -13,6 +14,7 @@ import {
   hasCurrentQuestionPack,
   POST_TEST_VERSION,
   PRETEST_ACTIVE_LISTENING_VERSION,
+  PRETEST_ACTIVE_LISTENING_V1_VERSION,
   PRETEST_WHO_AM_I_VERSION,
 } from '../src/offline/questionPacks';
 import { selectOwnedResumableSessions, selectOwnedSyncQueue } from '../src/offline/selectors';
@@ -37,9 +39,17 @@ test('Pre-Test, Post-Test, and Drill sessions can start directly in offline mode
 
 test('offline packs preserve canonical question order and deterministic selection', () => {
   assert.equal(ACTIVE_LISTENING_PROMPTS.length, 3);
-  assert.match(ACTIVE_LISTENING_PROMPTS[0], /one hundred twenty incoming students/);
-  assert.match(ACTIVE_LISTENING_PROMPTS[2], /seventy-two arrived/);
+  assert.match(ACTIVE_LISTENING_PROMPTS[0], /120 orientation kits/);
+  assert.match(ACTIVE_LISTENING_PROMPTS[2], /72 arrived/);
+  assert.equal(PRETEST_ACTIVE_LISTENING_VERSION, 'pretest-active-listening-v2');
+  assert.equal(ACTIVE_LISTENING_PROMPTS_V1.length, 3);
+  assert.match(ACTIVE_LISTENING_PROMPTS_V1[0], /one hundred twenty incoming students/);
+  assert.match(ACTIVE_LISTENING_PROMPTS_V1[2], /seventy-two arrived/);
   assert.equal(getOfflineActiveListeningPrompt('stable-id'), getOfflineActiveListeningPrompt('stable-id'));
+  assert.equal(getOfflineActiveListeningPrompt('stable-id', PRETEST_ACTIVE_LISTENING_VERSION), getOfflineActiveListeningPrompt('stable-id'));
+  assert.equal(hasCurrentQuestionPack('pre_test_active_listening', PRETEST_ACTIVE_LISTENING_V1_VERSION), true);
+  assert.ok(ACTIVE_LISTENING_PROMPTS_V1.some(prompt => prompt === getOfflineActiveListeningPrompt('stable-id', PRETEST_ACTIVE_LISTENING_V1_VERSION)));
+  assert.ok(ACTIVE_LISTENING_PROMPTS.some(prompt => prompt === getOfflineActiveListeningPrompt('stable-id')));
 
   const ccit = getPostTestQuestions('CCIT');
   const cte = getPostTestQuestions('CTE');

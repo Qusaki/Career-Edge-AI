@@ -23,7 +23,7 @@ from models.pre_test_intro import PreTestIntroSession
 from models.upcoming_student_interview import UpcomingStudentInterviewSession
 from models.user import User
 from routers import offline_sync, post_test_interview
-from routers.pre_test_active_listening import ACTIVE_LISTENING_PROMPTS
+from routers.pre_test_active_listening import ACTIVE_LISTENING_PROMPTS, ACTIVE_LISTENING_PROMPTS_V1
 from routers.post_test_interview import get_post_test_questions
 from services.ai_provider import AIProviderUnavailableError
 
@@ -78,6 +78,21 @@ def who_payload(**updates):
     }
     payload.update(updates)
     return payload
+
+
+def listening_payload(version, story, client_session_id):
+    summary = "The team handled the important numbers, timing, problems, and decisions."
+    return {
+        "client_session_id": client_session_id,
+        "activity_type": "pre_test_active_listening",
+        "question_pack_version": version,
+        "answers": [{"step": 1, "text": summary}],
+        "conversation_log": [
+            {"sender": "ai", "text": story},
+            {"sender": "user", "text": summary},
+        ],
+        "activity_state": {"exerciseKind": "active-listening"},
+    }
 
 
 def post_test_payload(**updates):
@@ -169,6 +184,25 @@ class OfflineSyncEndpointTests(unittest.TestCase):
             response = client.post("/offline-sync", json=who_payload())
         self.assertEqual(response.status_code, 401)
 
+    def test_active_listening_v1_and_v2_sync_without_cross_version_prompts(self):
+        with patch("services.offline_sync.get_ai_provider", return_value=FailingProvider()):
+            for version, story, client_id in (
+                ("pretest-active-listening-v1", ACTIVE_LISTENING_PROMPTS_V1[0], "old-listening"),
+                ("pretest-active-listening-v2", ACTIVE_LISTENING_PROMPTS[0], "new-listening"),
+            ):
+                response = self.client.post("/offline-sync", json=listening_payload(version, story, client_id))
+                self.assertEqual(response.status_code, 200, response.text)
+
+            for version, story, client_id in (
+                ("pretest-active-listening-v1", ACTIVE_LISTENING_PROMPTS[0], "wrong-v1-story"),
+                ("pretest-active-listening-v2", ACTIVE_LISTENING_PROMPTS_V1[0], "wrong-v2-story"),
+            ):
+                response = self.client.post("/offline-sync", json=listening_payload(version, story, client_id))
+                self.assertEqual(response.status_code, 409, response.text)
+
+        with self.Session() as db:
+            self.assertEqual(db.query(PreTestActiveListeningSession).count(), 2)
+
     def test_pure_offline_who_am_i_creates_one_native_result_and_ignores_local_score(self):
         response = self.client.post("/offline-sync", json=who_payload())
         self.assertEqual(response.status_code, 200, response.text)
@@ -219,7 +253,7 @@ class OfflineSyncEndpointTests(unittest.TestCase):
             "question_pack_version": "pretest-active-listening-v1",
             "answers": [{"step": 1, "text": "A factual summary of the story."}],
             "conversation_log": [
-                {"sender": "ai", "text": ACTIVE_LISTENING_PROMPTS[0]},
+                {"sender": "ai", "text": ACTIVE_LISTENING_PROMPTS_V1[0]},
                 {"sender": "user", "text": "A factual summary of the story."},
             ],
             "activity_state": {"exerciseKind": "active-listening"},
@@ -596,7 +630,7 @@ class OfflineSyncEndpointTests(unittest.TestCase):
             "activity_type": "pre_test_active_listening",
             "question_pack_version": "pretest-active-listening-v1",
             "answers": [{"step": 1, "text": "A factual summary of the story."}],
-            "conversation_log": [{"sender": "ai", "text": ACTIVE_LISTENING_PROMPTS[0]}, {"sender": "user", "text": "A factual summary of the story."}],
+            "conversation_log": [{"sender": "ai", "text": ACTIVE_LISTENING_PROMPTS_V1[0]}, {"sender": "user", "text": "A factual summary of the story."}],
             "activity_state": {"exerciseKind": "active-listening"},
         }
         with patch("services.offline_sync.get_ai_provider", return_value=FailingProvider()):

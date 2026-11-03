@@ -29,7 +29,7 @@ CRITICAL INSTRUCTION: You MUST speak DIRECTLY to the student. DO NOT narrate you
 The backend sends the listening story first. After the student summarizes it, provide constructive feedback on the accuracy of their summary. Mention key details they captured, key details they missed, and whether the summary was concise. Conclude gracefully and instruct them to click 'Complete Exercise'.
 """
 
-ACTIVE_LISTENING_PROMPTS = [
+ACTIVE_LISTENING_PROMPTS_V1 = [
     """
 Listen carefully to this workplace update. On Monday morning, the admissions team received a request to prepare orientation kits for one hundred twenty incoming students. The printed schedules were ready, but the campus maps still had the old library entrance marked, so Mara asked Luis to update the maps before lunch. At two o'clock, the team discovered that thirty scholarship forms were missing signatures from the finance office. Instead of delaying all the kits, they placed a yellow note on those thirty folders and packed the remaining ninety. By four thirty, the updated maps arrived, but only eighty reusable water bottles had been delivered. Mara decided that students from the first two orientation groups would receive bottles immediately, while the rest would pick theirs up the next day at the guidance desk. Now summarize the key details, especially the numbers, times, people, and decisions.
 """.strip(),
@@ -39,6 +39,12 @@ Please listen to these event instructions. A student leadership workshop will be
     """
 Here is a short story to summarize. During the community reading program, Jonah volunteered to manage book donations while Aira handled student registration. They expected fifty pupils, but seventy-two arrived because a nearby school joined at the last minute. The team had enough storybooks, but only forty-eight activity sheets, so Jonah photocopied twenty-five more while Aira divided the pupils into six smaller groups. The guest reader was delayed by heavy rain, so the volunteers started with a vocabulary game and moved the storytelling activity after the snack break. By the end of the program, every pupil received a book, but only the first sixty received certificates because the printer ran out of ink. Please summarize the important events, problems, numbers, and solutions.
 """.strip(),
+]
+
+ACTIVE_LISTENING_PROMPTS = [
+    "Mara and Luis were preparing 120 orientation kits, but the campus maps showed the wrong library entrance. At 2 p.m., they set aside 30 unsigned scholarship forms and packed the other 90 kits. By 4:30 p.m., only 80 water bottles had arrived, so the first two groups received bottles and the rest would collect theirs tomorrow. Can you summarize the main numbers, timing, and decisions?",
+    "Arrive at the multimedia hall by 8:15 a.m. for an 8:30 student leadership workshop, and bring a laptop, two action-plan copies, and a flash-drive backup. The morning covers problems and the afternoon covers presentations, after lunch from noon to 1 p.m. If the projector fails, use Room 204 but register at the lobby; leaders must give Ms. Reyes the attendance sheet and revised plan before leaving. Can you summarize the schedule, materials, backup room, and final tasks?",
+    "At the community reading event, Jonah managed books and Aira registered pupils; 72 arrived instead of the expected 50. They had enough books but only 48 activity sheets, so Jonah copied 25 more while Aira formed six groups; when rain delayed the reader, they began with a vocabulary game. Everyone got a book, but only 60 received certificates because the printer ran out of ink. Can you summarize the main events, numbers, problems, and solutions?",
 ]
 
 

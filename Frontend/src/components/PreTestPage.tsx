@@ -11,10 +11,12 @@ import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
 import { createClientSessionId } from '../offline/sessionFoundation';
 import { combineEyeContactSummaries, shouldCheckpointEyeContact, type EyeContactSummary } from '../offline/eyeContact';
 import {
+  ACTIVE_LISTENING_PROMPTS_V1,
   getOfflineActiveListeningPrompt,
   getActiveListeningPromptForServerSession,
   hasCurrentQuestionPack,
   PRETEST_ACTIVE_LISTENING_VERSION,
+  PRETEST_ACTIVE_LISTENING_V1_VERSION,
   PRETEST_WHO_AM_I_PROMPT,
   PRETEST_WHO_AM_I_VERSION,
 } from '../offline/questionPacks';
@@ -368,8 +370,8 @@ export function PreTestPage({
       const answerCount = messagesRef.current.filter(message => message.sender === 'user').length;
       if (answerCount === 0 && resumeSession) {
         const canonicalPrompt = isPositiveServerSessionId(resumeSession.serverSessionId)
-          ? getActiveListeningPromptForServerSession(resumeSession.serverSessionId)
-          : getOfflineActiveListeningPrompt(resumeSession.clientSessionId);
+          ? getActiveListeningPromptForServerSession(resumeSession.serverSessionId, resumeSession.questionPackVersion)
+          : getOfflineActiveListeningPrompt(resumeSession.clientSessionId, resumeSession.questionPackVersion);
         const alignedMessages: ChatMessage[] = [{ sender: 'ai', text: canonicalPrompt }];
         void onActivityCheckpoint({
           currentQuestion: canonicalPrompt,
@@ -789,6 +791,7 @@ export function PreTestPage({
       const restoredIntroTranscript = exercise.kind === 'intro'
         ? (session.transcript?.trim() || '')
         : '';
+      let restoredActiveListeningStory: string | null = null;
       if (exercise.kind === 'active-listening') {
         if (activeListeningServerSessionId === null) throw new Error(PRE_TEST_SESSION_RECOVERY_ERROR);
         messagesRef.current = [];
@@ -808,6 +811,7 @@ export function PreTestPage({
           const sender: ChatMessage['sender'] = message.role === 'ai' ? 'ai' : 'user';
           return { id: message.id, sender, text: message.content };
         });
+        restoredActiveListeningStory = restoredMessages.find(message => message.sender === 'ai')?.text ?? null;
         messagesRef.current = restoredMessages;
         setMessages(restoredMessages);
         setInitialStoryAudioDelivered(restoredMessages.some(message => message.sender === 'user'));
@@ -825,14 +829,18 @@ export function PreTestPage({
       let canonicalPrompt = PRETEST_WHO_AM_I_PROMPT;
       if (exercise.kind === 'active-listening') {
         if (activeListeningServerSessionId === null) throw new Error(PRE_TEST_SESSION_RECOVERY_ERROR);
-        canonicalPrompt = getActiveListeningPromptForServerSession(activeListeningServerSessionId);
+        canonicalPrompt = restoredActiveListeningStory ?? getActiveListeningPromptForServerSession(activeListeningServerSessionId);
       }
+      const activeListeningPackVersion = restoredActiveListeningStory
+        && ACTIVE_LISTENING_PROMPTS_V1.some(prompt => prompt === restoredActiveListeningStory)
+        ? PRETEST_ACTIVE_LISTENING_V1_VERSION
+        : PRETEST_ACTIVE_LISTENING_VERSION;
       void onActivityStart({
         type,
         serverSessionId: exercise.kind === 'intro'
           ? (typeof session.id === 'number' ? session.id : null)
           : activeListeningServerSessionId,
-        questionPackVersion: exercise.kind === 'intro' ? PRETEST_WHO_AM_I_VERSION : PRETEST_ACTIVE_LISTENING_VERSION,
+        questionPackVersion: exercise.kind === 'intro' ? PRETEST_WHO_AM_I_VERSION : activeListeningPackVersion,
         currentQuestion: canonicalPrompt,
         ...(exercise.kind === 'intro' ? {
           currentStep: restoredIntroTranscript ? 1 : 0,
