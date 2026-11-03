@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { evaluateActiveListening, evaluateDrill, evaluatePostTest, evaluateWhoAmI } from '../src/offline/localEvaluation';
-import { ACTIVE_LISTENING_PROMPTS } from '../src/offline/questionPacks';
+import { ACTIVE_LISTENING_PROMPTS, ACTIVE_LISTENING_PROMPTS_V1 } from '../src/offline/questionPacks';
 
 test('a meaningful introduction scores above repeated speech', () => {
   const good = evaluateWhoAmI(
@@ -15,12 +15,18 @@ test('a meaningful introduction scores above repeated speech', () => {
 
 test('Active Listening uses concrete details from the actual story', () => {
   const story = ACTIVE_LISTENING_PROMPTS[1];
-  const complete = 'The student leadership workshop begins at eight thirty in the multimedia hall, with arrival by eight fifteen. Each group brings a laptop, two printed action plans and a flash drive backup. Morning is for problem identification, lunch is from twelve to one, and afternoon is presentation practice. If the projector fails, they move to Room 204 while registration stays by the lobby. Leaders submit the attendance sheet and revised plan to Ms. Reyes.';
+  const complete = 'The student leadership workshop starts at eight thirty in the multimedia hall. Groups arrive by eight fifteen with a laptop, two action-plan copies, and a flash-drive backup. Morning covers problems, afternoon covers presentations, and lunch runs from noon to one. If the projector fails, they move to Room 204 but register at the lobby. Leaders give Ms. Reyes the attendance sheet and revised plan.';
   const incomplete = 'The workshop starts at eight thirty.';
   const goodScore = evaluateActiveListening([{ sender: 'ai', text: story }, { sender: 'user', text: complete }]).localScore;
   const poorScore = evaluateActiveListening([{ sender: 'ai', text: story }, { sender: 'user', text: incomplete }]).localScore;
   assert.ok(goodScore > poorScore);
   assert.ok(poorScore <= 10);
+
+  const oldStory = ACTIVE_LISTENING_PROMPTS_V1[1];
+  const oldComplete = 'The workshop begins at eight thirty in the multimedia hall, with arrival by eight fifteen. Each group brings a laptop, two printed action plans and a flash drive backup. Morning is for problem identification, lunch is from twelve to one, and afternoon is presentation practice. If the projector fails, they move to Room 204 while registration stays by the lobby. Leaders submit the attendance sheet and revised plan to Ms. Reyes.';
+  const oldGoodScore = evaluateActiveListening([{ sender: 'ai', text: oldStory }, { sender: 'user', text: oldComplete }]).localScore;
+  const oldPoorScore = evaluateActiveListening([{ sender: 'ai', text: oldStory }, { sender: 'user', text: incomplete }]).localScore;
+  assert.ok(oldGoodScore > oldPoorScore);
 });
 
 test('Post-Test requires five distinct substantive answers for top provisional marks', () => {
