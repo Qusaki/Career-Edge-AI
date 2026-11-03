@@ -1,6 +1,6 @@
 export const DRILL_TIMER_CONFIG = {
   jam: {
-    durationSeconds: 60,
+    durationSeconds: 30,
   },
 } as const;
 
@@ -97,15 +97,18 @@ export const restoreDrillTimer = (
   }
 
   const candidate = stored as Partial<SerializedDrillTimer>;
+  // Keep existing JAM checkpoints resumable after reducing its limit from 60 seconds.
   const validPhase = candidate.phase === 'ready'
     || candidate.phase === 'running'
     || candidate.phase === 'paused'
     || candidate.phase === 'expired';
-  const validDuration = candidate.durationSeconds === initial.durationSeconds;
+  const legacyJamTimer = drillType === 'jam' && candidate.durationSeconds === 60;
+  const durationReductionSeconds = legacyJamTimer ? 60 - initial.durationSeconds : 0;
+  const validDuration = candidate.durationSeconds === initial.durationSeconds || legacyJamTimer;
   const validRemaining = typeof candidate.remainingSeconds === 'number'
     && Number.isSafeInteger(candidate.remainingSeconds)
     && candidate.remainingSeconds >= 0
-    && candidate.remainingSeconds <= initial.durationSeconds;
+    && candidate.remainingSeconds <= (legacyJamTimer ? 60 : initial.durationSeconds);
   const validStartedAt = candidate.startedAt === null
     || (typeof candidate.startedAt === 'number' && Number.isFinite(candidate.startedAt) && candidate.startedAt >= 0);
   const validEndsAt = candidate.endsAt === null
@@ -117,13 +120,17 @@ export const restoreDrillTimer = (
     return { ...initial, remainingSeconds: 0, hasStarted: true, phase: 'expired' };
   }
 
+  const remainingSeconds = legacyJamTimer
+    ? Math.max(0, candidate.remainingSeconds - durationReductionSeconds)
+    : candidate.remainingSeconds;
+  const expired = remainingSeconds === 0;
   const restored: DrillTimerState = {
-    durationSeconds: candidate.durationSeconds,
-    remainingSeconds: candidate.remainingSeconds,
-    startedAt: candidate.startedAt,
-    endsAt: candidate.endsAt,
-    hasStarted: candidate.hasStarted,
-    phase: candidate.phase,
+    durationSeconds: initial.durationSeconds,
+    remainingSeconds,
+    startedAt: expired ? null : candidate.startedAt,
+    endsAt: expired || candidate.endsAt === null ? null : candidate.endsAt - durationReductionSeconds * 1000,
+    hasStarted: candidate.hasStarted || expired,
+    phase: expired ? 'expired' : candidate.phase,
   };
   return getCurrentDrillTimerState(restored, now);
 };

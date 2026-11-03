@@ -27,7 +27,7 @@ test('recent Pre-Tests keep activity, date, and status without displaying a scor
 
 test('recent Drills keep activity, date, and status without displaying a score', () => {
   const section = recentSection(drills, 'Recent Drills');
-  assert.match(section, /session\.drill_type\.replace\(/);
+  assert.match(section, /getDrillDisplayName\(session\.drill_type\)/);
   assert.match(section, /new Date\(session\.start_time\)\.toLocaleString\(\)/);
   assert.match(section, /\{session\.status\}/);
   assert.doesNotMatch(section, /session\.score\b|Math\.round\(session\.score\)/);

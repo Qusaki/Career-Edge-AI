@@ -138,7 +138,7 @@ const DRILL_RECOGNITION_START_OPTIONS = { resetRestartStreakOnSpeechProgress: tr
 
 const drills: Drill[] = [
   {
-    title: 'Just-a-Minute Speaking',
+    title: '30 Seconds Speaking',
     description: 'Build fluency by speaking clearly about a surprise topic.',
     drillLevel: 'easy',
     drillType: 'jam',
@@ -239,9 +239,13 @@ const getDrillDefinition = (drillType: DrillType): Drill => {
   return drill;
 };
 
+const getDrillDisplayName = (drillType: string): string => (
+  drillType === 'jam' ? getDrillDefinition('jam').title : drillType.replace(/_/g, ' ')
+);
+
 const drillTaskInstructions: Record<DrillType, DrillInstruction> = {
   jam: {
-    task: 'Practice speaking continuously about the topic shown.',
+    task: 'Practice speaking continuously about the topic shown for 30 seconds.',
     howToAnswer: 'Try to give a natural spoken response, develop your ideas, and stay focused on the topic.',
     example: 'Use a simple opening, add supporting details, and finish with a brief closing thought.',
   },
@@ -1339,7 +1343,7 @@ export function DrillsPage({
                 <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Drill Session</p>
                 <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">Current Drill</h1>
                 <p className="text-program-accent mt-1 text-sm font-bold uppercase tracking-wider">
-                  {activeSession.drill_level} · {activeSession.drill_type.replace(/_/g, ' ')}
+                  {activeSession.drill_level} · {getDrillDisplayName(activeSession.drill_type)}
                 </p>
               </div>
               <CameraTrackingNotice {...eyeTracker} />
@@ -1630,7 +1634,7 @@ export function DrillsPage({
           ) : sessions.slice(0, 8).map(session => (
             <div key={session.id} className="flex items-center justify-between border-b border-line px-4 py-3 last:border-b-0">
               <div>
-                <p className="font-semibold text-ink capitalize">{session.drill_type.replace(/_/g, ' ')}</p>
+                <p className="font-semibold text-ink capitalize">{getDrillDisplayName(session.drill_type)}</p>
                 <p className="mt-0.5 text-xs text-muted">{new Date(session.start_time).toLocaleString()}</p>
               </div>
               <div className="text-right">

@@ -51,7 +51,7 @@ test('structured 422 bodies normalize consistently for Pre-Test, Post-Test, and 
   const pageFallbacks = [
     'Unable to start Who Am I?.',
     'Unable to start the post-test interview.',
-    'Unable to start Just-a-Minute Speaking.',
+    'Unable to start 30 Seconds Speaking.',
   ];
   for (const pageFallback of pageFallbacks) {
     assert.equal(normalizeApiError(validationBody, pageFallback), 'Input should be a valid integer');
