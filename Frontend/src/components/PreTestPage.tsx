@@ -5,12 +5,12 @@ import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
 import {
-  ACTIVE_LISTENING_SPEECH_LANGUAGE,
-  ACTIVE_LISTENING_SPEECH_PITCH,
-  ACTIVE_LISTENING_SPEECH_RATE,
-  ACTIVE_LISTENING_SPEECH_VOLUME,
-  selectActiveListeningVoice,
-} from '../utils/activeListeningVoice';
+  CAREER_EDGE_SPEECH_LANGUAGE,
+  CAREER_EDGE_SPEECH_PITCH,
+  CAREER_EDGE_SPEECH_RATE,
+  CAREER_EDGE_SPEECH_VOLUME,
+  selectCareerEdgeVoice,
+} from '../utils/careerEdgeVoice';
 import { cancelBrowserSpeech, speakBrowserText } from '../utils/browserSpeech';
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
@@ -501,11 +501,11 @@ export function PreTestPage({
 
   const speakText = useCallback((text: string, isInitialStory = false) => {
     void speakBrowserText(text, {
-      rate: ACTIVE_LISTENING_SPEECH_RATE,
-      pitch: ACTIVE_LISTENING_SPEECH_PITCH,
-      volume: ACTIVE_LISTENING_SPEECH_VOLUME,
-      language: ACTIVE_LISTENING_SPEECH_LANGUAGE,
-      selectVoice: selectActiveListeningVoice,
+      rate: CAREER_EDGE_SPEECH_RATE,
+      pitch: CAREER_EDGE_SPEECH_PITCH,
+      volume: CAREER_EDGE_SPEECH_VOLUME,
+      language: CAREER_EDGE_SPEECH_LANGUAGE,
+      selectVoice: selectCareerEdgeVoice,
       onPending: () => {
         setSpeechFallbackPrompt('');
         setSpeechPlaybackFailed(false);

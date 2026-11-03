@@ -4,12 +4,12 @@ import test from 'node:test';
 
 import { cancelBrowserSpeech, speakBrowserText } from '../src/utils/browserSpeech';
 import {
-  ACTIVE_LISTENING_SPEECH_LANGUAGE,
-  ACTIVE_LISTENING_SPEECH_PITCH,
-  ACTIVE_LISTENING_SPEECH_RATE,
-  ACTIVE_LISTENING_SPEECH_VOLUME,
-  selectActiveListeningVoice,
-} from '../src/utils/activeListeningVoice';
+  CAREER_EDGE_SPEECH_LANGUAGE,
+  CAREER_EDGE_SPEECH_PITCH,
+  CAREER_EDGE_SPEECH_RATE,
+  CAREER_EDGE_SPEECH_VOLUME,
+  selectCareerEdgeVoice,
+} from '../src/utils/careerEdgeVoice';
 
 type FakeUtterance = SpeechSynthesisUtterance;
 
@@ -82,11 +82,11 @@ test('Active Listening selects a late local natural voice without changing the s
     synthesis: harness.synthesis,
     createUtterance: harness.createUtterance,
     voiceWaitMs: 50,
-    rate: ACTIVE_LISTENING_SPEECH_RATE,
-    pitch: ACTIVE_LISTENING_SPEECH_PITCH,
-    volume: ACTIVE_LISTENING_SPEECH_VOLUME,
-    language: ACTIVE_LISTENING_SPEECH_LANGUAGE,
-    selectVoice: selectActiveListeningVoice,
+    rate: CAREER_EDGE_SPEECH_RATE,
+    pitch: CAREER_EDGE_SPEECH_PITCH,
+    volume: CAREER_EDGE_SPEECH_VOLUME,
+    language: CAREER_EDGE_SPEECH_LANGUAGE,
+    selectVoice: selectCareerEdgeVoice,
   });
   const preferred = {
     name: 'Enhanced Local English', lang: 'en-US', localService: true,
@@ -113,7 +113,7 @@ test('Active Listening plays with the browser default when no local English voic
   assert.equal(await speakBrowserText('Story and question together.', {
     synthesis: harness.synthesis,
     createUtterance: harness.createUtterance,
-    selectVoice: selectActiveListeningVoice,
+    selectVoice: selectCareerEdgeVoice,
   }), 'ended');
   assert.equal(harness.utterances[0].voice, undefined);
 });
