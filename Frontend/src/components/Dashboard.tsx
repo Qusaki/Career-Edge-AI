@@ -7,6 +7,7 @@ import { PreTestPage } from './PreTestPage';
 import { DrillsPage } from './DrillsPage';
 import { PostTestPage } from './PostTestPage';
 import { AppUpdateNotice, type UpdateBlockReason } from './AppUpdateNotice';
+import { OnboardingGuide } from './OnboardingGuide';
 import { useWebLLM } from '../hooks/useWebLLM';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { cancelBrowserSpeech, speakBrowserText } from '../utils/browserSpeech';
@@ -23,6 +24,7 @@ import { isUpdateSessionActive } from '../offline/updateRefreshSafety';
 import { isPositiveServerSessionId } from '../utils/sessionIdentity';
 import { getNewPasswordError, NEW_PASSWORD_GUIDANCE } from '../utils/passwordPolicy';
 import { normalizeApiError } from '../utils/httpError';
+import { markOnboardingCompleted, markOnboardingPending, readOnboardingState, shouldAutoStartOnboarding } from '../utils/onboardingState';
 import { ThesisAbstractFileError, thesisAbstractUploadError, validateThesisAbstractFile } from '../utils/thesisAbstractUpload';
 import { getVerifiedAccountForToken, rememberVerifiedAccount } from '../offline/accountBinding';
 import { getQuestionPackVersion, hasCurrentQuestionPack } from '../offline/questionPacks';
@@ -401,6 +403,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isSignOutDialogOpen, setIsSignOutDialogOpen] = useState(false);
+  const [onboardingTourUserId, setOnboardingTourUserId] = useState<number | null>(null);
+  const [manualReplayUserId, setManualReplayUserId] = useState<number | null>(null);
+  const [accountOfflineInspectionUserId, setAccountOfflineInspectionUserId] = useState<number | null>(null);
+  const dismissedOnboardingUserIdRef = React.useRef<number | null>(null);
   const signOutConfirmedRef = React.useRef(false);
   const signOutReturnFocusRef = React.useRef<HTMLButtonElement | null>(null);
   const [appTheme, setAppTheme] = useState<AppTheme>(() => {
@@ -1061,7 +1067,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   })();
 
   const renderStatCards = (delay = 0) => (
-    <div className="grid w-full grid-cols-1 md:grid-cols-3 gap-2.5">
+    <div data-onboarding="summary" className="grid w-full grid-cols-1 md:grid-cols-3 gap-2.5">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: delay + 0.1 }} className="bg-card border border-line rounded-lg p-5 flex flex-col justify-between">
         <h3 className="text-muted font-medium">Total Activities</h3>
         <div className="mt-2">
@@ -1491,10 +1497,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
       setResumableOfflineSession(null);
       setPendingSyncCount(0);
       setSyncQueueSessions([]);
+      setAccountOfflineInspectionUserId(null);
       return;
     }
 
     let cancelled = false;
+    setAccountOfflineInspectionUserId(current => current === authenticatedUserId ? current : null);
     const inspectOwnedOfflineState = async () => {
       try {
         const [resumable, queue] = await Promise.all([
@@ -1505,6 +1513,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         setResumableOfflineSession(resumable[0] || null);
         setPendingSyncCount(queue.length);
         setSyncQueueSessions(queue);
+        setAccountOfflineInspectionUserId(authenticatedUserId);
       } catch (error) {
         if (!cancelled) {
           console.error('Unable to inspect the account-scoped offline queue.', error);
@@ -4140,6 +4149,59 @@ export const Dashboard: React.FC<DashboardProps> = ({
     'thesis-session',
   ].includes(activeTab);
 
+  const onboardingBlocked = isModuleSessionMode
+    || activeActivityCheckpoint !== null
+    || resumableOfflineSession !== null
+    || pendingSyncCount > 0
+    || accountOfflineInspectionUserId !== authenticatedUserId
+    || showConnectionLossPrompt
+    || showUpdateNotice
+    || Boolean(offlineFoundationError)
+    || isSignOutDialogOpen
+    || isLeaveModalOpen
+    || thesisIsLeaveModalOpen
+    || isStartingInterview
+    || thesisIsStarting
+    || isMobileNavOpen
+    || isAccountMenuOpen;
+
+  useEffect(() => {
+    if (!authenticatedUserId || !isNewSignupSession) return;
+    if (readOnboardingState(authenticatedUserId) === null) markOnboardingPending(authenticatedUserId);
+  }, [authenticatedUserId, isNewSignupSession]);
+
+  useEffect(() => {
+    if (onboardingTourUserId !== null && (
+      onboardingTourUserId !== authenticatedUserId || activeTab !== 'dashboard' || onboardingBlocked
+    )) setOnboardingTourUserId(null);
+    if (manualReplayUserId !== null && manualReplayUserId !== authenticatedUserId) setManualReplayUserId(null);
+  }, [authenticatedUserId, activeTab, onboardingBlocked, onboardingTourUserId, manualReplayUserId]);
+
+  useEffect(() => {
+    if (!authenticatedUserId || onboardingTourUserId !== null || activeTab !== 'dashboard' || onboardingBlocked) return;
+    if (manualReplayUserId === authenticatedUserId) {
+      setManualReplayUserId(null);
+      setOnboardingTourUserId(authenticatedUserId);
+      return;
+    }
+    if (dismissedOnboardingUserIdRef.current === authenticatedUserId) return;
+    if (shouldAutoStartOnboarding({
+      userId: authenticatedUserId,
+      isNewSignupSession,
+      state: readOnboardingState(authenticatedUserId),
+      dashboardVisible: activeTab === 'dashboard',
+      blocked: onboardingBlocked,
+    })) setOnboardingTourUserId(authenticatedUserId);
+  }, [authenticatedUserId, isNewSignupSession, activeTab, onboardingBlocked, onboardingTourUserId, manualReplayUserId]);
+
+  const dismissOnboardingGuide = () => {
+    if (onboardingTourUserId !== null && onboardingTourUserId === authenticatedUserId) {
+      markOnboardingCompleted(onboardingTourUserId);
+      dismissedOnboardingUserIdRef.current = onboardingTourUserId;
+    }
+    setOnboardingTourUserId(null);
+  };
+
   const openAuthenticatedTab = (tab: typeof activeTab) => {
     setActiveTab(tab);
     setIsMobileNavOpen(false);
@@ -4294,6 +4356,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <span className="font-bold text-lg tracking-tight text-gold-text">Career Edge</span>
             <button
               ref={mobileNavTriggerRef}
+              data-onboarding="navigation-mobile"
               type="button"
               onClick={() => setIsMobileNavOpen(true)}
               aria-label="Open navigation menu"
@@ -4368,6 +4431,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             {/* Navigation */}
             <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
               <button
+                data-onboarding="navigation-desktop"
                 onClick={() => openAuthenticatedTab('dashboard')}
                 aria-current={activeTab === 'dashboard' ? 'page' : undefined}
                 className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg font-medium transition-colors ${activeTab === 'dashboard' ? 'bg-active text-ink' : 'text-muted hover:bg-active hover:text-ink'}`}
@@ -4525,7 +4589,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <div className="w-full">
                 {/* Page Title */}
                 <div className="mb-6">
-                  <h1 className="text-3xl font-bold text-ink tracking-tight sm:text-4xl">
+                  <h1 data-onboarding="welcome" className="text-3xl font-bold text-ink tracking-tight sm:text-4xl">
                     {isNewSignupSession ? 'Welcome to Career Edge, ' : 'Welcome back, '}
                     <span className="text-program-accent">{profile.name.split(' ')[0]}</span>
                   </h1>
@@ -4536,7 +4600,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                 {/* History List */}
                 <div className="mt-5 w-full space-y-2.5">
-                  <div className="flex items-center justify-between mb-1">
+                  <div data-onboarding="recent-sessions" className="flex items-center justify-between mb-1">
                     <h2 className="text-lg font-bold text-ink italic tracking-tight">Recent Sessions</h2>
                     {interviewHistory.length > 5 && (
                       <button
@@ -6005,6 +6069,30 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       </button>
                     </section>
 
+                    <section className="flex flex-col gap-3 rounded-xl border border-line bg-card p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5" aria-labelledby="onboarding-settings-heading">
+                      <div className="flex items-start gap-3">
+                        <div className="program-accent-surface flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
+                          <BookOpen className="h-5 w-5" aria-hidden="true" />
+                        </div>
+                        <div>
+                          <h2 id="onboarding-settings-heading" className="text-lg font-bold text-ink">Onboarding guide</h2>
+                          <p className="mt-1 text-sm text-muted">Review the Dashboard tour whenever you need it.</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={!authenticatedUserId}
+                        onClick={() => {
+                          if (!authenticatedUserId) return;
+                          setManualReplayUserId(authenticatedUserId);
+                          openAuthenticatedTab('dashboard');
+                        }}
+                        className="program-accent-focus-ring inline-flex min-h-11 items-center justify-center rounded-lg border border-line bg-card px-4 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-active disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Replay guide
+                      </button>
+                    </section>
+
                     <section className="flex flex-col gap-3 rounded-xl border border-line bg-card p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5" aria-labelledby="privacy-settings-heading">
                       <div className="flex items-start gap-3">
                         <div className="program-accent-surface flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
@@ -6384,6 +6472,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
           </div>
         )}
+        {onboardingTourUserId !== null
+          && onboardingTourUserId === authenticatedUserId
+          && activeTab === 'dashboard'
+          && !onboardingBlocked
+          && <OnboardingGuide onDismiss={dismissOnboardingGuide} />}
       </div>
     </>
   );
