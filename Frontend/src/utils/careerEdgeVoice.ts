@@ -1,7 +1,7 @@
-export const ACTIVE_LISTENING_SPEECH_RATE = 0.95;
-export const ACTIVE_LISTENING_SPEECH_PITCH = 1.02;
-export const ACTIVE_LISTENING_SPEECH_VOLUME = 1;
-export const ACTIVE_LISTENING_SPEECH_LANGUAGE = 'en-US';
+export const CAREER_EDGE_SPEECH_RATE = 0.95;
+export const CAREER_EDGE_SPEECH_PITCH = 1.02;
+export const CAREER_EDGE_SPEECH_VOLUME = 1;
+export const CAREER_EDGE_SPEECH_LANGUAGE = 'en-US';
 
 const isLocalEnglishVoice = (voice: SpeechSynthesisVoice): boolean =>
   voice.localService === true && /^en(?:-|$)/i.test(voice.lang);
@@ -12,7 +12,7 @@ const voiceRank = (voice: SpeechSynthesisVoice): number => {
   return /^en-US$/i.test(voice.lang) ? 2 : 3;
 };
 
-export const selectActiveListeningVoice = (voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | undefined =>
+export const selectCareerEdgeVoice = (voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | undefined =>
   voices.filter(isLocalEnglishVoice).sort((left, right) =>
     voiceRank(left) - voiceRank(right)
     || Number(!/^en-US$/i.test(left.lang)) - Number(!/^en-US$/i.test(right.lang))

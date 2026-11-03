@@ -4,7 +4,13 @@ import type { ConnectionState } from '../hooks/useConnectivity';
 import { mergeSpeechFragments, useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
-import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
+import {
+  CAREER_EDGE_SPEECH_LANGUAGE,
+  CAREER_EDGE_SPEECH_PITCH,
+  CAREER_EDGE_SPEECH_RATE,
+  CAREER_EDGE_SPEECH_VOLUME,
+  selectCareerEdgeVoice,
+} from '../utils/careerEdgeVoice';
 import { cancelBrowserSpeech, speakBrowserText } from '../utils/browserSpeech';
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
@@ -647,9 +653,11 @@ export function DrillsPage({
 
   const speakText = useCallback((text: string) => {
     void speakBrowserText(text, {
-      rate: CLEAR_AI_SPEECH_RATE,
-      pitch: CLEAR_AI_SPEECH_PITCH,
-      volume: CLEAR_AI_SPEECH_VOLUME,
+      rate: CAREER_EDGE_SPEECH_RATE,
+      pitch: CAREER_EDGE_SPEECH_PITCH,
+      volume: CAREER_EDGE_SPEECH_VOLUME,
+      language: CAREER_EDGE_SPEECH_LANGUAGE,
+      selectVoice: selectCareerEdgeVoice,
       onPending: () => setIsVoiceSpeaking(true),
       onFinish: () => setIsVoiceSpeaking(false),
     });
