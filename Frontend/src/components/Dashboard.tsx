@@ -24,7 +24,7 @@ import { isUpdateSessionActive } from '../offline/updateRefreshSafety';
 import { isPositiveServerSessionId } from '../utils/sessionIdentity';
 import { getNewPasswordError, NEW_PASSWORD_GUIDANCE } from '../utils/passwordPolicy';
 import { normalizeApiError } from '../utils/httpError';
-import { markOnboardingCompleted, markOnboardingPending, readOnboardingState, shouldAutoStartOnboarding } from '../utils/onboardingState';
+import { bindNewSignupToVerifiedUser, isOnboardingInspectionPending, isOnboardingOfflineErrorBlocking, markOnboardingCompleted, readOnboardingState, shouldAutoStartOnboarding } from '../utils/onboardingState';
 import { ThesisAbstractFileError, thesisAbstractUploadError, validateThesisAbstractFile } from '../utils/thesisAbstractUpload';
 import { getVerifiedAccountForToken, rememberVerifiedAccount } from '../offline/accountBinding';
 import { getQuestionPackVersion, hasCurrentQuestionPack } from '../offline/questionPacks';
@@ -168,6 +168,7 @@ const DEFAULT_AVATAR_HOST = 'api.dicebear.com';
 const ENROLLMENT_FINAL_RESPONSE_TIMEOUT_MS = 60_000;
 const ENROLLMENT_FINAL_RESPONSE_FALLBACK = 'Thank you for completing your Career Edge interview. Your five responses have been recorded, and you can now continue to validation.';
 const CLOUD_CHECKING_START_MESSAGE = 'Checking Career Edge cloud connection. Please try again in a moment.';
+const OFFLINE_INSPECTION_ERROR_MESSAGE = 'Saved offline activities could not be inspected safely.';
 const ENROLLMENT_FINAL_TURN_INSTRUCTION = 'The student has just submitted their fifth and final answer. Do not ask another question or request another response. Give one brief, supportive, non-empty closing statement that acknowledges the interview is complete and tells the student they can continue to validation. Keep it concise for speech.';
 
 const getWebSocketUrl = (apiUrl: string, path: string, token: string) => {
@@ -406,6 +407,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [onboardingTourUserId, setOnboardingTourUserId] = useState<number | null>(null);
   const [manualReplayUserId, setManualReplayUserId] = useState<number | null>(null);
   const [accountOfflineInspectionUserId, setAccountOfflineInspectionUserId] = useState<number | null>(null);
+  const [accountOfflineInspectionFailedUserId, setAccountOfflineInspectionFailedUserId] = useState<number | null>(null);
   const dismissedOnboardingUserIdRef = React.useRef<number | null>(null);
   const signOutConfirmedRef = React.useRef(false);
   const signOutReturnFocusRef = React.useRef<HTMLButtonElement | null>(null);
@@ -1498,11 +1500,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
       setPendingSyncCount(0);
       setSyncQueueSessions([]);
       setAccountOfflineInspectionUserId(null);
+      setAccountOfflineInspectionFailedUserId(null);
       return;
     }
 
     let cancelled = false;
-    setAccountOfflineInspectionUserId(current => current === authenticatedUserId ? current : null);
+    setAccountOfflineInspectionUserId(null);
+    setAccountOfflineInspectionFailedUserId(null);
     const inspectOwnedOfflineState = async () => {
       try {
         const [resumable, queue] = await Promise.all([
@@ -1514,10 +1518,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
         setPendingSyncCount(queue.length);
         setSyncQueueSessions(queue);
         setAccountOfflineInspectionUserId(authenticatedUserId);
+        setAccountOfflineInspectionFailedUserId(null);
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && authenticatedUserIdRef.current === authenticatedUserId) {
           console.error('Unable to inspect the account-scoped offline queue.', error);
-          setOfflineFoundationError('Saved offline activities could not be inspected safely.');
+          setAccountOfflineInspectionFailedUserId(authenticatedUserId);
+          setOfflineFoundationError(OFFLINE_INSPECTION_ERROR_MESSAGE);
         }
       }
     };
@@ -4153,10 +4159,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
     || activeActivityCheckpoint !== null
     || resumableOfflineSession !== null
     || pendingSyncCount > 0
-    || accountOfflineInspectionUserId !== authenticatedUserId
+    || isOnboardingInspectionPending(
+      authenticatedUserId,
+      accountOfflineInspectionUserId,
+      accountOfflineInspectionFailedUserId,
+    )
     || showConnectionLossPrompt
     || showUpdateNotice
-    || Boolean(offlineFoundationError)
+    || isOnboardingOfflineErrorBlocking(
+      offlineFoundationError,
+      authenticatedUserId,
+      accountOfflineInspectionFailedUserId,
+      OFFLINE_INSPECTION_ERROR_MESSAGE,
+    )
     || isSignOutDialogOpen
     || isLeaveModalOpen
     || thesisIsLeaveModalOpen
@@ -4166,8 +4181,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
     || isAccountMenuOpen;
 
   useEffect(() => {
-    if (!authenticatedUserId || !isNewSignupSession) return;
-    if (readOnboardingState(authenticatedUserId) === null) markOnboardingPending(authenticatedUserId);
+    if (!authenticatedUserId) return;
+    bindNewSignupToVerifiedUser(authenticatedUserId, isNewSignupSession);
   }, [authenticatedUserId, isNewSignupSession]);
 
   useEffect(() => {
