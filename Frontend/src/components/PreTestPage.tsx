@@ -4,7 +4,13 @@ import type { ConnectionState } from '../hooks/useConnectivity';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
-import { CLEAR_AI_SPEECH_PITCH, CLEAR_AI_SPEECH_RATE, CLEAR_AI_SPEECH_VOLUME } from '../utils/speech';
+import {
+  ACTIVE_LISTENING_SPEECH_LANGUAGE,
+  ACTIVE_LISTENING_SPEECH_PITCH,
+  ACTIVE_LISTENING_SPEECH_RATE,
+  ACTIVE_LISTENING_SPEECH_VOLUME,
+  selectActiveListeningVoice,
+} from '../utils/activeListeningVoice';
 import { cancelBrowserSpeech, speakBrowserText } from '../utils/browserSpeech';
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
@@ -495,9 +501,11 @@ export function PreTestPage({
 
   const speakText = useCallback((text: string, isInitialStory = false) => {
     void speakBrowserText(text, {
-      rate: CLEAR_AI_SPEECH_RATE,
-      pitch: CLEAR_AI_SPEECH_PITCH,
-      volume: CLEAR_AI_SPEECH_VOLUME,
+      rate: ACTIVE_LISTENING_SPEECH_RATE,
+      pitch: ACTIVE_LISTENING_SPEECH_PITCH,
+      volume: ACTIVE_LISTENING_SPEECH_VOLUME,
+      language: ACTIVE_LISTENING_SPEECH_LANGUAGE,
+      selectVoice: selectActiveListeningVoice,
       onPending: () => {
         setSpeechFallbackPrompt('');
         setSpeechPlaybackFailed(false);
