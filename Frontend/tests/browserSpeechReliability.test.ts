@@ -3,6 +3,13 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { cancelBrowserSpeech, speakBrowserText } from '../src/utils/browserSpeech';
+import {
+  ACTIVE_LISTENING_SPEECH_LANGUAGE,
+  ACTIVE_LISTENING_SPEECH_PITCH,
+  ACTIVE_LISTENING_SPEECH_RATE,
+  ACTIVE_LISTENING_SPEECH_VOLUME,
+  selectActiveListeningVoice,
+} from '../src/utils/activeListeningVoice';
 
 type FakeUtterance = SpeechSynthesisUtterance;
 
@@ -66,6 +73,49 @@ test('speech starts normally after voiceschanged when voices were initially empt
   assert.equal(started, 1);
   assert.equal(finished, 1);
   assert.equal(harness.utterances.length, 1);
+});
+
+test('Active Listening selects a late local natural voice without changing the single-utterance lifecycle', async () => {
+  const harness = createSpeechHarness();
+  harness.setBehavior(utterance => { start(utterance); end(utterance); });
+  const speech = speakBrowserText('Story and question together.', {
+    synthesis: harness.synthesis,
+    createUtterance: harness.createUtterance,
+    voiceWaitMs: 50,
+    rate: ACTIVE_LISTENING_SPEECH_RATE,
+    pitch: ACTIVE_LISTENING_SPEECH_PITCH,
+    volume: ACTIVE_LISTENING_SPEECH_VOLUME,
+    language: ACTIVE_LISTENING_SPEECH_LANGUAGE,
+    selectVoice: selectActiveListeningVoice,
+  });
+  const preferred = {
+    name: 'Enhanced Local English', lang: 'en-US', localService: true,
+    voiceURI: 'local-enhanced', default: false,
+  } satisfies SpeechSynthesisVoice;
+  harness.voices.push(preferred);
+  harness.fireVoicesChanged();
+  assert.equal(await speech, 'ended');
+  assert.equal(harness.utterances.length, 1);
+  assert.equal(harness.utterances[0].voice, preferred);
+  assert.equal(harness.utterances[0].rate, 0.95);
+  assert.equal(harness.utterances[0].pitch, 1.02);
+  assert.equal(harness.utterances[0].volume, 1);
+  assert.equal(harness.utterances[0].lang, 'en-US');
+});
+
+test('Active Listening plays with the browser default when no local English voice exists', async () => {
+  const harness = createSpeechHarness();
+  harness.voices.push({
+    name: 'Premium Remote', lang: 'en-US', localService: false,
+    voiceURI: 'remote-premium', default: false,
+  });
+  harness.setBehavior(utterance => { start(utterance); end(utterance); });
+  assert.equal(await speakBrowserText('Story and question together.', {
+    synthesis: harness.synthesis,
+    createUtterance: harness.createUtterance,
+    selectVoice: selectActiveListeningVoice,
+  }), 'ended');
+  assert.equal(harness.utterances[0].voice, undefined);
 });
 
 test('empty voices use the default browser voice after a bounded wait', async () => {
