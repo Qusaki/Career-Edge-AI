@@ -34,7 +34,7 @@ test('signup callback, App handoff, verified Dashboard ID, inspection and guide 
   assert.match(appSource, /onSuccess=\{\(\{ isNewSignup \}\) => \{\s*setIsNewSignupSession\(recordAuthenticationEntry\(isNewSignup\)\);\s*setCurrentView\('dashboard'\)/);
   assert.match(dashboardSource, /setAuthenticatedUserId\(data\.id\)/);
   assert.match(dashboardSource, /bindNewSignupToVerifiedUser\(authenticatedUserId, isNewSignupSession\)/);
-  assert.match(dashboardSource, /<OnboardingGuide onDismiss=\{dismissOnboardingGuide\}/);
+  assert.match(dashboardSource, /<OnboardingGuide[\s\S]*?onDismiss=\{dismissOnboardingGuide\}/);
 
   const tab = storage();
   const accounts = storage();

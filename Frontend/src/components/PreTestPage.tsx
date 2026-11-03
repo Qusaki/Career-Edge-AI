@@ -1501,7 +1501,7 @@ export function PreTestPage({
 
   return (
     <div className="w-full">
-      <header className="mb-6">
+      <header data-onboarding="pre-test" className="mb-6">
         <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Assessment</p>
         <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">Pre-Test</h1>
         <p className="mt-1.5 text-lg font-medium text-muted">
