@@ -144,7 +144,7 @@ test('invalid online identity preserves the response and cannot create pending s
 });
 
 test('successful completion refreshes authoritative progression after persistence', () => {
-  assert.match(source, /if \(!response\.ok\)[\s\S]*?await response\.json\(\)[\s\S]*?setActiveSession\(null\)[\s\S]*?await loadSessions\(\)/);
+  assert.match(source, /if \(!response\.ok\)[\s\S]*?const completedSession: DrillSession = await response\.json\(\)[\s\S]*?setCompletionResult\(createDrillCompletionResult\([\s\S]*?setActiveSession\(null\)[\s\S]*?await loadSessions\(\)/);
   assert.match(source, /normalizeApiError\(body, 'Unable to complete the drill session\.'\)/);
 });
 
@@ -178,7 +178,7 @@ test('synchronous completion claim allows one request and releases on success or
   assert.match(completion, /if \(completionInFlightRef\.current\) return;/);
   assert.equal((completion.match(/completionInFlightRef\.current = false;/g) ?? []).length, 2);
   assert.match(completion, /catch \(err\) \{[\s\S]*?setError\([\s\S]*?finally \{[\s\S]*?completionInFlightRef\.current = false/);
-  assert.match(completion, /setNotice\('Drill was marked complete\.'\)[\s\S]*?await loadSessions\(\)/);
+  assert.match(completion, /setCompletionResult\(createDrillCompletionResult\([\s\S]*?await loadSessions\(\)/);
 });
 
 test('Drill timing is opt-in and logs only approved phase metadata', () => {

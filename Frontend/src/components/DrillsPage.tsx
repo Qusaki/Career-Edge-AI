@@ -74,6 +74,64 @@ type Drill = {
   isNegotiation?: boolean;
 };
 
+type DrillCompletionKind = 'online' | 'provisional' | 'pending-transcription';
+type DrillCriteria = Record<'vocabulary' | 'clarity' | 'grammar' | 'conciseness' | 'task_completion' | 'courtesy', number>;
+type DrillCompletionResult = {
+  drillType: DrillType;
+  kind: DrillCompletionKind;
+  score: number | null;
+  passed: boolean | null;
+  feedbackSummary: string | null;
+  criteria: DrillCriteria | null;
+  authority: 'semantic_ai_with_objective_caps' | 'deterministic_fallback' | null;
+};
+
+const drillCriteriaLabels: Record<keyof DrillCriteria, string> = {
+  vocabulary: 'Vocabulary',
+  clarity: 'Clarity',
+  grammar: 'Grammar',
+  conciseness: 'Conciseness',
+  task_completion: 'Task completion',
+  courtesy: 'Courtesy',
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+export function createDrillCompletionResult(
+  drillType: DrillType,
+  kind: DrillCompletionKind,
+  payload?: unknown,
+): DrillCompletionResult {
+  const data = isRecord(payload) ? payload : {};
+  let evaluationData: unknown = data.evaluation_data;
+  if (typeof evaluationData === 'string') {
+    try {
+      evaluationData = JSON.parse(evaluationData) as unknown;
+    } catch {
+      evaluationData = null;
+    }
+  }
+  const scoring = isRecord(data.scoring) ? data.scoring
+    : isRecord(evaluationData) && isRecord(evaluationData.scoring) ? evaluationData.scoring : null;
+  const rawCriteria = scoring?.criteria;
+  const criteriaKeys = Object.keys(drillCriteriaLabels) as Array<keyof DrillCriteria>;
+  const criteria = isRecord(rawCriteria) && criteriaKeys.every(key =>
+    Number.isInteger(rawCriteria[key]) && Number(rawCriteria[key]) >= 1 && Number(rawCriteria[key]) <= 5,
+  ) ? Object.fromEntries(criteriaKeys.map(key => [key, rawCriteria[key]])) as DrillCriteria : null;
+
+  return {
+    drillType,
+    kind,
+    score: typeof data.score === 'number' && Number.isFinite(data.score) && data.score >= 0 && data.score <= 100 ? data.score : null,
+    passed: typeof data.passed === 'boolean' ? data.passed : null,
+    feedbackSummary: typeof data.feedback_summary === 'string' && data.feedback_summary.trim() ? data.feedback_summary : null,
+    criteria,
+    authority: scoring?.authority === 'semantic_ai_with_objective_caps' || scoring?.authority === 'deterministic_fallback'
+      ? scoring.authority : null,
+  };
+}
+
 type DrillInstruction = {
   task: string;
   howToAnswer: string;
@@ -417,6 +475,76 @@ export const claimDrillCompletion = (inFlight: { current: boolean }): boolean =>
   return true;
 };
 
+export function DrillEvaluationResultView({ result, error, onDone }: {
+  result: DrillCompletionResult;
+  error: string | null;
+  onDone: () => void;
+}) {
+  const pending = result.kind === 'pending-transcription';
+  const provisional = result.kind === 'provisional';
+  const heading = pending ? 'Evaluation pending' : provisional ? 'Provisional evaluation' : 'Evaluation complete';
+  const source = result.authority === 'deterministic_fallback' ? 'Deterministic fallback'
+    : result.authority === 'semantic_ai_with_objective_caps' ? 'AI-assisted assessment' : null;
+
+  return (
+    <section aria-labelledby="drill-evaluation-heading" className="mx-auto w-full max-w-3xl rounded-xl border border-line bg-card p-5 text-ink sm:p-8">
+      <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Drill result</p>
+      <h1 id="drill-evaluation-heading" className="text-2xl font-bold tracking-tight sm:text-3xl">{heading}</h1>
+      <p className="mt-1 text-base font-semibold">{getDrillDefinition(result.drillType).title}</p>
+      {pending ? (
+        <p className="mt-5 text-sm leading-relaxed text-muted" role="status">
+          Your recorded response is saved on this device. It will be evaluated after transcription and synchronization.
+        </p>
+      ) : (
+        <>
+          {provisional && (
+            <p className="mt-5 rounded-lg border border-line bg-background p-3 text-sm leading-relaxed text-muted" role="status">
+              Provisional result calculated offline. It may change after synchronization. Higher levels unlock after server synchronization.
+            </p>
+          )}
+          <div className="mt-6 grid gap-4 sm:grid-cols-2">
+            {result.score !== null && (
+              <div className="rounded-lg border border-line bg-background p-4">
+                <h2 className="text-xs font-bold uppercase tracking-wider text-muted">Overall score</h2>
+                <p className="mt-1 text-3xl font-bold" aria-label={`Overall score: ${result.score} percent`}>{result.score}%</p>
+              </div>
+            )}
+            {result.passed !== null && (
+              <div className="rounded-lg border border-line bg-background p-4">
+                <h2 className="text-xs font-bold uppercase tracking-wider text-muted">Result</h2>
+                <p className="mt-2 text-lg font-semibold">{result.passed ? 'Passed' : 'Needs more practice'}</p>
+              </div>
+            )}
+          </div>
+          {result.feedbackSummary && (
+            <div className="mt-6">
+              <h2 className="text-sm font-bold">Feedback</h2>
+              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted">{result.feedbackSummary}</p>
+            </div>
+          )}
+          {result.criteria && (
+            <div className="mt-6">
+              <h2 className="text-sm font-bold">Performance breakdown</h2>
+              <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+                {(Object.keys(drillCriteriaLabels) as Array<keyof DrillCriteria>).map(key => (
+                  <div key={key} className="flex justify-between gap-3 rounded-lg border border-line bg-background px-3 py-2 text-sm">
+                    <dt>{drillCriteriaLabels[key]}</dt><dd className="font-semibold">{result.criteria?.[key]} / 5</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          )}
+          {!provisional && source && <p className="mt-5 text-xs text-muted">Evaluation source: {source}</p>}
+        </>
+      )}
+      {error && <p role="alert" className="mt-5 text-sm text-rose-700">{error}</p>}
+      <button type="button" onClick={onDone} className="program-accent-button program-accent-focus-ring mt-8 min-h-11 rounded-lg px-5 py-2.5 font-semibold">
+        Back to Drills
+      </button>
+    </section>
+  );
+}
+
 export function DrillsPage({
   apiUrl,
   userDepartment,
@@ -443,6 +571,7 @@ export function DrillsPage({
   const completionTraceRef = useRef<DrillCompletionPerfTrace | null>(null);
   const completionSucceededRef = useRef(false);
   const [activeSession, setActiveSession] = useState<DrillSession | null>(null);
+  const [completionResult, setCompletionResult] = useState<DrillCompletionResult | null>(null);
   const [activePrompt, setActivePrompt] = useState('');
   const [spokenResponse, setSpokenResponse] = useState('');
   const [isSavingSpokenResponse, setIsSavingSpokenResponse] = useState(false);
@@ -1174,11 +1303,12 @@ export function DrillsPage({
       try {
         if (hasPendingOfflineAudio) {
           if (!await onActivityEnd('recorded_local')) throw new Error('The recorded answer could not be queued safely. Please retry.');
+          setCompletionResult(createDrillCompletionResult(activeSession.drill_type as DrillType, 'pending-transcription'));
           cancelListening();
           setActiveSession(null);
           setHasPendingOfflineAudio(false);
           onSessionModeChange(false);
-          setNotice('Answer saved on this device. It will be processed when you are back online.');
+          setNotice(null);
           return;
         }
         const result = evaluateDrill(activeSession.drill_type, { spokenResponse, negotiationMessages });
@@ -1211,6 +1341,7 @@ export function DrillsPage({
           },
         });
         if (!saved || !await onActivityEnd('completed_local')) return;
+        setCompletionResult(createDrillCompletionResult(activeSession.drill_type as DrillType, 'provisional', result.evaluation));
         cancelListening();
         cancelBrowserSpeech();
         setActiveSession(null);
@@ -1225,7 +1356,7 @@ export function DrillsPage({
         applyDrillTimer(null);
         activeOfflineClientSessionIdRef.current = null;
         offlineEyeContactBaselineRef.current = null;
-        setNotice('Drill completed locally and is pending sync. Higher levels unlock after server synchronization.');
+        setNotice(null);
         onSessionModeChange(false);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unable to calculate the provisional Drill score.');
@@ -1282,13 +1413,14 @@ export function DrillsPage({
         perf?.mark('responseParsed', false);
         throw new Error(normalizeApiError(body, 'Unable to complete the drill session.'));
       }
-      await response.json();
+      const completedSession: DrillSession = await response.json();
       perf?.mark('responseParsed', true);
       if (exerciseGenerationRef.current !== attemptId) return;
       completionSucceededRef.current = true;
+      setCompletionResult(createDrillCompletionResult(activeSession.drill_type as DrillType, 'online', completedSession));
       cancelListening();
       cancelBrowserSpeech();
-      setNotice('Drill was marked complete.');
+      setNotice(null);
       void onActivityEnd('cloud_completed');
       setActiveSession(null);
       perf?.mark('sessionClosed', true);
@@ -1320,6 +1452,21 @@ export function DrillsPage({
       }
     }
   };
+
+  if (completionResult) {
+    return (
+      <div className="w-full bg-page px-4 py-8 sm:px-8">
+        <DrillEvaluationResultView
+          result={completionResult}
+          error={error}
+          onDone={() => {
+            setCompletionResult(null);
+            setError(null);
+          }}
+        />
+      </div>
+    );
+  }
 
   if (activeSession) {
     const activeInstruction = getDrillInstruction(activeSession.drill_type);
