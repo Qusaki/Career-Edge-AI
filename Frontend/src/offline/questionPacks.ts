@@ -6,7 +6,8 @@ export const PRETEST_WHO_AM_I_VERSION = 'pretest-who-am-i-v1';
 export const PRETEST_ACTIVE_LISTENING_V1_VERSION = 'pretest-active-listening-v1';
 export const PRETEST_ACTIVE_LISTENING_VERSION = 'pretest-active-listening-v2';
 export const POST_TEST_VERSION = 'posttest-v1';
-export const DRILLS_VERSION = 'drills-v1';
+export const LEGACY_DRILLS_VERSION = 'drills-v1';
+export const DRILLS_VERSION = 'drills-v2';
 export const ENROLLMENT_INTERVIEW_VERSION = 'enrollment-interview-v1';
 export const THESIS_INTERVIEW_VERSION = 'thesis-interview-v1';
 export const NEGOTIATION_OPENING_PROMPT =
@@ -163,6 +164,57 @@ const DRILL_POOLS = {
   ],
 } as const;
 
+const V2_FIELD_POOLS = {
+  fast_word: {
+    CCIT: ['Database', 'Cloud', 'Network', 'Algorithm', 'Security', 'Frontend', 'Backend', 'Python', 'Server'],
+    CTE: ['Classroom', 'Curriculum', 'Lesson', 'Assessment', 'Learner', 'Pedagogy', 'Instruction', 'Learning Objective', 'Classroom Management'],
+    CBAPA: ['Marketing', 'Budgeting', 'Management', 'Customer', 'Leadership', 'Accounting', 'Operations', 'Strategy', 'Public Service'],
+  },
+  fake_profile_jobs: {
+    CCIT: ['Software Engineer', 'Web Developer', 'IT Support Specialist', 'Systems Analyst', 'Data Analyst'],
+    CTE: ['Teacher', 'Training Facilitator', 'Learning Support Specialist', 'Education Coordinator', 'Classroom Adviser'],
+    CBAPA: ['Marketing Associate', 'Administrative Officer', 'Business Analyst', 'HR Associate', 'Operations Coordinator'],
+  },
+  taboo: {
+    CCIT: [{ topic: 'Explain what a database is', banned_words: ['Data', 'Store', 'SQL', 'Table'] }],
+    CTE: [{ topic: 'Explain what a lesson plan is', banned_words: ['Teacher', 'Class', 'Topic', 'Prepare'] }],
+    CBAPA: [{ topic: 'Explain what a budget is', banned_words: ['Money', 'Spend', 'Cost', 'Plan'] }],
+  },
+  elevator_pitch: {
+    CCIT: ['Pitch a useful student app to a school administrator in an elevator.'],
+    CTE: ['Pitch a simple learning activity to a school administrator in an elevator.'],
+    CBAPA: ['Pitch an improved customer service process to a manager in an elevator.'],
+  },
+  rephrase: {
+    CCIT: ['The utilization of heterogeneous data structures facilitates the optimization of algorithmic complexity, thereby ameliorating the latency inherent in synchronous processing paradigms.'],
+    CTE: ['The implementation of differentiated instructional strategies facilitates the accommodation of diverse learning needs, thereby improving participation during classroom activities.'],
+    CBAPA: ['The implementation of coordinated administrative procedures facilitates the allocation of available resources, thereby improving the efficiency of routine service operations.'],
+  },
+  positive_framing: {
+    CCIT: ['Your app is slow, full of bugs, and completely ruined my project!'],
+    CTE: ["The lesson was confusing, and I still don't understand what I was supposed to learn!"],
+    CBAPA: ['Your service process is slow, and I have had to repeat my request several times!'],
+  },
+  crisis_scenarios: {
+    CCIT: ["A critical bug caused your company's main app to crash globally for 24 hours."],
+    CTE: ['A classroom activity was disrupted because the prepared learning materials were unavailable.'],
+    CBAPA: ['A service interruption left several customers waiting without a clear update.'],
+  },
+} as const;
+
+const V2_SHARED_POOLS = {
+  taboo: [DRILL_POOLS.taboo[0], DRILL_POOLS.taboo[1], DRILL_POOLS.taboo[3]],
+  elevator_pitch: [DRILL_POOLS.elevator_pitch[1], DRILL_POOLS.elevator_pitch[3]],
+  rephrase: [DRILL_POOLS.rephrase[0]],
+  positive_framing: [DRILL_POOLS.positive_framing[1], DRILL_POOLS.positive_framing[2], DRILL_POOLS.positive_framing[3]],
+  crisis_scenarios: ['A scheduled community event was disrupted by a sudden venue closure.'],
+} as const;
+
+const normalizeDrillDepartment = (department?: string): 'CCIT' | 'CTE' | 'CBAPA' | null => {
+  const normalized = department?.trim().toUpperCase();
+  return normalized === 'CCIT' || normalized === 'CTE' || normalized === 'CBAPA' ? normalized : null;
+};
+
 const stableHash = (value: string): number => {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
@@ -204,8 +256,33 @@ export const getActiveListeningPromptForServerSession = (
   return prompts[serverSessionId % prompts.length];
 };
 
-export const getOfflineDrillPrompt = (drillType: string, clientSessionId: string): Record<string, unknown> => {
+export const getOfflineDrillPrompt = (
+  drillType: string, clientSessionId: string, department?: string, version: string = LEGACY_DRILLS_VERSION,
+): Record<string, unknown> => {
+  if (version !== LEGACY_DRILLS_VERSION && version !== DRILLS_VERSION) {
+    throw new Error('Unsupported offline Drill question-pack version.');
+  }
   const seed = `${clientSessionId}:${drillType}`;
+  if (version === DRILLS_VERSION && ['fast_word', 'fake_profile', 'taboo', 'elevator_pitch', 'rephrase', 'positive_framing', 'crisis'].includes(drillType)) {
+    const normalized = normalizeDrillDepartment(department);
+    if (!normalized) throw new Error('A supported department is required for this Drill.');
+    const fieldSeed = `${seed}:${normalized}`;
+    if (drillType === 'fast_word') return { word: choose(V2_FIELD_POOLS.fast_word[normalized], fieldSeed) };
+    if (drillType === 'fake_profile') return {
+      name: choose(DRILL_POOLS.names, `${seed}:name`),
+      age: choose(DRILL_POOLS.ages, `${seed}:age`),
+      job: choose(V2_FIELD_POOLS.fake_profile_jobs[normalized], `${fieldSeed}:job`),
+      hobby: choose(DRILL_POOLS.hobbies, `${seed}:hobby`),
+    };
+    if (drillType === 'taboo') return choose([...V2_SHARED_POOLS.taboo, ...V2_FIELD_POOLS.taboo[normalized]], fieldSeed);
+    if (drillType === 'elevator_pitch') return { scenario: choose([...V2_SHARED_POOLS.elevator_pitch, ...V2_FIELD_POOLS.elevator_pitch[normalized]], fieldSeed) };
+    if (drillType === 'rephrase') return { text: choose([...V2_SHARED_POOLS.rephrase, ...V2_FIELD_POOLS.rephrase[normalized]], fieldSeed) };
+    if (drillType === 'positive_framing') return { complaint: choose([...V2_SHARED_POOLS.positive_framing, ...V2_FIELD_POOLS.positive_framing[normalized]], fieldSeed) };
+    return {
+      scenario: choose([...V2_SHARED_POOLS.crisis_scenarios, ...V2_FIELD_POOLS.crisis_scenarios[normalized]], `${fieldSeed}:scenario`),
+      questions: chooseMany(DRILL_POOLS.crisisQuestions, 4, `${seed}:questions`),
+    };
+  }
   switch (drillType) {
     case 'jam': return { topic: choose(DRILL_POOLS.jam, seed) };
     case 'fast_word': return { word: choose(DRILL_POOLS.fast_word, seed) };
@@ -249,4 +326,5 @@ export const getQuestionPackVersion = (type: OfflineActivityType): string | null
 
 export const hasCurrentQuestionPack = (type: OfflineActivityType, version: string | null): boolean =>
   getQuestionPackVersion(type) === version
+  || (type === 'drill' && version === LEGACY_DRILLS_VERSION)
   || (type === 'pre_test_active_listening' && version === PRETEST_ACTIVE_LISTENING_V1_VERSION);

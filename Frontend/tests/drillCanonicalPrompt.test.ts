@@ -20,7 +20,7 @@ test('online Drill prompt state is derived from the returned canonical prompt', 
 });
 
 test('offline Drill start retains versioned local deterministic prompt generation', () => {
-  assert.match(source, /if \(!effectiveOnline\)[\s\S]*?getOfflineDrillPrompt\(drill\.drillType, clientSessionId\)/);
+  assert.match(source, /if \(!effectiveOnline\)[\s\S]*?getOfflineDrillPrompt\(drill\.drillType, clientSessionId, userDepartment, DRILLS_VERSION\)/);
   assert.match(source, /mode: 'offline'/);
   assert.match(source, /questionPackVersion: DRILLS_VERSION/);
 });

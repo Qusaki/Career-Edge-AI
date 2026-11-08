@@ -7,7 +7,7 @@ from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from core.drill_progression import DRILL_LEVEL_BY_TYPE
-from core.offline_drill_prompt import format_offline_drill_prompt, get_offline_drill_prompt
+from core.offline_drill_prompt import InvalidDrillDepartmentError, format_offline_drill_prompt, get_offline_drill_prompt
 from core.scoring import bounded_integer_score, bounded_score
 from models.drills import DrillSession
 from models.post_test_interview import PostTestInterviewMessage, PostTestInterviewSession
@@ -30,7 +30,7 @@ SUPPORTED_PACK_VERSIONS = {
     "pre_test_intro": "pretest-who-am-i-v1",
     "pre_test_active_listening": "pretest-active-listening-v2",
     "post_test": "posttest-v1",
-    "drill": "drills-v1",
+    "drill": "drills-v2",
     "upcoming": "enrollment-interview-v1",
     "thesis": "thesis-interview-v1",
 }
@@ -80,7 +80,8 @@ def validate_sync_payload(payload: OfflineSyncRequest, department: str) -> None:
         payload.activity_type == "pre_test_active_listening"
         and payload.question_pack_version == "pretest-active-listening-v1"
     )
-    if payload.question_pack_version != expected_version and not is_legacy_listening_pack:
+    is_legacy_drill_pack = payload.activity_type == "drill" and payload.question_pack_version == "drills-v1"
+    if payload.question_pack_version != expected_version and not is_legacy_listening_pack and not is_legacy_drill_pack:
         raise HTTPException(status_code=409, detail="This offline question-pack version is not supported.")
     if payload.activity_type in {"upcoming", "thesis"}:
         submitted = payload.activity_state.get("questionIds")
@@ -105,8 +106,16 @@ def validate_sync_payload(payload: OfflineSyncRequest, department: str) -> None:
             raise HTTPException(status_code=422, detail="Drill level is required.")
         if DRILL_LEVEL_BY_TYPE.get(drill_type) != drill_level:
             raise HTTPException(status_code=422, detail="Unsupported Drill level/type combination.")
+        if payload.server_session_id is None and payload.question_pack_version == "drills-v2" and "prompt" not in payload.activity_state:
+            raise HTTPException(status_code=422, detail="The offline Drill prompt is required.")
         if payload.server_session_id is None and "prompt" in payload.activity_state:
-            expected_prompt = format_offline_drill_prompt(get_offline_drill_prompt(drill_type, payload.client_session_id))
+            try:
+                expected_prompt = format_offline_drill_prompt(get_offline_drill_prompt(
+                    drill_type, payload.client_session_id,
+                    version=payload.question_pack_version, department=department,
+                ))
+            except InvalidDrillDepartmentError as error:
+                raise HTTPException(status_code=403, detail=str(error)) from error
             if payload.activity_state["prompt"] != expected_prompt:
                 raise HTTPException(status_code=409, detail="The offline Drill prompt does not match the canonical pack.")
     pending_audio_steps = {
@@ -190,7 +199,10 @@ async def evaluate_payload(payload: OfflineSyncRequest, user: User, provider: AI
         return await score_post_test(get_post_test_questions(user.department), [answer.text for answer in payload.answers], _scoring_provider(provider))
     if payload.activity_type == "drill":
         drill_type = str(payload.activity_state["drillType"])
-        prompt = drill_prompt or get_offline_drill_prompt(drill_type, payload.client_session_id)
+        prompt = drill_prompt or get_offline_drill_prompt(
+            drill_type, payload.client_session_id,
+            version=payload.question_pack_version, department=user.department,
+        )
         if drill_type == "negotiation":
             prompt = {
                 **prompt,

@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from core.deps import get_current_user
 from core.drill_progression import DRILL_LEVEL_BY_TYPE
+from core.offline_drill_prompt import format_offline_drill_prompt, get_offline_drill_prompt
 from database import Base, get_db
 import models  # noqa: F401 - register complete metadata
 from models.drills import DrillSession
@@ -176,6 +177,21 @@ class OfflineSyncEndpointTests(unittest.TestCase):
                 for drill_type in drill_types
             ])
             db.commit()
+
+    def department_drill_payload(self, department: str, client_session_id: str) -> dict:
+        prompt = get_offline_drill_prompt("fast_word", client_session_id, version="drills-v2", department=department)
+        return {
+            "client_session_id": client_session_id,
+            "activity_type": "drill",
+            "question_pack_version": "drills-v2",
+            "answers": [{"step": 1, "text": "I can explain this word clearly and concisely."}],
+            "conversation_log": [],
+            "activity_state": {
+                "drillType": "fast_word",
+                "drillLevel": "easy",
+                "prompt": format_offline_drill_prompt(prompt),
+            },
+        }
 
     def test_authentication_is_required(self):
         app = FastAPI()
@@ -383,6 +399,43 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         response = self.client.post("/offline-sync", json=payload)
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["authoritative_result"]["score"], 40.0)
+
+    def test_department_v2_drills_sync_only_for_authenticated_department(self):
+        for department in ("CTE", "CBAPA"):
+            with self.subTest(department=department):
+                self.add_completed_drills("jam")
+                with self.Session() as db:
+                    user = db.get(User, 1)
+                    user.department = department
+                    db.commit()
+                payload = self.department_drill_payload(department, f"v2-{department}")
+                response = self.client.post("/offline-sync", json=payload)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()["authoritative_result"]["drill_type"], "fast_word")
+
+    def test_cross_department_v2_prompt_does_not_sync(self):
+        self.add_completed_drills("jam")
+        with self.Session() as db:
+            user = db.get(User, 1)
+            user.department = "CTE"
+            db.commit()
+        payload = self.department_drill_payload("CCIT", "v2-cross-department")
+        response = self.client.post("/offline-sync", json=payload)
+        self.assertEqual(response.status_code, 409, response.text)
+        with self.Session() as db:
+            self.assertEqual(db.query(OfflineSyncReceipt).count(), 0)
+
+    def test_legacy_v1_prompt_sync_remains_valid_for_non_ccit_account(self):
+        self.add_completed_drills("jam")
+        with self.Session() as db:
+            user = db.get(User, 1)
+            user.department = "CTE"
+            db.commit()
+        payload = self.department_drill_payload("CTE", "legacy-v1-cte")
+        payload["question_pack_version"] = "drills-v1"
+        payload["activity_state"]["prompt"] = format_offline_drill_prompt(get_offline_drill_prompt("fast_word", "legacy-v1-cte"))
+        response = self.client.post("/offline-sync", json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
 
     def test_locked_offline_drill_cannot_bypass_server_progression(self):
         payload = {
