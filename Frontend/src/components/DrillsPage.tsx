@@ -303,6 +303,9 @@ const getDrillDefinition = (drillType: DrillType): Drill => {
   return drill;
 };
 
+export const getDrillTitle = (drillType: string): string =>
+  drills.find(item => item.drillType === drillType)?.title ?? drillType.replace(/_/g, ' ');
+
 const getDrillDisplayName = (drillType: string): string => (
   drillType === 'jam' ? getDrillDefinition('jam').title : drillType.replace(/_/g, ' ')
 );
