@@ -4,6 +4,7 @@ import datetime
 import logging
 import os
 import time
+import uuid
 from typing import Callable, List
 # pyrefly: ignore [missing-import]
 from fastapi import APIRouter, HTTPException, Depends
@@ -22,6 +23,7 @@ from core.drill_progression import (
     is_drill_type_unlocked,
 )
 from core.drill_scoring import calculate_drill_score
+from core.offline_drill_prompt import InvalidDrillDepartmentError, get_offline_drill_prompt
 from core.negotiation import advance_negotiation, load_negotiation_snapshot, serialize_negotiation_snapshot, turn_response
 from services.assessment_scoring import score_drill
 from models.user import User
@@ -212,22 +214,24 @@ DRILL_PROMPT_GENERATORS: dict[str, Callable[[], DrillPrompt]] = {
 }
 
 
-def generate_drill_prompt(drill_level: str, drill_type: str) -> DrillPrompt:
+def generate_drill_prompt(drill_level: str, drill_type: str, department: str | None) -> DrillPrompt:
     expected_level = DRILL_LEVEL_BY_TYPE.get(drill_type)
     generator = DRILL_PROMPT_GENERATORS.get(drill_type)
     if generator is None or expected_level != drill_level:
         raise ValueError("Unsupported Drill level/type combination.")
-    return generator()
+    return get_offline_drill_prompt(drill_type, str(uuid.uuid4()), version="drills-v2", department=department)
 
 
-def require_drill_prompt(drill_level: str, drill_type: str) -> DrillPrompt:
+def require_drill_prompt(drill_level: str, drill_type: str, department: str | None) -> DrillPrompt:
     try:
-        return generate_drill_prompt(drill_level, drill_type)
+        return generate_drill_prompt(drill_level, drill_type, department)
+    except InvalidDrillDepartmentError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
-def initialize_legacy_canonical_prompt(session_id: int, db: Session) -> DrillSession:
+def initialize_legacy_canonical_prompt(session_id: int, db: Session, department: str | None) -> DrillSession:
     locked_session = (
         db.query(DrillSession)
         .filter(DrillSession.id == session_id)
@@ -239,6 +243,7 @@ def initialize_legacy_canonical_prompt(session_id: int, db: Session) -> DrillSes
         locked_session.canonical_prompt = require_drill_prompt(
             locked_session.drill_level,
             locked_session.drill_type,
+            department,
         )
         db.commit()
         db.refresh(locked_session)
@@ -292,7 +297,7 @@ def start_drill_session(request: DrillStartRequest, db: Session = Depends(get_db
         now = datetime.datetime.utcnow()
         if (now - active_session.start_time).total_seconds() <= 3600:
             if active_session.canonical_prompt is None:
-                return initialize_legacy_canonical_prompt(active_session.id, db)
+                return initialize_legacy_canonical_prompt(active_session.id, db, current_user.department)
             return active_session
 
         active_session.status = "expired"
@@ -315,7 +320,7 @@ def start_drill_session(request: DrillStartRequest, db: Session = Depends(get_db
         user_id=current_user.id,
         drill_level=request.drill_level,
         drill_type=request.drill_type,
-        canonical_prompt=require_drill_prompt(request.drill_level, request.drill_type),
+        canonical_prompt=require_drill_prompt(request.drill_level, request.drill_type, current_user.department),
     )
     db.add(session)
     db.commit()
@@ -369,7 +374,7 @@ async def complete_drill_session(session_id: int, request: DrillCompleteRequest,
 
     evaluation_data = dict(request.evaluation_data)
     if session.canonical_prompt is None:
-        session.canonical_prompt = require_drill_prompt(session.drill_level, session.drill_type)
+        session.canonical_prompt = require_drill_prompt(session.drill_level, session.drill_type, current_user.department)
     evaluation_data["prompt"] = session.canonical_prompt
 
     scoring_started = time.perf_counter()

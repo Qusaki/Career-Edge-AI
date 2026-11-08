@@ -1,4 +1,4 @@
-"""Mirror the versioned drills-v1 prompt selection for authoritative sync scoring."""
+"""Mirror versioned Drill prompt selection for authoritative sync scoring."""
 
 from typing import Any
 
@@ -53,6 +53,63 @@ POOLS: dict[str, list[Any]] = {
     ],
 }
 
+# drills-v1 above is immutable: saved offline checkpoints must continue to
+# reproduce their original prompts during resume and synchronization.
+V2_FIELD_POOLS: dict[str, dict[str, list[Any]]] = {
+    "fast_word": {
+        "CCIT": ["Database", "Cloud", "Network", "Algorithm", "Security", "Frontend", "Backend", "Python", "Server"],
+        "CTE": ["Classroom", "Curriculum", "Lesson", "Assessment", "Learner", "Pedagogy", "Instruction", "Learning Objective", "Classroom Management"],
+        "CBAPA": ["Marketing", "Budgeting", "Management", "Customer", "Leadership", "Accounting", "Operations", "Strategy", "Public Service"],
+    },
+    "fake_profile_jobs": {
+        "CCIT": ["Software Engineer", "Web Developer", "IT Support Specialist", "Systems Analyst", "Data Analyst"],
+        "CTE": ["Teacher", "Training Facilitator", "Learning Support Specialist", "Education Coordinator", "Classroom Adviser"],
+        "CBAPA": ["Marketing Associate", "Administrative Officer", "Business Analyst", "HR Associate", "Operations Coordinator"],
+    },
+    "taboo": {
+        "CCIT": [{"topic": "Explain what a database is", "banned_words": ["Data", "Store", "SQL", "Table"]}],
+        "CTE": [{"topic": "Explain what a lesson plan is", "banned_words": ["Teacher", "Class", "Topic", "Prepare"]}],
+        "CBAPA": [{"topic": "Explain what a budget is", "banned_words": ["Money", "Spend", "Cost", "Plan"]}],
+    },
+    "elevator_pitch": {
+        "CCIT": ["Pitch a useful student app to a school administrator in an elevator."],
+        "CTE": ["Pitch a simple learning activity to a school administrator in an elevator."],
+        "CBAPA": ["Pitch an improved customer service process to a manager in an elevator."],
+    },
+    "rephrase": {
+        "CCIT": ["The utilization of heterogeneous data structures facilitates the optimization of algorithmic complexity, thereby ameliorating the latency inherent in synchronous processing paradigms."],
+        "CTE": ["The implementation of differentiated instructional strategies facilitates the accommodation of diverse learning needs, thereby improving participation during classroom activities."],
+        "CBAPA": ["The implementation of coordinated administrative procedures facilitates the allocation of available resources, thereby improving the efficiency of routine service operations."],
+    },
+    "positive_framing": {
+        "CCIT": ["Your app is slow, full of bugs, and completely ruined my project!"],
+        "CTE": ["The lesson was confusing, and I still don't understand what I was supposed to learn!"],
+        "CBAPA": ["Your service process is slow, and I have had to repeat my request several times!"],
+    },
+    "crisis_scenarios": {
+        "CCIT": ["A critical bug caused your company's main app to crash globally for 24 hours."],
+        "CTE": ["A classroom activity was disrupted because the prepared learning materials were unavailable."],
+        "CBAPA": ["A service interruption left several customers waiting without a clear update."],
+    },
+}
+
+V2_SHARED_POOLS: dict[str, list[Any]] = {
+    "taboo": [POOLS["taboo"][0], POOLS["taboo"][1], POOLS["taboo"][3]],
+    "elevator_pitch": [POOLS["elevator_pitch"][1], POOLS["elevator_pitch"][3]],
+    "rephrase": [POOLS["rephrase"][0]],
+    "positive_framing": [POOLS["positive_framing"][1], POOLS["positive_framing"][2], POOLS["positive_framing"][3]],
+    "crisis_scenarios": ["A scheduled community event was disrupted by a sudden venue closure."],
+}
+
+
+class InvalidDrillDepartmentError(ValueError):
+    pass
+
+
+def normalize_drill_department(department: str | None) -> str | None:
+    normalized = (department or "").strip().upper()
+    return normalized if normalized in {"CCIT", "CTE", "CBAPA"} else None
+
 LABELS = {
     "topic": "Topic", "word": "Target word", "sentence": "Sentence", "emotion": "Target emotion",
     "name": "Name", "age": "Age", "job": "Job", "hobby": "Hobby", "emojis": "Emojis",
@@ -84,8 +141,33 @@ def choose_many(items: list[Any], count: int, seed: str) -> list[Any]:
     return selected
 
 
-def get_offline_drill_prompt(drill_type: str, client_session_id: str) -> dict[str, Any]:
+def get_offline_drill_prompt(drill_type: str, client_session_id: str, *,
+                             version: str = "drills-v1", department: str | None = None) -> dict[str, Any]:
+    if version not in {"drills-v1", "drills-v2"}:
+        raise ValueError("Unsupported offline Drill question-pack version.")
     seed = f"{client_session_id}:{drill_type}"
+    if version == "drills-v2" and drill_type in {"fast_word", "fake_profile", "taboo", "elevator_pitch", "rephrase", "positive_framing", "crisis"}:
+        normalized = normalize_drill_department(department)
+        if normalized is None:
+            raise InvalidDrillDepartmentError("A supported department is required for this Drill.")
+        field_seed = f"{seed}:{normalized}"
+        if drill_type == "fast_word":
+            return {"word": choose(V2_FIELD_POOLS["fast_word"][normalized], field_seed)}
+        if drill_type == "fake_profile":
+            return {
+                "name": choose(POOLS["names"], f"{seed}:name"),
+                "age": choose(POOLS["ages"], f"{seed}:age"),
+                "job": choose(V2_FIELD_POOLS["fake_profile_jobs"][normalized], f"{field_seed}:job"),
+                "hobby": choose(POOLS["hobbies"], f"{seed}:hobby"),
+            }
+        pool_key = "crisis_scenarios" if drill_type == "crisis" else drill_type
+        selected = choose(V2_SHARED_POOLS[pool_key] + V2_FIELD_POOLS[pool_key][normalized], field_seed if drill_type != "crisis" else f"{field_seed}:scenario")
+        if drill_type == "taboo":
+            return selected
+        if drill_type in {"elevator_pitch", "rephrase", "positive_framing"}:
+            key = {"elevator_pitch": "scenario", "rephrase": "text", "positive_framing": "complaint"}[drill_type]
+            return {key: selected}
+        return {"scenario": selected, "questions": choose_many(POOLS["crisis_questions"], 4, f"{seed}:questions")}
     if drill_type in {"jam", "fast_word", "synonym"}:
         return {"word" if drill_type != "jam" else "topic": choose(POOLS[drill_type], seed)}
     if drill_type == "emotion":

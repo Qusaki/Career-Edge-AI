@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from core.deps import get_current_user
+from core.offline_drill_prompt import V2_FIELD_POOLS
 from database import Base, get_db
 from models.drills import DrillSession
 from models.user import User
@@ -105,10 +106,51 @@ class DrillCanonicalPromptTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["canonical_prompt"], prompt)
-        generator.assert_called_once_with("easy", "jam")
+        generator.assert_called_once_with("easy", "jam", "CCIT")
         with self.Session() as db:
             stored = db.get(DrillSession, response.json()["id"])
             self.assertEqual(stored.canonical_prompt, prompt)
+
+    def test_authenticated_department_selects_fast_word_and_client_cannot_override(self) -> None:
+        self.complete_level("easy")
+        for department in ("CCIT", "CTE", "CBAPA"):
+            with self.subTest(department=department):
+                with self.Session() as db:
+                    user = db.get(User, 1)
+                    user.department = department
+                    db.commit()
+                response = self.client.post(
+                    "/drills/start",
+                    json={"drill_level": "easy", "drill_type": "fast_word", "department": "CCIT" if department != "CCIT" else "CTE"},
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertIn(response.json()["canonical_prompt"]["word"], V2_FIELD_POOLS["fast_word"][department])
+                with self.Session() as db:
+                    session = db.get(DrillSession, response.json()["id"])
+                    session.status = "completed"
+                    db.commit()
+
+    def test_legacy_missing_prompt_uses_owners_department(self) -> None:
+        with self.Session() as db:
+            user = db.get(User, 1)
+            user.department = "CTE"
+            db.commit()
+        legacy_id = self.create_session(drill_type="fast_word", canonical_prompt=None)
+        response = self.start("easy", "fast_word")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["id"], legacy_id)
+        self.assertIn(response.json()["canonical_prompt"]["word"], V2_FIELD_POOLS["fast_word"]["CTE"])
+
+    def test_invalid_authenticated_department_does_not_fall_back_to_ccit(self) -> None:
+        with self.Session() as db:
+            user = db.get(User, 1)
+            user.department = "unknown"
+            db.commit()
+        self.complete_level("easy")
+        response = self.start("easy", "fast_word")
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertIn("supported department", response.json()["detail"])
+        self.assertEqual(self.start("easy", "jam").status_code, 200)
 
     def test_repeated_starts_and_multiple_refreshes_reuse_one_prompt(self) -> None:
         prompt = {"topic": "Stable prompt"}

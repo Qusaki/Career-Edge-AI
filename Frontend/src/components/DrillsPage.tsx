@@ -376,6 +376,7 @@ const formatPrompt = (prompt: Record<string, unknown>) => {
 
 type DrillsPageProps = OfflineActivityBridgeProps & {
   apiUrl: string;
+  userDepartment: string;
   cloudConnectionState: ConnectionState;
   onSessionModeChange?: (isSessionMode: boolean) => void;
   onProgressChange?: (progress: PostTestAccess) => void;
@@ -418,6 +419,7 @@ export const claimDrillCompletion = (inFlight: { current: boolean }): boolean =>
 
 export function DrillsPage({
   apiUrl,
+  userDepartment,
   cloudConnectionState,
   onSessionModeChange = () => {},
   onProgressChange,
@@ -759,7 +761,7 @@ export function DrillsPage({
     try {
       if (!effectiveOnline) {
         const clientSessionId = createClientSessionId();
-        const prompt = getOfflineDrillPrompt(drill.drillType, clientSessionId);
+        const prompt = getOfflineDrillPrompt(drill.drillType, clientSessionId, userDepartment, DRILLS_VERSION);
         const formattedPrompt = formatPrompt(prompt);
         const openingOffer = NEGOTIATION_OPENING_PROMPT;
         const initialNegotiationMessages: NegotiationMessage[] = drill.isNegotiation

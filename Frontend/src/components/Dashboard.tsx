@@ -4720,6 +4720,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             {activeTab === 'drills' && (
               <DrillsPage
                 apiUrl={API_URL}
+                userDepartment={authenticatedUserId ? profile.department : ''}
                 cloudConnectionState={connectivity.connectionState}
                 onSessionModeChange={setIsModuleSessionMode}
                 onProgressChange={handleDrillProgressChange}

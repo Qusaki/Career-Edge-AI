@@ -81,7 +81,7 @@ class ExerciseSessionStartTests(unittest.TestCase):
         new_session = drills.start_drill_session(
             request=request,
             db=db,
-            current_user=SimpleNamespace(id=7),
+            current_user=SimpleNamespace(id=7, department="CCIT"),
         )
 
         self.assertEqual(stale_session.status, "expired")
