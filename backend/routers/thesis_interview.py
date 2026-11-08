@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from core.ai import get_ai_unavailable_message
+from core.thesis_docx import InvalidThesisDocxError, extract_thesis_docx_text
 from core.deps import get_current_user, get_current_user_ws
 from core.scoring import bounded_integer_score, bounded_score
 from core.aws import get_abstract_text_from_s3, delete_abstract_from_s3, store_thesis_abstract_text
@@ -162,9 +163,9 @@ async def upload_abstract(
         raise HTTPException(status_code=409, detail="This thesis session has expired.")
 
     filename = file.filename.lower() if file and file.filename else ""
-    suffix = ".pdf" if filename.endswith(".pdf") else ".txt" if filename.endswith(".txt") else None
+    suffix = next((extension for extension in (".pdf", ".docx", ".txt") if filename.endswith(extension)), None)
     if suffix is None:
-        raise HTTPException(status_code=400, detail="Choose a PDF or TXT thesis abstract.")
+        raise HTTPException(status_code=400, detail="Please upload a PDF, DOCX, or TXT file.")
     content = await file.read(THESIS_ABSTRACT_MAX_BYTES + 1)
     if len(content) > THESIS_ABSTRACT_MAX_BYTES:
         raise HTTPException(status_code=413, detail="The thesis abstract must be 10 MB or smaller.")
@@ -180,7 +181,18 @@ async def upload_abstract(
         if file_text != (abstract_text or "").strip():
             raise HTTPException(status_code=400, detail="The selected TXT file and extracted abstract do not match.")
 
-    canonical_text = (abstract_text or "").strip()
+    docx_text = None
+    if suffix == ".docx":
+        try:
+            docx_text = extract_thesis_docx_text(content)[:THESIS_ABSTRACT_CONTEXT_MAX_CHARS]
+        except InvalidThesisDocxError as error:
+            if "No readable thesis text" in str(error):
+                raise HTTPException(status_code=400, detail="No readable thesis text was found in this document.") from None
+            raise HTTPException(status_code=400, detail="The DOCX file could not be read. Please upload a valid DOCX document.") from None
+        if " ".join(docx_text.split()) != " ".join((abstract_text or "").strip().split()):
+            raise HTTPException(status_code=400, detail="The selected DOCX file and extracted abstract do not match.")
+
+    canonical_text = docx_text if docx_text is not None else (abstract_text or "").strip()
     if len(canonical_text) > THESIS_ABSTRACT_CONTEXT_MAX_CHARS or not any(char.isalnum() for char in canonical_text):
         raise HTTPException(status_code=400, detail="The abstract must contain readable text up to 5000 characters.")
 

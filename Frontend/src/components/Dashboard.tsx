@@ -25,7 +25,8 @@ import { isPositiveServerSessionId } from '../utils/sessionIdentity';
 import { getNewPasswordError, NEW_PASSWORD_GUIDANCE } from '../utils/passwordPolicy';
 import { normalizeApiError } from '../utils/httpError';
 import { bindNewSignupToVerifiedUser, isOnboardingInspectionPending, isOnboardingOfflineErrorBlocking, markOnboardingCompleted, readOnboardingState, shouldAutoStartOnboarding } from '../utils/onboardingState';
-import { ThesisAbstractFileError, thesisAbstractUploadError, validateThesisAbstractFile } from '../utils/thesisAbstractUpload';
+import { THESIS_ABSTRACT_ACCEPT, ThesisAbstractFileError, thesisAbstractUploadError, validateThesisAbstractFile } from '../utils/thesisAbstractUpload';
+import { extractThesisDocxText } from '../utils/thesisDocx';
 import { getVerifiedAccountForToken, rememberVerifiedAccount } from '../offline/accountBinding';
 import { getQuestionPackVersion, hasCurrentQuestionPack } from '../offline/questionPacks';
 import {
@@ -3320,6 +3321,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     try {
       if (file.name.toLowerCase().endsWith('.txt')) return await file.text();
       const arrayBuffer = await file.arrayBuffer();
+      if (file.name.toLowerCase().endsWith('.docx')) return extractThesisDocxText(new Uint8Array(arrayBuffer));
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       let fullText = '';
       const maxPages = Math.min(pdf.numPages, 10);
@@ -3332,7 +3334,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
         fullText += `${pageText}\n`;
       }
       return fullText;
-    } catch {
+    } catch (error) {
+      if (file.name.toLowerCase().endsWith('.docx') && error instanceof Error) {
+        throw new ThesisAbstractFileError(error.message);
+      }
       throw new ThesisAbstractFileError('The selected abstract could not be read. Choose a readable PDF or TXT file.');
     }
   };
@@ -3432,7 +3437,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
 
     if (!thesisAbstractFile) {
-      setThesisStartError('Upload a PDF or TXT thesis abstract before starting the defense.');
+      setThesisStartError('Upload a PDF, DOCX, or TXT thesis abstract before starting the defense.');
       return;
     }
 
@@ -4972,7 +4977,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       </div>
                       <div>
                         <h3 className="text-lg font-bold text-slate-200">Thesis Abstract <span className="text-xs text-rose-400 font-semibold ml-2">Required</span></h3>
-                        <p className="text-sm text-slate-400 mt-1 leading-relaxed">Upload your abstract (PDF or TXT) — the AI Panel will analyze it and base all defense questions on your actual research.</p>
+                        <p className="text-sm text-slate-400 mt-1 leading-relaxed">Upload your abstract (PDF, DOCX, or TXT) — the AI Panel will analyze it and base all defense questions on your actual research.</p>
                       </div>
                     </div>
 
@@ -4980,10 +4985,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <label className="block w-full border-2 border-dashed border-slate-700 hover:border-purple-500/50 rounded-xl p-10 text-center cursor-pointer transition-all group">
                         <Upload className="w-10 h-10 text-slate-500 group-hover:text-purple-400 mx-auto mb-3 transition-colors" />
                         <p className="text-slate-400 text-sm font-medium">Click to upload or drag and drop</p>
-                        <p className="text-slate-600 text-xs mt-1">PDF or TXT, up to 10MB</p>
+                        <p className="text-slate-600 text-xs mt-1">PDF, DOCX, or TXT, up to 10MB</p>
                         <input
                           type="file"
-                          accept=".pdf,.txt"
+                          accept={THESIS_ABSTRACT_ACCEPT}
                           className="hidden"
                           onChange={(e) => { const f = e.target.files?.[0]; if (f) setThesisAbstractFile(f); }}
                         />
@@ -5249,7 +5254,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               <span className="text-xs font-semibold tracking-wide">Upload Proposal</span>
                               <input
                                 type="file"
-                                accept=".pdf,.txt"
+                                accept={THESIS_ABSTRACT_ACCEPT}
                                 className="hidden"
                                 disabled={thesisInSessionUploading}
                                 onChange={(e) => {

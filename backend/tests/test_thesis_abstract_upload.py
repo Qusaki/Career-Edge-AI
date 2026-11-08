@@ -3,6 +3,7 @@ import datetime
 import io
 import json
 import unittest
+import zipfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -10,6 +11,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from core import aws
+from core.thesis_docx import InvalidThesisDocxError, MAX_DOCX_XML_BYTES, extract_thesis_docx_text
 from core.deps import get_current_user
 from database import get_db
 from models.thesis_interview import ThesisInterviewMessage, ThesisInterviewSession
@@ -74,6 +76,24 @@ def active_session(owner=7, status="active", minutes_ago=0):
 
 def upload_file(filename="abstract.txt", content=b"A readable research abstract."):
     return UploadFile(file=io.BytesIO(content), filename=filename)
+
+
+DOCX_CONTENT_TYPES = b'''<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'''
+DOCX_RELATIONSHIPS = b'''<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'''
+
+
+def docx_bytes(document_xml=None, *, include_document=True, include_macro=False):
+    if document_xml is None:
+        document_xml = '''<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Research Title</w:t></w:r></w:p><w:p><w:r><w:t>A readable research </w:t></w:r><w:r><w:t>abstract.</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Table finding</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>'''
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", DOCX_CONTENT_TYPES)
+        archive.writestr("_rels/.rels", DOCX_RELATIONSHIPS)
+        if include_document:
+            archive.writestr("word/document.xml", document_xml)
+        if include_macro:
+            archive.writestr("word/vbaProject.bin", b"not executed")
+    return buffer.getvalue()
 
 
 def send_upload(db, file=None, abstract_text="A readable research abstract.", owner=7):
@@ -181,6 +201,7 @@ class ThesisAbstractUploadTests(unittest.TestCase):
     def test_invalid_unreadable_and_oversized_files_are_rejected(self):
         cases = [
             ("abstract.docx", b"A readable research abstract.", "A readable research abstract.", 400),
+            ("abstract.docx", docx_bytes(include_document=False), "A readable research abstract.", 400),
             ("abstract.txt", b"", "A readable research abstract.", 400),
             ("abstract.txt", b"\xff\xfe", "A readable research abstract.", 400),
             ("abstract.pdf", b"not a PDF", "A readable research abstract.", 400),
@@ -188,6 +209,8 @@ class ThesisAbstractUploadTests(unittest.TestCase):
             ("abstract.txt", b"A readable research abstract.", "Different text", 400),
             ("abstract.txt", b"A readable research abstract.", "x" * 5001, 400),
             ("abstract.txt", b"x" * (thesis_interview.THESIS_ABSTRACT_MAX_BYTES + 1), "x", 413),
+            ("abstract.docx", b"x" * (thesis_interview.THESIS_ABSTRACT_MAX_BYTES + 1), "x", 413),
+            *((f"abstract.{extension}", b"content", "content", 400) for extension in ("doc", "docm", "rtf", "odt", "zip")),
         ]
         for filename, content, abstract_text, status in cases:
             with self.subTest(filename=filename, status=status):
@@ -203,6 +226,46 @@ class ThesisAbstractUploadTests(unittest.TestCase):
         with patch.object(thesis_interview, "store_thesis_abstract_text", return_value="abstracts/session_12_pdf.txt"):
             result = send_upload(db, upload_file("abstract.pdf", b"%PDF-1.7\n"), "Readable extracted PDF abstract")
         self.assertEqual(result, {"updated": True})
+
+    def test_docx_extracts_heading_paragraph_and_table_without_executing_content(self):
+        self.assertEqual(
+            extract_thesis_docx_text(docx_bytes()),
+            "Research Title\nA readable research abstract.\nTable finding",
+        )
+
+    def test_docx_upload_matches_independently_extracted_text_and_rejects_tampering(self):
+        content = docx_bytes()
+        db = FakeDatabase(active_session())
+        with patch.object(thesis_interview, "store_thesis_abstract_text", return_value="abstracts/session_12_docx.txt") as store:
+            result = send_upload(db, upload_file("abstract.docx", content), "Research Title  A readable research abstract. Table finding")
+        self.assertEqual(result, {"updated": True})
+        store.assert_called_once_with(12, "Research Title\nA readable research abstract.\nTable finding")
+        db = FakeDatabase(active_session())
+        with patch.object(thesis_interview, "store_thesis_abstract_text") as store:
+            with self.assertRaises(HTTPException) as raised:
+                send_upload(db, upload_file("abstract.docx", content), "A different thesis abstract")
+        self.assertEqual(raised.exception.status_code, 400)
+        store.assert_not_called()
+
+    def test_docx_malformed_empty_and_bomb_content_are_rejected(self):
+        namespace = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+        cases = [
+            docx_bytes('<w:document ' + namespace + '><w:body><w:p></w:body></w:document>'),
+            docx_bytes('<w:document ' + namespace + '><w:body><w:p/></w:body></w:document>'),
+            docx_bytes('<w:document ' + namespace + '><w:body><w:p><w:r><w:t>' + 'x' * MAX_DOCX_XML_BYTES + '</w:t></w:r></w:p></w:body></w:document>'),
+            docx_bytes(include_macro=True),
+        ]
+        for content in cases:
+            with self.subTest(size=len(content)):
+                with self.assertRaises(InvalidThesisDocxError):
+                    extract_thesis_docx_text(content)
+
+    def test_docx_context_remains_bounded_to_5000_characters(self):
+        content = docx_bytes('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>' + 'A' * 6000 + '</w:t></w:r></w:p></w:body></w:document>')
+        db = FakeDatabase(active_session())
+        with patch.object(thesis_interview, "store_thesis_abstract_text", return_value="abstracts/session_12_bounded.txt") as store:
+            self.assertEqual(send_upload(db, upload_file("abstract.docx", content), "A" * 5000), {"updated": True})
+        store.assert_called_once_with(12, "A" * 5000)
 
     def test_storage_failure_does_not_change_session_key(self):
         db = FakeDatabase(active_session())
