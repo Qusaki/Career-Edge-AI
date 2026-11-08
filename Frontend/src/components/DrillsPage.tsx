@@ -679,10 +679,12 @@ export function DrillsPage({
       : 1;
     void enableOfflineRecording({
       enabled: true,
+      speechOnlyFallback: true,
       activityType: 'drill',
       turnId: isNegotiation ? `negotiation-${answerIndex}` : 'drill-response-1',
       answerIndex,
       persistAudio: onOfflineAudioCaptured,
+      onPendingAudio: () => setHasPendingOfflineAudio(true),
     });
   }, [activeSession, enableOfflineRecording, isListening, negotiationMessages, onOfflineAudioCaptured, sessionMode]);
 
