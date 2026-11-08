@@ -5,6 +5,7 @@ import { Environment, OrbitControls, useEnvironment } from '@react-three/drei';
 import { clearProfessorModelCache, ProfessorModel, ProfessorModelPreloader } from './ProfessorModel';
 import { PreTestPage } from './PreTestPage';
 import { DrillsPage } from './DrillsPage';
+import { ProgressDrillEvaluationSection } from './ProgressDrillEvaluation';
 import { PostTestPage } from './PostTestPage';
 import { AppUpdateNotice, type UpdateBlockReason } from './AppUpdateNotice';
 import { OnboardingGuide, type OnboardingTab } from './OnboardingGuide';
@@ -5950,6 +5951,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     ))}
                   </div>
                 </div>
+
+                <ProgressDrillEvaluationSection records={communicationHistory} />
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-xl backdrop-blur-sm">

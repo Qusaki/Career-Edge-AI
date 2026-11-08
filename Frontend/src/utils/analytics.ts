@@ -1,5 +1,70 @@
 type ScoreRecord = Record<string, unknown>;
 
+export type ProgressDrillCriterion = 'vocabulary' | 'clarity' | 'grammar' | 'conciseness' | 'task_completion' | 'courtesy';
+export const progressDrillCriteria: readonly ProgressDrillCriterion[] = [
+  'vocabulary', 'clarity', 'grammar', 'conciseness', 'task_completion', 'courtesy',
+];
+
+export interface ProgressDrillEvaluation {
+  id: number;
+  drillType: string;
+  completedAt: string | null;
+  score: number;
+  passed: boolean | null;
+  feedbackSummary: string | null;
+  criteria: Record<ProgressDrillCriterion, number> | null;
+  authority: 'semantic_ai_with_objective_caps' | 'deterministic_fallback' | null;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+/** Use only completed server Drill sessions; local provisional records never enter Progress. */
+export const readProgressDrillEvaluation = (record: ScoreRecord): ProgressDrillEvaluation | null => {
+  if (record._source !== 'drills' || record.status !== 'completed'
+    || typeof record.id !== 'number' || !Number.isSafeInteger(record.id)
+    || typeof record.drill_type !== 'string') return null;
+  const score = toFiniteNumber(record.score);
+  if (score === null || score < 0 || score > 100) return null;
+
+  let evaluation: unknown = record.evaluation_data;
+  if (typeof evaluation === 'string') {
+    try {
+      evaluation = JSON.parse(evaluation) as unknown;
+    } catch {
+      evaluation = null;
+    }
+  }
+  const scoring = isRecord(evaluation) && isRecord(evaluation.scoring) ? evaluation.scoring : null;
+  const rawCriteria = scoring?.criteria;
+  const criteria = isRecord(rawCriteria) && progressDrillCriteria.every(key =>
+    typeof rawCriteria[key] === 'number' && Number.isInteger(rawCriteria[key])
+    && rawCriteria[key] >= 1 && rawCriteria[key] <= 5,
+  ) ? Object.fromEntries(progressDrillCriteria.map(key => [key, rawCriteria[key]])) as Record<ProgressDrillCriterion, number> : null;
+
+  return {
+    id: record.id,
+    drillType: record.drill_type,
+    completedAt: typeof record.end_time === 'string' ? record.end_time : null,
+    score,
+    passed: typeof record.passed === 'boolean' ? record.passed : null,
+    feedbackSummary: typeof record.feedback_summary === 'string' && record.feedback_summary.trim()
+      ? record.feedback_summary : null,
+    criteria,
+    authority: scoring?.authority === 'semantic_ai_with_objective_caps' || scoring?.authority === 'deterministic_fallback'
+      ? scoring.authority : null,
+  };
+};
+
+export const getProgressDrillEvaluations = (records: ScoreRecord[]): ProgressDrillEvaluation[] =>
+  records.map(readProgressDrillEvaluation)
+    .filter((item): item is ProgressDrillEvaluation => item !== null)
+    .sort((first, second) => {
+      const firstTime = first.completedAt ? Date.parse(first.completedAt) || 0 : 0;
+      const secondTime = second.completedAt ? Date.parse(second.completedAt) || 0 : 0;
+      return secondTime - firstTime || second.id - first.id;
+    });
+
 export type ActivityComparisonStatus = 'no-data' | 'baseline' | 'improved' | 'declined' | 'steady';
 
 export interface ActivityComparison {
