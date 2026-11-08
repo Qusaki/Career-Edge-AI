@@ -151,6 +151,66 @@ test('Drill and negotiation answers retain canonical task identity', async () =>
   }
 });
 
+test('offline Drill recorder setup preserves the audio-only fallback for standard and negotiation replies', () => {
+  const source = readFileSync(new URL('../src/components/DrillsPage.tsx', import.meta.url), 'utf8');
+  const recorderSetup = source.slice(
+    source.indexOf("if (sessionMode !== 'offline' || !isListening || !activeSession) return;"),
+    source.indexOf('useEffect(() => { sessionModeRef.current = sessionMode; }'),
+  );
+  const standardReply = source.slice(source.indexOf('const recordDrillResponse = () =>'), source.indexOf('const stopDrillResponse = () =>'));
+  const negotiationReply = source.slice(source.indexOf('const recordNegotiationReply = () =>'), source.indexOf('const completeDrill = async () =>'));
+  for (const setup of [recorderSetup, standardReply, negotiationReply]) {
+    assert.match(setup, /speechOnlyFallback: true/);
+    assert.match(setup, /persistAudio: onOfflineAudioCaptured/);
+    assert.match(setup, /onPendingAudio: \(\) => setHasPendingOfflineAudio\(true\)/);
+  }
+  assert.match(recorderSetup, /turnId: isNegotiation \? `negotiation-\$\{answerIndex\}` : 'drill-response-1'/);
+  assert.match(source, /const answerIndex = negotiationMessages\.filter\(message => message\.sender === 'user'\)\.length \+ 1;[\s\S]*?startListening\(transcript => void sendNegotiationReply/);
+  const hook = readFileSync(new URL('../src/hooks/useSpeechInput.ts', import.meta.url), 'utf8');
+  assert.match(hook, /session\.offlineAudio = offlineAudio;\s*if \(offlineRecorderRef\.current\) return true;/);
+});
+
+test('offline Drill pending answer is announced only after audio persistence and can complete without text', () => {
+  const source = readFileSync(new URL('../src/components/DrillsPage.tsx', import.meta.url), 'utf8');
+  const hook = readFileSync(new URL('../src/hooks/useSpeechInput.ts', import.meta.url), 'utf8');
+  assert.match(hook, /const canonicalTranscript = session\.accumulator\.claimCanonicalTranscript\(\)/);
+  assert.match(hook, /if \(capture &&[\s\S]*?const persisted = await session\.offlineAudio\.persistAudio\([\s\S]*?if \(!persisted\) \{[\s\S]*?return;[\s\S]*?audioWasSaved = true;[\s\S]*?if \(!canonicalTranscript\) session\.offlineAudio\.onPendingAudio\?\.\(\)/);
+  assert.match(hook, /session\.offlineAudio\.onPendingAudio\?\.\(\);[\s\S]*?setIsFinalizing\(false\)/);
+  assert.match(source, /disabled=\{completing !== null \|\| isListening \|\| isFinalizing \|\| isSavingSpokenResponse[\s\S]*?!spokenResponse\.trim\(\) && !\(sessionMode === 'offline' && hasPendingOfflineAudio\)/);
+  assert.match(source, /hasPendingOfflineAudio \? 'Recording saved\. Mark Complete to process it when online\.'/);
+  const audioOnlyCompletion = source.slice(source.indexOf('if (hasPendingOfflineAudio) {', source.indexOf('const completeDrill = async () =>')),
+    source.indexOf('const result = evaluateDrill(', source.indexOf('const completeDrill = async () =>')));
+  assert.match(audioOnlyCompletion, /await onActivityEnd\('recorded_local'\)/);
+  assert.match(audioOnlyCompletion, /createDrillCompletionResult\(activeSession\.drill_type as DrillType, 'pending-transcription'\)/);
+  assert.doesNotMatch(audioOnlyCompletion, /evaluateDrill\(|localScore|transcriptText/);
+});
+
+test('offline Drill pending audio reconnects to canonical transcription and server evaluation', async () => {
+  const { session, audio } = fixture('drill');
+  const storage = store(session, audio);
+  const requests: string[] = [];
+  const result = await syncOfflineSession(session, {
+    apiUrl: '/api', token: 'test-token', userId: 7, storage,
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      const path = String(url);
+      requests.push(path);
+      assert.equal((init?.headers as Record<string, string>).Authorization, 'Bearer test-token');
+      if (path.endsWith('/speech/transcribe')) return Response.json({ transcript: 'I can explain my approach.' });
+      const payload = JSON.parse(String(init?.body));
+      assert.equal(payload.answers[0].text, 'I can explain my approach.');
+      assert.equal(payload.activity_state.spokenResponse, 'I can explain my approach.');
+      return Response.json({ synchronized: true, client_session_id: session.clientSessionId,
+        activity_type: session.type, server_session_id: 42, authoritative_result: { score: 82 } });
+    }) as typeof fetch,
+  });
+  assert.deepEqual(requests, ['/api/speech/transcribe', '/api/offline-sync']);
+  assert.equal(storage.audio().transcriptStatus, 'available');
+  assert.equal(storage.audio().transcriptText, 'I can explain my approach.');
+  assert.equal(result.status, 'synced');
+  assert.equal(result.evaluationAuthority, 'server');
+  assert.deepEqual(result.authoritativeResult, { score: 82 });
+});
+
 test('wrong account, empty provider output, and failed transcription never create an answer', async () => {
   const { session, audio } = fixture('pre_test_intro');
   const wrongOwner = store(session, { ...audio, userId: 8 });
