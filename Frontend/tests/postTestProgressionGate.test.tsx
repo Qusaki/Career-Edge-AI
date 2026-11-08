@@ -92,7 +92,7 @@ test('final Drill completion and accepted offline sync refresh backend-authorita
   const dashboard = readFileSync(new URL('../src/components/Dashboard.tsx', import.meta.url), 'utf8');
   const drills = readFileSync(new URL('../src/components/DrillsPage.tsx', import.meta.url), 'utf8');
   assert.match(drills, /setProgress\(progressData\);\s*onProgressChange\?\.\(postTestAccess\)/);
-  assert.match(drills, /setNotice\('Drill was marked complete\.'\)[\s\S]*?await loadSessions\(\)/);
+  assert.match(drills, /setCompletionResult\(createDrillCompletionResult\([\s\S]*?await loadSessions\(\)/);
   assert.match(dashboard, /onProgressChange=\{handleDrillProgressChange\}/);
   assert.match(dashboard, /if \(synchronized <= 0\) return;[\s\S]*?refreshPostTestProgress\(authenticatedUserId\)/);
   assert.match(dashboard, /retryOfflineSessionManually\([\s\S]*?refreshPostTestProgress\(authenticatedUserId\)/);

@@ -105,7 +105,7 @@ test('server lock errors use the shared API error normalizer', () => {
 });
 
 test('online completion refreshes authoritative progression immediately', () => {
-  assert.match(source, /setNotice\('Drill was marked complete\.'\)[\s\S]*?await loadSessions\(\)/);
+  assert.match(source, /setCompletionResult\(createDrillCompletionResult\([\s\S]*?await loadSessions\(\)/);
 });
 
 test('completed Drill types remain replayable', () => {
