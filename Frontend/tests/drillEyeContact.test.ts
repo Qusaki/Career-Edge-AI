@@ -25,7 +25,11 @@ test('Drill camera renders inline in the activity-card header with responsive st
   assert.match(cameraSource, /max-w-44/);
   assert.doesNotMatch(cameraSource, /\bfixed\b|right-\d|right-\[/);
   assert.match(cameraSource, /Camera unavailable/);
-  assert.match(cameraSource, /Activity can continue without eye-contact scoring\./);
+  assert.match(cameraSource, /Activity can continue without Visual Engagement scoring\./);
+  assert.match(drillsSource, /Visual Engagement sample data is invalid/);
+  assert.match(drillsSource, /Visual Engagement score data is invalid/);
+  assert.match(drillsSource, /eye_contact_score: eyeContactScore/);
+  assert.match(drillsSource, /eye_contact_samples: eyeContactSummary\.samples/);
 });
 
 test('every normal Drill and negotiation share the active-session camera path', () => {

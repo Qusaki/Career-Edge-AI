@@ -18,34 +18,34 @@ export function CameraTrackingNotice({
     ? {
         icon: <Camera className="h-4 w-4" />,
         title: 'Camera active',
-        detail: samples > 0 ? `Eye-contact score: ${score}%` : 'Detecting your face...',
+        detail: samples > 0 ? `Visual Engagement score: ${score}%` : 'Detecting your face...',
         colors: 'border-emerald-500/35 bg-emerald-50 text-emerald-800',
       }
     : status === 'blocked'
       ? {
           icon: <CameraOff className="h-4 w-4" />,
           title: 'Camera unavailable',
-          detail: 'Activity can continue without eye-contact scoring.',
+          detail: 'Activity can continue without Visual Engagement scoring.',
           colors: 'border-rose-400/40 bg-rose-50 text-rose-800',
         }
       : status === 'unavailable'
         ? {
             icon: <CameraOff className="h-4 w-4" />,
             title: 'Camera unavailable',
-            detail: 'Activity can continue without eye-contact scoring.',
+            detail: 'Activity can continue without Visual Engagement scoring.',
             colors: 'border-rose-400/40 bg-rose-50 text-rose-800',
           }
       : status === 'off'
         ? {
             icon: <CameraOff className="h-4 w-4" />,
             title: 'Camera off',
-            detail: 'Eye-contact tracking is not active.',
+            detail: 'Visual Engagement tracking is not active.',
             colors: 'border-line bg-background text-ink',
           }
         : {
             icon: <LoaderCircle className="h-4 w-4 animate-spin" />,
             title: 'Opening camera',
-            detail: 'Preparing eye-contact tracking.',
+            detail: 'Preparing Visual Engagement tracking.',
             colors: 'border-amber-400/50 bg-amber-50 text-amber-900',
           };
 

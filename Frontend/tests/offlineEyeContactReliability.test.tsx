@@ -52,8 +52,8 @@ test('zero valid samples display unavailable, while a measured zero displays 0%'
     <CameraTrackingNotice videoRef={{ current: null }} status="tracking" score={0} samples={1} />,
   );
   assert.match(withoutFace, /Detecting your face/);
-  assert.doesNotMatch(withoutFace, /Eye-contact score: 0%/);
-  assert.match(measuredZero, /Eye-contact score: 0%/);
+  assert.doesNotMatch(withoutFace, /Visual Engagement score: 0%/);
+  assert.match(measuredZero, /Visual Engagement score: 0%/);
   assert.deepEqual(combineEyeContactSummaries(null, { score: null, samples: 0 }), { score: null, samples: 0 });
   assert.deepEqual(combineEyeContactSummaries(null, { score: null, samples: 3 }), { score: null, samples: 0 });
 });
@@ -89,7 +89,7 @@ test('camera and detector failures remain non-blocking and do not create a score
   const unavailable = renderToStaticMarkup(
     <CameraTrackingNotice videoRef={{ current: null }} status="unavailable" score={0} samples={0} />,
   );
-  assert.match(unavailable, /Activity can continue without eye-contact scoring/);
+  assert.match(unavailable, /Activity can continue without Visual Engagement scoring/);
   const hook = readFileSync(new URL('../src/hooks/useEyeContactTracker.ts', import.meta.url), 'utf8');
   assert.match(hook, /video\.videoWidth <= 0 \|\| video\.videoHeight <= 0/);
   assert.match(hook, /setStatus\('unavailable'\)/);
