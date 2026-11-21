@@ -6,6 +6,7 @@ import { clearProfessorModelCache, ProfessorModel, ProfessorModelPreloader } fro
 import { PreTestPage } from './PreTestPage';
 import { DrillsPage } from './DrillsPage';
 import { ProgressDrillEvaluationSection } from './ProgressDrillEvaluation';
+import { DashboardEvaluationSummarySection } from './DashboardEvaluationSummary';
 import { PostTestPage } from './PostTestPage';
 import { AppUpdateNotice, type UpdateBlockReason } from './AppUpdateNotice';
 import { OnboardingGuide, type OnboardingTab } from './OnboardingGuide';
@@ -78,6 +79,7 @@ import {
   hasCompletedTotalScore,
   isCompletedActivity,
 } from '../utils/analytics';
+import { deriveDashboardEvaluationSummary } from '../utils/dashboardEvaluationSummary';
 import * as pdfjsLib from 'pdfjs-dist';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.mjs`;
 import {
@@ -449,6 +451,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [interviewHistoryError, setInterviewHistoryError] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [communicationHistory, setCommunicationHistory] = useState<any[]>([]);
+  const [communicationHistoryState, setCommunicationHistoryState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [communicationHistoryUserId, setCommunicationHistoryUserId] = useState<number | null>(null);
+  const communicationHistoryRequestRef = React.useRef(0);
+  const assessmentHistoryNeedsRefreshRef = React.useRef(false);
   const [authenticatedUserId, setAuthenticatedUserId] = useState<number | null>(null);
   const authenticatedUserIdRef = React.useRef<number | null>(null);
   const [postTestVerification, setPostTestVerification] = useState<PostTestVerificationState>(UNKNOWN_POST_TEST_VERIFICATION);
@@ -892,6 +898,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
   }, [persistActivityCheckpoint, queueCheckpointOperation]);
 
+  const endAssessmentActivity = React.useCallback((outcome: ActivitySessionEnd) => {
+    if (outcome === 'cloud_completed') assessmentHistoryNeedsRefreshRef.current = true;
+    return endActivityCheckpoint(outcome);
+  }, [endActivityCheckpoint]);
+
   const getActiveActivityMode = React.useCallback((type: OfflineActivityType) => {
     const active = activeActivityCheckpointRef.current;
     return active?.type === type ? active.mode : 'online';
@@ -1069,6 +1080,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
     return { totalInterviews, avgScore, performance, perfColor, perfMsg, skillBreakdown, activityGroups, comparisonInsights };
   })();
+
+  const currentEvaluation = React.useMemo(
+    () => authenticatedUserId === communicationHistoryUserId
+      ? deriveDashboardEvaluationSummary(communicationHistory) : null,
+    [authenticatedUserId, communicationHistoryUserId, communicationHistory],
+  );
+  const currentEvaluationHistoryState = authenticatedUserId !== communicationHistoryUserId
+    && communicationHistoryState !== 'error'
+    ? 'loading' : communicationHistoryState;
 
   const renderStatCards = (delay = 0) => (
     <div data-onboarding="summary" className="grid w-full grid-cols-1 md:grid-cols-3 gap-2.5">
@@ -1263,14 +1283,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const fetchCommunicationHistory = React.useCallback(async (
     userId: number | null = authenticatedUserIdRef.current,
   ) => {
+    const requestId = ++communicationHistoryRequestRef.current;
     if (!userId) {
       setCommunicationHistory([]);
+      setCommunicationHistoryUserId(null);
+      setCommunicationHistoryState('idle');
       return;
     }
 
+    setCommunicationHistoryState('loading');
     try {
       const token = localStorage.getItem('token');
-      if (!token) return;
+      if (!token) throw new Error('Authentication is required to load communication history.');
 
       const [preTestIntroRes, activeListeningRes, postTestRes, drillsRes] = await Promise.all([
         fetch(`${API_URL}/pre-test-intro/`, {
@@ -1298,15 +1322,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
         throw new Error('One or more analytics history endpoints failed.');
       }
 
-      if (authenticatedUserIdRef.current !== userId) return;
+      if (authenticatedUserIdRef.current !== userId || communicationHistoryRequestRef.current !== requestId) return;
       setCommunicationHistory([
         ...preTestIntro.map((item: any) => ({ ...item, _source: 'pre-test-intro' })),
         ...activeListening.map((item: any) => ({ ...item, _source: 'pre-test-active-listening' })),
         ...postTest.map((item: any) => ({ ...item, _source: 'post-test-interview' })),
         ...drills.map((item: any) => ({ ...item, _source: 'drills' })),
       ]);
+      setCommunicationHistoryUserId(userId);
+      setCommunicationHistoryState('ready');
     } catch (e) {
       console.warn("Unable to load communication skill history", e);
+      if (authenticatedUserIdRef.current === userId && communicationHistoryRequestRef.current === requestId) {
+        setCommunicationHistoryState('error');
+      }
     }
   }, [API_URL]);
 
@@ -1419,6 +1448,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
         setThesisHistoryState('idle');
         setThesisHistoryError(null);
         setCommunicationHistory([]);
+        setCommunicationHistoryUserId(null);
+        setCommunicationHistoryState('idle');
         onLogout();
       }
     };
@@ -1668,11 +1699,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   useEffect(() => {
     if (activeTab === 'analytics') {
+      assessmentHistoryNeedsRefreshRef.current = false;
       void fetchHistory();
       void fetchThesisHistory();
       void fetchCommunicationHistory();
     }
   }, [activeTab, fetchHistory, fetchThesisHistory, fetchCommunicationHistory]);
+
+  useEffect(() => {
+    if (activeTab !== 'dashboard' || !authenticatedUserId || !assessmentHistoryNeedsRefreshRef.current) return;
+    assessmentHistoryNeedsRefreshRef.current = false;
+    void fetchCommunicationHistory(authenticatedUserId);
+  }, [activeTab, authenticatedUserId, fetchCommunicationHistory]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -4639,6 +4677,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                 {renderStatCards()}
 
+                <DashboardEvaluationSummarySection
+                  summary={currentEvaluation}
+                  historyState={currentEvaluationHistoryState}
+                  onStartPreTest={() => openAuthenticatedTab('pre-test')}
+                  onRetry={() => void fetchCommunicationHistory(authenticatedUserId)}
+                />
+
                 {/* History List */}
                 <div className="mt-5 w-full space-y-2.5">
                   <div data-onboarding="recent-sessions" className="flex items-center justify-between mb-1">
@@ -4718,7 +4763,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 resumeSession={activeActivityCheckpoint?.type === 'pre_test_intro' || activeActivityCheckpoint?.type === 'pre_test_active_listening' ? activeActivityCheckpoint : null}
                 onActivityStart={beginActivityCheckpoint}
                 onActivityCheckpoint={updateActivityCheckpoint}
-                onActivityEnd={endActivityCheckpoint}
+                onActivityEnd={endAssessmentActivity}
                 onOfflineAudioCaptured={persistOfflineAudioCapture}
               />
             )}
@@ -4735,7 +4780,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 resumeSession={activeActivityCheckpoint?.type === 'drill' ? activeActivityCheckpoint : null}
                 onActivityStart={beginActivityCheckpoint}
                 onActivityCheckpoint={updateActivityCheckpoint}
-                onActivityEnd={endActivityCheckpoint}
+                onActivityEnd={endAssessmentActivity}
                 onOfflineAudioCaptured={persistOfflineAudioCapture}
               />
             )}
@@ -4755,7 +4800,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 userDepartment={profile.department}
                 onActivityStart={beginActivityCheckpoint}
                 onActivityCheckpoint={updateActivityCheckpoint}
-                onActivityEnd={endActivityCheckpoint}
+                onActivityEnd={endAssessmentActivity}
                 onOfflineAudioCaptured={persistOfflineAudioCapture}
               />
             )}
