@@ -2,6 +2,7 @@ import json
 import unittest
 
 from core.response_quality import intro_quality_cap, repetition_dominated
+from routers.pre_test_active_listening import ACTIVE_LISTENING_PROMPTS
 from services.ai_provider import AIProviderUnavailableError
 from services.assessment_scoring import (
     COMMUNICATION_KEYS, DRILL_KEYS, DRILL_TASKS, INTRO_KEYS, score_drill, score_intro,
@@ -205,6 +206,22 @@ class AssessmentScoringTests(unittest.IsolatedAsyncioTestCase):
     async def test_complete_listening_story_can_score_high(self):
         result = await score_listening(STORY, STORY, FakeProvider(high(COMMUNICATION_KEYS, 5)))
         self.assertEqual(result["total_score"], 25)
+
+    async def test_v3_stories_score_against_their_actual_prompt_without_changing_the_rubric(self):
+        summaries = (
+            "Mara and Luis prepared 120 orientation kits for new students. Luis updated campus maps showing the wrong library entrance before packing. Only 80 water bottles arrived, so Mara decided the remaining students would collect theirs tomorrow.",
+            "The student leadership workshop begins at eight thirty in the multimedia hall. Each group brings one laptop and two copies of its action plan. Because the projector is broken, the workshop moves to Room 204, but registration stays in the lobby.",
+            "Jonah and Aira helped at a community reading event for 72 pupils. They had enough books but only 48 activity sheets, so Jonah made extra copies. Heavy rain delayed the guest reader, and Aira started a vocabulary game while they waited.",
+        )
+        for story, summary in zip(ACTIVE_LISTENING_PROMPTS, summaries):
+            with self.subTest(story=story[:20]):
+                provider = FakeProvider(high(COMMUNICATION_KEYS, 5))
+                strong = await score_listening(story, summary, provider)
+                self.assertEqual(strong["total_score"], 25)
+                self.assertEqual(set(COMMUNICATION_KEYS).issubset(strong), True)
+                self.assertIn(story, provider.messages[-1]["content"])
+                irrelevant = await score_listening(story, "Unrelated banana clouds float past the moon every afternoon.", FakeProvider(high(COMMUNICATION_KEYS, 5)))
+                self.assertLessEqual(irrelevant["total_score"], 10)
 
     async def test_partial_listening_summary_loses_coverage(self):
         provider = FakeProvider(high(COMMUNICATION_KEYS, 5, task_alignment=3))

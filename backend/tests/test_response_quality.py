@@ -8,7 +8,7 @@ from core.response_quality import (
     repetition_dominated,
     validate_five_point_scores,
 )
-from routers.pre_test_active_listening import ACTIVE_LISTENING_PROMPTS, ACTIVE_LISTENING_PROMPTS_V1
+from routers.pre_test_active_listening import ACTIVE_LISTENING_PROMPTS, ACTIVE_LISTENING_PROMPTS_V1, ACTIVE_LISTENING_PROMPTS_V2
 
 
 class ResponseQualityTests(unittest.TestCase):
@@ -47,7 +47,7 @@ class ResponseQualityTests(unittest.TestCase):
         self.assertIsNone(listening_quality_cap(story, complete)[0])
         self.assertEqual(listening_quality_cap(story, "unrelated banana clouds " * 20)[0], 2)
 
-        shorter_story = ACTIVE_LISTENING_PROMPTS[1]
+        shorter_story = ACTIVE_LISTENING_PROMPTS_V2[1]
         shorter_summary = (
             "The leadership workshop starts at eight thirty in the multimedia hall, and groups arrive by eight fifteen "
             "with a laptop, two action-plan copies, and a flash-drive backup. Morning covers problems, afternoon "
@@ -56,6 +56,18 @@ class ResponseQualityTests(unittest.TestCase):
         )
         self.assertEqual(listening_quality_cap(shorter_story, incomplete)[0], 2)
         self.assertIsNone(listening_quality_cap(shorter_story, shorter_summary)[0])
+
+    def test_each_v3_story_retains_enough_detail_for_a_good_summary(self):
+        strong_summaries = (
+            "Mara and Luis prepared 120 orientation kits for new students. Luis updated campus maps showing the wrong library entrance before packing. Only 80 water bottles arrived, so Mara decided the remaining students would collect theirs tomorrow.",
+            "The student leadership workshop begins at eight thirty in the multimedia hall. Each group brings one laptop and two copies of its action plan. Because the projector is broken, the workshop moves to Room 204, but registration stays in the lobby.",
+            "Jonah and Aira helped at a community reading event for 72 pupils. They had enough books but only 48 activity sheets, so Jonah made extra copies. Heavy rain delayed the guest reader, and Aira started a vocabulary game while they waited.",
+        )
+        for story, summary in zip(ACTIVE_LISTENING_PROMPTS, strong_summaries):
+            with self.subTest(story=story[:20]):
+                self.assertIsNone(listening_quality_cap(story, summary)[0])
+                self.assertEqual(listening_quality_cap(story, "Unrelated banana clouds float past the moon every afternoon.")[0], 2)
+                self.assertEqual(listening_quality_cap(story, "Too short.")[0], 2)
 
     def test_post_test_repeated_or_sparse_answers_lose_top_marks(self):
         self.assertEqual(post_test_quality_cap(["I can do it."] * 5)[0], 2)

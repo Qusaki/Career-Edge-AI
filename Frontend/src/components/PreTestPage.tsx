@@ -9,8 +9,8 @@ import {
   CAREER_EDGE_SPEECH_PITCH,
   CAREER_EDGE_SPEECH_RATE,
   CAREER_EDGE_SPEECH_VOLUME,
-  selectCareerEdgeVoice,
 } from '../utils/careerEdgeVoice';
+import { selectActiveListeningVoice } from '../utils/activeListeningVoice';
 import { cancelBrowserSpeech, speakBrowserText } from '../utils/browserSpeech';
 import { useEyeContactTracker } from '../hooks/useEyeContactTracker';
 import type { OfflineActivityBridgeProps } from '../offline/sessionFoundation';
@@ -18,11 +18,13 @@ import { createClientSessionId } from '../offline/sessionFoundation';
 import { combineEyeContactSummaries, shouldCheckpointEyeContact, type EyeContactSummary } from '../offline/eyeContact';
 import {
   ACTIVE_LISTENING_PROMPTS_V1,
+  ACTIVE_LISTENING_PROMPTS_V2,
   getOfflineActiveListeningPrompt,
   getActiveListeningPromptForServerSession,
   hasCurrentQuestionPack,
   PRETEST_ACTIVE_LISTENING_VERSION,
   PRETEST_ACTIVE_LISTENING_V1_VERSION,
+  PRETEST_ACTIVE_LISTENING_V2_VERSION,
   PRETEST_WHO_AM_I_PROMPT,
   PRETEST_WHO_AM_I_VERSION,
 } from '../offline/questionPacks';
@@ -505,7 +507,7 @@ export function PreTestPage({
       pitch: CAREER_EDGE_SPEECH_PITCH,
       volume: CAREER_EDGE_SPEECH_VOLUME,
       language: CAREER_EDGE_SPEECH_LANGUAGE,
-      selectVoice: selectCareerEdgeVoice,
+      selectVoice: selectActiveListeningVoice,
       onPending: () => {
         setSpeechFallbackPrompt('');
         setSpeechPlaybackFailed(false);
@@ -842,7 +844,10 @@ export function PreTestPage({
       const activeListeningPackVersion = restoredActiveListeningStory
         && ACTIVE_LISTENING_PROMPTS_V1.some(prompt => prompt === restoredActiveListeningStory)
         ? PRETEST_ACTIVE_LISTENING_V1_VERSION
-        : PRETEST_ACTIVE_LISTENING_VERSION;
+        : restoredActiveListeningStory
+          && ACTIVE_LISTENING_PROMPTS_V2.some(prompt => prompt === restoredActiveListeningStory)
+          ? PRETEST_ACTIVE_LISTENING_V2_VERSION
+          : PRETEST_ACTIVE_LISTENING_VERSION;
       void onActivityStart({
         type,
         serverSessionId: exercise.kind === 'intro'
