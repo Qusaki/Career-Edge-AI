@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 INTRO_KEYS = ("score_clarity", "score_completeness", "score_courtesy", "score_correctness", "score_conciseness")
 COMMUNICATION_KEYS = ("score_vocabulary", "score_clarity", "score_grammar", "score_courtesy", "score_conciseness")
 DRILL_KEYS = ("vocabulary", "clarity", "grammar", "conciseness", "task_completion", "courtesy")
+DRILL_FEEDBACK_MIN_CHARS = 110
+DRILL_FEEDBACK_MAX_CHARS = 900
 
 DRILL_TASKS = {
     "jam": "Stay on the assigned topic; develop connected, coherent ideas rather than filler.",
@@ -91,6 +93,11 @@ def validate_assessment_response(raw: str, keys: tuple[str, ...], maximum: int,
         expected.add("answer_relevance")
     if set(data) != expected:
         raise ValueError("Unexpected assessment output fields.")
+    if drill_tenths:
+        feedback_text = re.sub(r"[\r\n]+", " ", data["feedback_summary"].strip())
+        if not DRILL_FEEDBACK_MIN_CHARS <= len(feedback_text) <= DRILL_FEEDBACK_MAX_CHARS:
+            raise ValueError("Drill feedback must be a concise, substantive paragraph.")
+        data["feedback_summary"] = feedback_text
     feedback = data["feedback_summary"].lower()
     if data["total_score"] >= len(keys) * maximum * 0.8 and re.search(
         r"most .{0,30}missing|largely off.topic|unrelated|did not address|incoherent|nonsense", feedback
@@ -127,10 +134,17 @@ def _fallback(kind: str, context: Any, answer: Any, keys: tuple[str, ...],
     if kind == "who_am_i":
         # A keyword-complete introduction cannot establish semantic correctness.
         scores["score_correctness"] = 1
+    feedback = f"Deterministic fallback: {reason} Objective evidence supports only a {'developing' if developing else 'beginning'} score; semantic scoring was unavailable."
+    if kind.startswith("drill_"):
+        feedback += (
+            " The available response met the minimum length and repetition checks, but its meaning could not be assessed. Retry when semantic evaluation is available for task-specific guidance."
+            if developing else
+            " The available response did not establish enough objective evidence for a higher score. Review the assigned task and retry when semantic evaluation is available for specific guidance."
+        )
     return {
         **scores, **{key: score for key in secondary_keys}, "task_alignment": score,
         "total_score": sum(scores.values()),
-        "feedback_summary": f"Deterministic fallback: {reason} Objective evidence supports only a {'developing' if developing else 'beginning'} score; semantic scoring was unavailable.",
+        "feedback_summary": feedback,
         "scoring_authority": "deterministic_fallback",
     }
 
@@ -145,7 +159,8 @@ async def _evaluate(kind: str, instruction: str, context: Any, answer: Any,
         "task_alignment": f"integer from 1 to {maximum}",
         "total_score": ("number equal to the sum of the six rubric criteria, in increments of 0.1" if drill_tenths
                         else "integer equal to the sum of the listed rubric criteria only"),
-        "feedback_summary": "nonempty concise text",
+        "feedback_summary": ("one constructive, response-specific paragraph of about 3-5 sentences, 110-900 characters"
+                             if drill_tenths else "nonempty concise text"),
     }
     if answer_count is not None:
         contract["answer_relevance"] = f"array of exactly {answer_count} integers from 1 to {maximum}"
@@ -154,6 +169,13 @@ async def _evaluate(kind: str, instruction: str, context: Any, answer: Any,
     rubric_instruction = (
         "Assign each rubric score directly in 0.1 increments; task_alignment remains an integer. "
         if drill_tenths else "Every criterion and task_alignment must be an integer. "
+    )
+    feedback_instruction = (
+        "For feedback_summary, write one coherent paragraph of about 3-5 sentences. Identify a strength only when supported by the submitted answer, "
+        "the most important improvement area, a specific observation grounded in the answer and canonical task, and one practical next step. "
+        "Be professional and constructive for passed and failed responses. Do not invent vocal qualities from text, insult or diagnose the student, "
+        "repeat rubric numbers, quote large transcript passages, or unnecessarily repeat personal details. Avoid generic praise and unsupported claims."
+        if drill_tenths else "Feedback must agree with the scores and identify concrete strengths and omissions."
     )
     system = (
         f"You are grading the {kind} assessment, not conversing with the student. "
@@ -164,7 +186,7 @@ async def _evaluate(kind: str, instruction: str, context: Any, answer: Any,
         "Every named key must appear at the top level of the returned object; do not nest scores. "
         f"{rubric_instruction}"
         "total_score must equal the sum of primary rubric criteria. "
-        "Feedback must agree with the scores and identify concrete strengths and omissions."
+        f"{feedback_instruction}"
     )
     try:
         resolved = provider or get_ai_provider()
@@ -184,6 +206,20 @@ async def _evaluate(kind: str, instruction: str, context: Any, answer: Any,
 def _apply_cap(evaluation: dict[str, Any], keys: tuple[str, ...], cap: int | None,
                reason: str | None, *, drill_tenths: bool = False) -> dict[str, Any]:
     adjusted = cap_rubric(evaluation, keys, cap, reason)
+    if drill_tenths and cap is not None:
+        limitation = reason or "The response did not meet the full rubric requirements."
+        if evaluation.get("scoring_authority") == "deterministic_fallback":
+            adjusted["feedback_summary"] = (
+                f"Deterministic fallback: {limitation} The score reflects only objective checks because semantic evaluation was unavailable. "
+                "Review the assigned task and retry when semantic evaluation is available for more specific guidance."
+            )
+        elif re.search(r"\b(fully|perfectly|completely|excellent|outstanding|no improvements?)\b", evaluation["feedback_summary"], re.IGNORECASE):
+            adjusted["feedback_summary"] = (
+                f"{limitation} The objective check limits the final rubric result, even if other parts of the response were useful. "
+                "Address this requirement directly in the next attempt, then review the remaining feedback against the task."
+            )
+        else:
+            adjusted["feedback_summary"] = f"{evaluation['feedback_summary']} {limitation} Address this requirement directly in the next attempt."
     if evaluation.get("scoring_authority") == "deterministic_fallback" and not adjusted["feedback_summary"].startswith("Deterministic fallback:"):
         adjusted["feedback_summary"] = f"Deterministic fallback: {adjusted['feedback_summary']} Semantic scoring was unavailable."
     if drill_tenths:
@@ -276,6 +312,12 @@ async def score_drill(drill_type: str, evaluation_data: dict[str, Any],
     prompt = evaluation_data.get("prompt")
     if not isinstance(prompt, dict):
         prompt = {}
+    if drill_type == "negotiation":
+        employer_turns = [message.get("text", "").strip() for message in evaluation_data.get("negotiation_messages", [])
+                          if isinstance(message, dict) and message.get("sender") in {"bot", "ai"}
+                          and isinstance(message.get("text"), str) and message["text"].strip()]
+        if employer_turns:
+            prompt = {**prompt, "employer_turns": employer_turns}
     evaluation = await _evaluate(
         f"drill_{drill_type}",
         f"Task-specific rubric: {DRILL_TASKS[drill_type]} Six criteria 1-5: vocabulary, clarity, "

@@ -407,7 +407,11 @@ class OfflineSyncEndpointTests(unittest.TestCase):
             (3.7, 4.1, 3.5, 3.2, 4.0, 3.8),
         ))
         provider = FakeProvider({**criteria, "task_alignment": 4, "total_score": 22.3,
-                                 "feedback_summary": "A relevant and coherent response."})
+                                 "feedback_summary": (
+                                     "The response explained the assigned word clearly and kept a professional tone. "
+                                     "The main idea was relevant, although its supporting example could be more specific. "
+                                     "Next time, connect the word to one concrete situation and keep the explanation direct."
+                                 )})
         payload = {
             "client_session_id": "precise-drill-client",
             "activity_type": "drill",
@@ -427,9 +431,11 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         self.assertEqual(stored_rubric["criteria"], criteria)
         self.assertEqual(stored_rubric["raw_score"], 22.3)
         self.assertEqual(provider.calls, 1)
+        self.assertEqual(authoritative["feedback_summary"], provider.payload["feedback_summary"])
         with self.Session() as db:
             stored = db.get(DrillSession, authoritative["id"])
             self.assertEqual(stored.score, 74.33)
+            self.assertEqual(stored.feedback_summary, provider.payload["feedback_summary"])
             self.assertEqual(json.loads(stored.evaluation_data)["scoring"]["criteria"], criteria)
 
     def test_department_v2_drills_sync_only_for_authenticated_department(self):

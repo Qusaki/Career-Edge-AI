@@ -55,6 +55,12 @@ test('online response retains rubric criteria and labels its actual scoring auth
   assert.match(html, /Back to Drills/);
 });
 
+test('immediate result renders the complete stored paragraph without truncation', () => {
+  const feedback = 'The answer addressed the assigned topic with a clear main idea. The supporting detail was relevant, but several phrases repeated the same point. Next time, give one concrete example and remove repeated wording to make the response more direct.';
+  const html = render(createDrillCompletionResult('jam', 'online', { ...onlinePayload, feedback_summary: feedback }));
+  assert.ok(html.includes(feedback));
+});
+
 test('immediate Drill result displays canonical tenths and historical whole numbers', () => {
   const decimalCriteria = { ...scoring.criteria, vocabulary: 2.5, clarity: 3.7 };
   const result = createDrillCompletionResult('jam', 'online', {

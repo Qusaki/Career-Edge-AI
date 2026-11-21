@@ -31,10 +31,17 @@ class FailingProvider:
         yield ""  # pragma: no cover
 
 
+DRILL_FEEDBACK = (
+    "The response explained the assigned idea clearly and maintained a professional tone. "
+    "Its main point was relevant, though some supporting details could be more precise. "
+    "Next time, add one concrete example and remove repeated phrasing to make the answer more direct."
+)
+
+
 def high(keys, maximum, **extra):
     return {
         **{key: maximum for key in keys}, "task_alignment": maximum,
-        "total_score": len(keys) * maximum, "feedback_summary": "Relevant and coherent response.",
+        "total_score": len(keys) * maximum, "feedback_summary": DRILL_FEEDBACK if keys == DRILL_KEYS else "Relevant and coherent response.",
         **({"score_vocabulary": 5, "score_grammar": 5} if keys == INTRO_KEYS else {}),
         **extra,
     }
@@ -60,10 +67,54 @@ INTRO = (
 
 
 class AssessmentScoringTests(unittest.IsolatedAsyncioTestCase):
+    def test_new_drill_feedback_requires_a_bounded_paragraph_without_changing_other_assessments(self):
+        payload = high(DRILL_KEYS, 5)
+        for feedback in ("", "   ", "Relevant response.", "A" * 109, "A" * 901):
+            with self.subTest(feedback=feedback[:24]), self.assertRaises(ValueError):
+                validate_assessment_response(json.dumps({**payload, "feedback_summary": feedback}),
+                                             DRILL_KEYS, 5, drill_tenths=True)
+        padded = f"  {DRILL_FEEDBACK}  "
+        result = validate_assessment_response(json.dumps({**payload, "feedback_summary": padded}),
+                                              DRILL_KEYS, 5, drill_tenths=True)
+        self.assertEqual(result["feedback_summary"], DRILL_FEEDBACK)
+        self.assertEqual(validate_assessment_response(json.dumps(high(COMMUNICATION_KEYS, 5)), COMMUNICATION_KEYS, 5)["feedback_summary"],
+                         "Relevant and coherent response.")
+
+    async def test_drill_feedback_uses_the_existing_single_provider_call(self):
+        provider = FakeProvider(high(DRILL_KEYS, 5))
+        result = await score_drill("jam", {"prompt": {"topic": "The Ocean"},
+                                           "spoken_response": "The ocean supports marine life, and protecting habitats helps communities and the environment."}, provider)
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual(result["feedback_summary"], DRILL_FEEDBACK)
+        self.assertIn("one coherent paragraph of about 3-5 sentences", provider.messages[0]["content"])
+        self.assertIn("one practical next step", provider.messages[0]["content"])
+        self.assertEqual(result["scoring"]["authority"], "semantic_ai_with_objective_caps")
+
+    async def test_cap_preserves_compatible_feedback_and_states_objective_limitation(self):
+        provider = FakeProvider(high(DRILL_KEYS, 5))
+        result = await score_drill("taboo", {"prompt": {"topic": "Cooking", "banned_words": ["rice"]},
+                                             "spoken_response": "First cook rice in a pot, then discuss the steps clearly with your team and explain why each step matters."}, provider)
+        self.assertEqual(provider.calls, 1)
+        self.assertLessEqual(result["scoring"]["raw_score"], 11)
+        self.assertIn(DRILL_FEEDBACK, result["feedback_summary"])
+        self.assertIn("forbidden word", result["feedback_summary"])
+        self.assertIn("next attempt", result["feedback_summary"])
+
+    async def test_negotiation_feedback_prompt_includes_existing_employer_turns(self):
+        provider = FakeProvider(high(DRILL_KEYS, 5))
+        await score_drill("negotiation", {"prompt": {"scenario": "Negotiate a starting salary."},
+                                          "negotiation_messages": [
+                                              {"sender": "bot", "text": "The offer is 35000."},
+                                              {"sender": "user", "text": "Thank you for the offer. Could we discuss 38000 based on the role responsibilities?"},
+                                          ]}, provider)
+        submitted = json.loads(provider.messages[1]["content"])
+        self.assertEqual(submitted["canonical_task"]["employer_turns"], ["The offer is 35000."])
+        self.assertIn("38000", submitted["committed_answer"])
+
     def test_drill_tenths_validation_accepts_decimals_and_historical_integers(self):
         scores = dict(zip(DRILL_KEYS, (3.7, 4.1, 3.5, 3.2, 4, 3.8)))
         payload = {**scores, "task_alignment": 4, "total_score": 22.3,
-                   "feedback_summary": "Relevant and coherent response."}
+                   "feedback_summary": DRILL_FEEDBACK}
         validated = validate_assessment_response(json.dumps(payload), DRILL_KEYS, 5, drill_tenths=True)
         self.assertEqual(validated["vocabulary"], 3.7)
         self.assertEqual(validated["conciseness"], 3.2)
@@ -74,13 +125,13 @@ class AssessmentScoringTests(unittest.IsolatedAsyncioTestCase):
                 values = {key: boundary for key in DRILL_KEYS}
                 result = validate_assessment_response(json.dumps({
                     **values, "task_alignment": 4, "total_score": boundary * 6,
-                    "feedback_summary": "Relevant response.",
+                    "feedback_summary": DRILL_FEEDBACK,
                 }), DRILL_KEYS, 5, drill_tenths=True)
                 self.assertEqual(result["clarity"], boundary)
 
     def test_drill_tenths_validation_rejects_invalid_scores_totals_and_alignment(self):
         base = {**{key: 3 for key in DRILL_KEYS}, "task_alignment": 4,
-                "total_score": 18, "feedback_summary": "Relevant response."}
+                "total_score": 18, "feedback_summary": DRILL_FEEDBACK}
         for value in (0, 0.9, 5.1, 3.74, 3.75, "3.5", None, float("nan"), float("inf"), True, False):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 validate_assessment_response(json.dumps({**base, "clarity": value}), DRILL_KEYS, 5, drill_tenths=True)
@@ -106,7 +157,7 @@ class AssessmentScoringTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(raw=expected_raw):
                 provider = FakeProvider({
                     **dict(zip(DRILL_KEYS, values)), "task_alignment": 4,
-                    "total_score": expected_raw, "feedback_summary": "Relevant and coherent response.",
+                    "total_score": expected_raw, "feedback_summary": DRILL_FEEDBACK,
                 })
                 result = await score_drill("jam", {"prompt": {"topic": "The Ocean"}, "spoken_response": answer}, provider)
                 self.assertEqual(result["scoring"]["raw_score"], expected_raw)
@@ -123,7 +174,7 @@ class AssessmentScoringTests(unittest.IsolatedAsyncioTestCase):
         )
         values = dict(zip(DRILL_KEYS, (2.5, 3.7, 2.8, 3.1, 4.2, 3.9)))
         provider = FakeProvider({**values, "task_alignment": 3, "total_score": 20.2,
-                                 "feedback_summary": "The response partly follows the task."})
+                                 "feedback_summary": DRILL_FEEDBACK})
         result = await score_drill("jam", {"prompt": {"topic": "The Ocean"}, "spoken_response": answer}, provider)
         self.assertEqual(result["scoring"]["criteria"]["vocabulary"], 2.5)
         self.assertEqual(result["scoring"]["criteria"]["grammar"], 2.8)
@@ -264,6 +315,9 @@ class AssessmentScoringTests(unittest.IsolatedAsyncioTestCase):
     async def test_long_response_does_not_raise_fallback_score(self):
         result = await score_drill("jam", {"prompt": {"topic": "The Ocean"}, "spoken_response": "Computer processors enable software applications to run efficiently. " * 20}, FailingProvider())
         self.assertLessEqual(result["score"], 40)
+        self.assertEqual(result["scoring"]["authority"], "deterministic_fallback")
+        self.assertIn("semantic evaluation was unavailable", result["feedback_summary"])
+        self.assertNotIn("persuasive", result["feedback_summary"])
 
     async def test_only_canonical_argument_is_sent_to_provider(self):
         provider = FakeProvider(high(INTRO_KEYS, 3))
