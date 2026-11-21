@@ -81,13 +81,15 @@ class PostTestCompletionTests(unittest.TestCase):
             db.add(session)
             db.commit()
             db.refresh(session)
-            db.add(PostTestInterviewMessage(session_id=session.id, role="ai", content="Question 1"))
             for answer_number in range(1, answer_count + 1):
+                db.add(PostTestInterviewMessage(session_id=session.id, role="ai", content=f"Question {answer_number}"))
                 db.add(PostTestInterviewMessage(
                     session_id=session.id,
                     role="user",
                     content=f"Persisted answer {answer_number}",
                 ))
+            if answer_count == 0:
+                db.add(PostTestInterviewMessage(session_id=session.id, role="ai", content="Question 1"))
             db.commit()
             return session.id
 
@@ -116,17 +118,38 @@ class PostTestCompletionTests(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertEqual(result["score_eye_contact"], 80)
         self.assertEqual(result["eye_contact_samples"], 20)
+        self.assertEqual(result["evaluation_data"]["schema_version"], "post-test-evaluation-v2")
+        self.assertEqual(len(result["evaluation_data"]["question_evaluations"]), 5)
+        detail = self.client.get(f"/post-test-interview/{session_id}")
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()["evaluation_data"], result["evaluation_data"])
+        self.assertNotIn("evaluation_data", self.client.get("/post-test-interview/").json()[0])
 
     def test_scoring_uses_delivered_questions_and_saved_answers(self) -> None:
         session_id = self.create_session(5)
         with self.SessionLocal() as db:
-            for number in range(2, 6):
-                db.add(PostTestInterviewMessage(session_id=session_id, role="ai", content=f"Saved question {number}"))
+            questions = db.query(PostTestInterviewMessage).filter_by(session_id=session_id, role="ai").order_by(PostTestInterviewMessage.id).all()
+            for number, question in enumerate(questions[1:], 2):
+                question.content = f"Saved question {number}"
             db.commit()
         with patch.object(post_test_interview, "score_post_test", new_callable=AsyncMock, return_value={
             "score_vocabulary": 1, "score_clarity": 1, "score_grammar": 1,
             "score_courtesy": 1, "score_conciseness": 1,
             "feedback_summary": "These answers need more detail.",
+            "evaluation_data": {
+                "schema_version": "post-test-evaluation-v2", "question_pack_version": "posttest-v1",
+                "scoring_authority": "deterministic_fallback",
+                "question_evaluations": [
+                    {"question_index": index, "criteria": {
+                        "vocabulary": 1, "clarity": 1, "grammar": 1, "courtesy": 1, "conciseness": 1,
+                    }, "answer_relevance": 1, "learning_evidence": 1,
+                     "feedback": None, "scoring_authority": "deterministic_fallback"}
+                    for index in range(1, 6)
+                ],
+                "aggregate_criteria": {"vocabulary": 1, "clarity": 1, "grammar": 1, "courtesy": 1, "conciseness": 1},
+                "total_score": 5, "passed": False,
+                "overall_feedback": "These answers need more detail.", "recommendations": [],
+            },
         }) as scorer:
             response = self.complete(session_id)
         self.assertEqual(response.status_code, 200, response.text)
@@ -151,6 +174,23 @@ class PostTestCompletionTests(unittest.TestCase):
         self.assertEqual(second.status_code, 200, second.text)
         self.assertEqual(first.json()["id"], second.json()["id"])
         self.assertEqual(second.json()["status"], "completed")
+        self.assertIsNone(self.client.get(f"/post-test-interview/{session_id}").json()["evaluation_data"])
+
+    def test_missing_persisted_question_is_not_reconstructed_for_detailed_scoring(self) -> None:
+        session_id = self.create_session(5)
+        with self.SessionLocal() as db:
+            question = db.query(PostTestInterviewMessage).filter_by(session_id=session_id, role="ai").order_by(PostTestInterviewMessage.id).first()
+            db.delete(question)
+            db.commit()
+        response = self.complete(session_id)
+        self.assertEqual(response.status_code, 409, response.text)
+        with self.SessionLocal() as db:
+            self.assertIsNone(db.get(PostTestInterviewSession, session_id).evaluation_data)
+
+    def test_wrong_user_cannot_read_detailed_result(self) -> None:
+        session_id = self.create_session(5, user_id=1)
+        self.current_user_id = 2
+        self.assertEqual(self.client.get(f"/post-test-interview/{session_id}").status_code, 404)
 
     def test_expired_session_is_rejected(self) -> None:
         response = self.complete(self.create_session(5, status="expired"))

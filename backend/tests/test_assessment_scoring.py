@@ -7,6 +7,7 @@ from services.ai_provider import AIProviderUnavailableError
 from services.assessment_scoring import (
     COMMUNICATION_KEYS, DRILL_KEYS, DRILL_TASKS, INTRO_KEYS, score_drill, score_intro,
     score_listening, score_post_test, validate_assessment_response,
+    validate_post_test_detail, round_post_test_mean,
 )
 
 
@@ -60,6 +61,22 @@ POST_ANSWERS = [
     "I would listen to my teammate's concern, explain the evidence respectfully, and propose a decision we can both support.",
     "I still want to improve public speaking, so I will rehearse weekly, record myself, and request constructive feedback.",
 ]
+
+
+def detailed_post_result(*, relevance=None, learning=None, criteria=None):
+    relevance = relevance or [5] * 5
+    learning = learning or [5] * 5
+    criteria = criteria or [{key: 5 for key in ("vocabulary", "clarity", "grammar", "courtesy", "conciseness")} for _ in range(5)]
+    return {
+        "question_evaluations": [
+            {"question_index": index, "criteria": criteria[index - 1],
+             "answer_relevance": relevance[index - 1], "learning_evidence": learning[index - 1],
+             "feedback": "The response gives a relevant example. Add one more concrete detail next time."}
+            for index in range(1, 6)
+        ],
+        "overall_feedback": "The answers communicate clearly and include useful examples.",
+        "recommendations": ["Support each answer with one specific example."],
+    }
 INTRO = (
     "My name is John. I am a Computer Science student. I enjoy building automation tools "
     "and my strength is explaining technical ideas clearly. I am preparing for interviews "
@@ -295,20 +312,111 @@ class AssessmentScoringTests(unittest.IsolatedAsyncioTestCase):
     async def test_post_test_five_answers_alone_do_not_create_high_score(self):
         questions = [f"Question {index}" for index in range(5)]
         answers = [f"Answer {index}" for index in range(5)]
-        result = await score_post_test(questions, answers, FakeProvider(high(COMMUNICATION_KEYS, 5, answer_relevance=[1] * 5)))
+        result = await score_post_test(questions, answers, FakeProvider(detailed_post_result(relevance=[1] * 5)))
         self.assertLessEqual(result["total_score"], 10)
 
     async def test_post_test_relevant_five_answers_can_score_high(self):
         questions = [f"Question {index}" for index in range(5)]
         answers = POST_ANSWERS
-        result = await score_post_test(questions, answers, FakeProvider(high(COMMUNICATION_KEYS, 5, answer_relevance=[5] * 5)))
+        provider = FakeProvider(detailed_post_result())
+        result = await score_post_test(questions, answers, provider)
         self.assertEqual(result["total_score"], 25)
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual(len(result["evaluation_data"]["question_evaluations"]), 5)
+        self.assertEqual(result["evaluation_data"]["schema_version"], "post-test-evaluation-v2")
+        self.assertEqual(result["evaluation_data"]["question_pack_version"], "posttest-v1")
+        self.assertEqual(result["evaluation_data"]["scoring_authority"], "semantic_ai_with_objective_caps")
 
     async def test_one_irrelevant_post_test_answer_loses_rubric_points(self):
         questions = [f"Question {index}" for index in range(5)]
         answers = POST_ANSWERS
-        result = await score_post_test(questions, answers, FakeProvider(high(COMMUNICATION_KEYS, 5, answer_relevance=[5, 5, 1, 5, 5])))
-        self.assertEqual(result["total_score"], 20)
+        result = await score_post_test(questions, answers, FakeProvider(detailed_post_result(relevance=[5, 5, 1, 5, 5])))
+        self.assertEqual(result["total_score"], 15)
+
+    async def test_post_test_provider_entries_are_sorted_and_strictly_validated(self):
+        payload = detailed_post_result()
+        payload["question_evaluations"].reverse()
+        validated = validate_post_test_detail(json.dumps(payload))
+        self.assertEqual([entry["question_index"] for entry in validated["question_evaluations"]], [1, 2, 3, 4, 5])
+        invalid = [
+            lambda p: p["question_evaluations"].pop(),
+            lambda p: p["question_evaluations"][1].update(question_index=1),
+            lambda p: p["question_evaluations"][1].update(question_index=6),
+            lambda p: p["question_evaluations"][1]["criteria"].pop("clarity"),
+            lambda p: p["question_evaluations"][1]["criteria"].update(clarity=3.5),
+            lambda p: p["question_evaluations"][1]["criteria"].update(clarity=True),
+            lambda p: p["question_evaluations"][1]["criteria"].update(clarity=0),
+            lambda p: p["question_evaluations"][1]["criteria"].update(clarity=6),
+            lambda p: p["question_evaluations"][1].update(answer_relevance="5"),
+            lambda p: p["question_evaluations"][1].update(learning_evidence=0),
+            lambda p: p["question_evaluations"][1].update(feedback=" "),
+            lambda p: p["question_evaluations"][1].update(feedback="x" * 601),
+            lambda p: p.update(recommendations=[""] ),
+            lambda p: p.update(recommendations=["Good specific action"] * 4),
+        ]
+        for mutate in invalid:
+            with self.subTest(mutate=mutate):
+                sample = detailed_post_result()
+                mutate(sample)
+                with self.assertRaises(ValueError):
+                    validate_post_test_detail(json.dumps(sample))
+
+    async def test_post_test_self_report_sparse_off_topic_and_fallback_are_limited(self):
+        questions = [f"Question {index}" for index in range(5)]
+        for answer in (
+            "Yes, I improved.", "Yes.",
+            "I improved my communication a great deal and learned a lot during this training program.",
+            "Purple bananas float through clouds beside a silent moon every afternoon.",
+        ):
+            with self.subTest(answer=answer):
+                result = await score_post_test(questions, [answer, *POST_ANSWERS[1:]], FakeProvider(detailed_post_result()))
+                first = result["evaluation_data"]["question_evaluations"][0]
+                self.assertLessEqual(first["learning_evidence"], 2)
+                self.assertLessEqual(first["criteria"]["clarity"], 2)
+        no_plan = await score_post_test(questions, [*POST_ANSWERS[:4], "I want to improve my communication skills a lot because they are important for my future career."], FakeProvider(detailed_post_result()))
+        self.assertLessEqual(no_plan["evaluation_data"]["question_evaluations"][4]["learning_evidence"], 2)
+        fallback = await score_post_test(questions, POST_ANSWERS, FailingProvider())
+        self.assertEqual(fallback["evaluation_data"]["scoring_authority"], "deterministic_fallback")
+        self.assertTrue(all(item["feedback"] is None for item in fallback["evaluation_data"]["question_evaluations"]))
+        self.assertEqual(fallback["evaluation_data"]["recommendations"], [])
+        malformed = detailed_post_result()
+        malformed["question_evaluations"].pop()
+        invalid_provider = FakeProvider(malformed)
+        limited = await score_post_test(questions, POST_ANSWERS, invalid_provider)
+        self.assertEqual(invalid_provider.calls, 1)
+        self.assertEqual(limited["evaluation_data"]["scoring_authority"], "deterministic_fallback")
+        self.assertTrue(all(item["feedback"] is None for item in limited["evaluation_data"]["question_evaluations"]))
+
+    async def test_post_test_aggregate_rounding_and_pass_threshold(self):
+        self.assertEqual(round_post_test_mean([4, 4, 3, 3, 3]), 3)
+        self.assertEqual(round_post_test_mean([4, 4, 4, 3, 3]), 4)
+        self.assertEqual(round_post_test_mean([3, 4]), 4)
+        questions = [f"Question {index}" for index in range(5)]
+        for scores, expected in (([3, 3, 3, 3, 4], 16), ([3, 3, 3, 4, 4], 17), ([3, 3, 4, 4, 4], 18)):
+            criteria = [{key: score for key, score in zip(("vocabulary", "clarity", "grammar", "courtesy", "conciseness"), scores)} for _ in range(5)]
+            result = await score_post_test(questions, POST_ANSWERS, FakeProvider(detailed_post_result(criteria=criteria)))
+            self.assertEqual(result["total_score"], expected)
+            self.assertEqual(result["passed"], expected >= 17)
+            self.assertEqual(sum(result[f"score_{key}"] for key in ("vocabulary", "clarity", "grammar", "courtesy", "conciseness")), expected)
+
+    async def test_weak_relevant_answer_remains_distinct_from_irrelevant_answer(self):
+        questions = [f"Question {index}" for index in range(5)]
+        relevant = await score_post_test(questions, POST_ANSWERS, FakeProvider(detailed_post_result(
+            relevance=[3, 5, 5, 5, 5], learning=[3, 5, 5, 5, 5],
+        )))
+        irrelevant = await score_post_test(questions, POST_ANSWERS, FakeProvider(detailed_post_result(
+            relevance=[1, 5, 5, 5, 5], learning=[1, 5, 5, 5, 5],
+        )))
+        self.assertGreater(
+            relevant["evaluation_data"]["question_evaluations"][0]["learning_evidence"],
+            irrelevant["evaluation_data"]["question_evaluations"][0]["learning_evidence"],
+        )
+
+    async def test_empty_post_test_answer_is_rejected_before_provider_use(self):
+        provider = FakeProvider(detailed_post_result())
+        with self.assertRaises(ValueError):
+            await score_post_test([f"Question {index}" for index in range(5)], ["", *POST_ANSWERS[1:]], provider)
+        self.assertEqual(provider.calls, 0)
 
     async def test_repetition_is_conservative(self):
         self.assertTrue(repetition_dominated("hello my name is " * 15))
