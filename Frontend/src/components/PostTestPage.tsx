@@ -4,6 +4,7 @@ import type { ConnectionState } from '../hooks/useConnectivity';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import type { OfflineAudioCapture } from '../offline/offlineAudioRecorder';
 import { SoundWaveInterviewer } from './SoundWaveInterviewer';
+import { PostTestEvaluationResult, type PostTestCompletionResult } from './PostTestEvaluationResult';
 import { CameraTrackingNotice } from './CameraTrackingNotice';
 import {
   CAREER_EDGE_SPEECH_LANGUAGE,
@@ -195,6 +196,7 @@ function PostTestActivity({
   userDepartment,
 }: PostTestActivityProps) {
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [completedResult, setCompletedResult] = useState<{ result: PostTestCompletionResult; questions: string[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshInFlightRef = useRef(false);
@@ -640,6 +642,7 @@ function PostTestActivity({
   }
 
   const startPostTest = async () => {
+    setCompletedResult(null);
     if (cloudConnectionState === 'checking') {
       setNotice(null);
       setError(CLOUD_CHECKING_START_MESSAGE);
@@ -1064,7 +1067,7 @@ function PostTestActivity({
         offlineEyeContactBaselineRef.current = null;
         activeOfflineClientSessionIdRef.current = null;
         setConnectionState('idle');
-        setNotice('Post-Test completed locally and is pending sync.');
+        setNotice('Post-Test completed locally and is pending sync. Detailed question evaluation will be available after synchronization.');
         onSessionModeChange(false);
       } catch (completionError) {
         setError(completionError instanceof Error ? completionError.message : 'Unable to complete the Post-Test locally.');
@@ -1104,6 +1107,8 @@ function PostTestActivity({
         const body = await response.json().catch(() => null);
         throw new Error(normalizeApiError(body, 'Unable to complete the post-test interview.'));
       }
+      const result = await response.json() as PostTestCompletionResult;
+      const completedQuestions = currentMessages.filter(message => message.sender === 'ai').slice(0, POST_TEST_ANSWER_LIMIT).map(message => message.text);
       cancelListening();
       clearFirstPromptTimeout();
       resetPostTestTurnState();
@@ -1116,6 +1121,9 @@ function PostTestActivity({
       cancelSpeech();
       if (lifecycleGenerationRef.current !== lifecycleGeneration) return;
       setActiveSession(null);
+      if (result.evaluation_data?.schema_version === 'post-test-evaluation-v2') {
+        setCompletedResult({ result, questions: completedQuestions });
+      }
       setMessages([]);
       recordedAnswerCountRef.current = 0;
       canonicalAnswersRef.current = [];
@@ -1287,6 +1295,10 @@ function PostTestActivity({
         </div>
       </div>
     );
+  }
+
+  if (completedResult) {
+    return <PostTestEvaluationResult result={completedResult.result} questions={completedResult.questions} onClose={() => setCompletedResult(null)} />;
   }
 
   return (

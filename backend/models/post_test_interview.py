@@ -1,5 +1,5 @@
 # pyrefly: ignore [missing-import]
-from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime, JSON
 # pyrefly: ignore [missing-import]
 from sqlalchemy.orm import relationship
 from database import Base
@@ -27,6 +27,7 @@ class PostTestInterviewSession(Base):
     total_score = Column(Float, nullable=True) # out of 25
     passed = Column(Boolean, nullable=True)
     feedback_summary = Column(String, nullable=True)
+    evaluation_data = Column(JSON, nullable=True)
     
     messages = relationship("PostTestInterviewMessage", back_populates="session", cascade="all, delete-orphan")
 

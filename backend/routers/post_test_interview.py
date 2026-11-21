@@ -13,7 +13,7 @@ from core.scoring import bounded_integer_score
 from services.assessment_scoring import score_post_test
 from models.user import User
 from models.post_test_interview import PostTestInterviewSession, PostTestInterviewMessage
-from schemas.post_test_interview import PostTestInterviewSessionResponse, PostTestInterviewSessionWithMessagesResponse, PostTestInterviewCompleteRequest
+from schemas.post_test_interview import PostTestInterviewSessionResponse, PostTestInterviewSessionWithMessagesResponse, PostTestInterviewCompletionResponse, PostTestInterviewCompleteRequest
 
 router = APIRouter()
 
@@ -249,7 +249,7 @@ async def post_test_chat_ws(
         except:
             pass
 
-@router.post("/{session_id}/complete", response_model=PostTestInterviewSessionResponse)
+@router.post("/{session_id}/complete", response_model=PostTestInterviewCompletionResponse)
 async def complete_session(session_id: int, request: PostTestInterviewCompleteRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Completes and grades the post-test interview session."""
     session = (
@@ -297,10 +297,16 @@ async def complete_session(session_id: int, request: PostTestInterviewCompleteRe
         persisted_history = db.query(PostTestInterviewMessage).filter(
             PostTestInterviewMessage.session_id == session.id,
         ).order_by(PostTestInterviewMessage.timestamp.asc(), PostTestInterviewMessage.id.asc()).all()
-        persisted_answers = [message.content for message in persisted_history if message.role == "user"]
-        delivered_questions = [message.content for message in persisted_history if message.role == "ai"][:5]
-        canonical_questions = delivered_questions if len(delivered_questions) == 5 else get_post_test_questions(current_user.department)
-        evaluation = await score_post_test(canonical_questions, persisted_answers)
+        paired_history = persisted_history[:10]
+        if len(paired_history) != 10 or any(
+            paired_history[index * 2].role != "ai" or paired_history[index * 2 + 1].role != "user"
+            or not paired_history[index * 2].content.strip() or not paired_history[index * 2 + 1].content.strip()
+            for index in range(5)
+        ):
+            raise HTTPException(status_code=409, detail="Five persisted Post-Test question/answer pairs are required for detailed evaluation.")
+        delivered_questions = [paired_history[index * 2].content for index in range(5)]
+        persisted_answers = [paired_history[index * 2 + 1].content for index in range(5)]
+        evaluation = await score_post_test(delivered_questions, persisted_answers)
         
         session.score_vocabulary = bounded_integer_score(evaluation, "score_vocabulary", minimum=1, maximum=5, default=1)
         session.score_clarity = bounded_integer_score(evaluation, "score_clarity", minimum=1, maximum=5, default=1)
@@ -317,6 +323,7 @@ async def complete_session(session_id: int, request: PostTestInterviewCompleteRe
         session.score_courtesy = bounded_integer_score(evaluation, "score_courtesy", minimum=1, maximum=5, default=1)
         session.score_conciseness = bounded_integer_score(evaluation, "score_conciseness", minimum=1, maximum=5, default=1)
         session.feedback_summary = evaluation.get("feedback_summary", "")
+        session.evaluation_data = evaluation["evaluation_data"]
         
         # Calculate total score out of 25 (5 criteria * 5 max points).
         total = (
@@ -338,6 +345,9 @@ async def complete_session(session_id: int, request: PostTestInterviewCompleteRe
         db.refresh(session)
         
         return session
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to save evaluation: {e}")

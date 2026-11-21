@@ -27,13 +27,13 @@ from routers.post_test_interview import get_post_test_questions
 from schemas.offline_sync import OfflineSyncRequest
 from services.ai_provider import AIProvider, get_ai_provider
 from services.interview_ai import collect_ai_response, parse_evaluation_response
-from services.assessment_scoring import score_drill, score_intro, score_listening, score_post_test
+from services.assessment_scoring import POST_TEST_PACK_VERSION, score_drill, score_intro, score_listening, score_post_test
 
 
 SUPPORTED_PACK_VERSIONS = {
     "pre_test_intro": "pretest-who-am-i-v1",
     "pre_test_active_listening": "pretest-active-listening-v3",
-    "post_test": "posttest-v1",
+    "post_test": POST_TEST_PACK_VERSION,
     "drill": "drills-v2",
     "upcoming": "enrollment-interview-v1",
     "thesis": "thesis-interview-v1",
@@ -102,9 +102,15 @@ def validate_sync_payload(payload: OfflineSyncRequest, department: str) -> None:
         if not prompts or prompts[0] not in canonical_prompts:
             raise HTTPException(status_code=409, detail="The Active Listening story does not match the canonical pack.")
     if payload.activity_type == "post_test":
-        submitted_questions = [turn.text for turn in payload.conversation_log if turn.sender == "ai"][:5]
-        if submitted_questions != get_post_test_questions(department):
+        turns = payload.conversation_log
+        submitted_questions = [turns[index * 2].text for index in range(5)] if len(turns) == 10 else []
+        if submitted_questions != get_post_test_questions(department) or any(
+            turns[index * 2].sender != "ai" or turns[index * 2 + 1].sender != "user"
+            for index in range(5)
+        ):
             raise HTTPException(status_code=409, detail="The Post-Test question order does not match the canonical pack.")
+        if any(turns[index * 2 + 1].text != payload.answers[index].text for index in range(5)):
+            raise HTTPException(status_code=409, detail="The Post-Test answers do not match the committed conversation.")
     if payload.activity_type == "drill":
         drill_type = payload.activity_state.get("drillType")
         drill_level = payload.activity_state.get("drillLevel")
@@ -307,6 +313,8 @@ def persist_authoritative_result(
         _apply_eye_contact(session, payload)
     elif payload.activity_type in {"pre_test_active_listening", "post_test"}:
         _apply_five_point_scores(session, evaluation)
+        if payload.activity_type == "post_test":
+            session.evaluation_data = evaluation["evaluation_data"]
         _apply_eye_contact(session, payload)
     elif payload.activity_type == "drill":
         session.score = evaluation["score"]

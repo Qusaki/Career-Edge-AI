@@ -1,6 +1,6 @@
 # pyrefly: ignore [missing-import]
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, ConfigDict
+from typing import Optional, List, Literal
 from datetime import datetime
 
 class PostTestInterviewMessageResponse(BaseModel):
@@ -36,8 +36,41 @@ class PostTestInterviewSessionResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class PostTestCommunicationCriteria(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    vocabulary: int
+    clarity: int
+    grammar: int
+    courtesy: int
+    conciseness: int
+
+class PostTestQuestionEvaluationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    question_index: int
+    criteria: PostTestCommunicationCriteria
+    answer_relevance: int
+    learning_evidence: int
+    feedback: Optional[str]
+    scoring_authority: Literal["semantic_ai_with_objective_caps", "deterministic_fallback"]
+
+class PostTestEvaluationDataResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal["post-test-evaluation-v2"]
+    question_pack_version: str
+    scoring_authority: Literal["semantic_ai_with_objective_caps", "deterministic_fallback"]
+    question_evaluations: List[PostTestQuestionEvaluationResponse]
+    aggregate_criteria: PostTestCommunicationCriteria
+    total_score: int
+    passed: bool
+    overall_feedback: str
+    recommendations: List[str]
+
 class PostTestInterviewSessionWithMessagesResponse(PostTestInterviewSessionResponse):
     messages: List[PostTestInterviewMessageResponse] = []
+    evaluation_data: Optional[PostTestEvaluationDataResponse] = None
+
+class PostTestInterviewCompletionResponse(PostTestInterviewSessionResponse):
+    evaluation_data: Optional[PostTestEvaluationDataResponse] = None
 
 class PostTestInterviewConversationSpeaker(BaseModel):
     sender: str

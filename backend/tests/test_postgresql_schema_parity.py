@@ -75,6 +75,7 @@ EYE_CONTACT_COLUMNS = {
     "post_test_interview_sessions": {
         "score_eye_contact": "integer",
         "eye_contact_samples": "integer",
+        "evaluation_data": "json",
     },
 }
 

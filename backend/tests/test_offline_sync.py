@@ -607,6 +607,20 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         response = self.client.post("/offline-sync", json=post_test_payload())
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["authoritative_result"]["total_score"], 5)
+        detail = response.json()["authoritative_result"]["evaluation_data"]
+        self.assertEqual(detail["schema_version"], "post-test-evaluation-v2")
+        self.assertEqual(len(detail["question_evaluations"]), 5)
+        with self.Session() as db:
+            stored = db.get(PostTestInterviewSession, response.json()["server_session_id"])
+            self.assertEqual(stored.evaluation_data, detail)
+
+    def test_post_test_answer_and_conversation_mismatch_is_rejected(self):
+        self.add_completed_drills(*DRILL_LEVEL_BY_TYPE)
+        payload = post_test_payload()
+        payload["conversation_log"][1]["text"] = "Different committed answer"
+        response = self.client.post("/offline-sync", json=payload)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("answers do not match", response.json()["detail"])
 
     def test_locked_post_test_sync_creates_no_result_receipt_or_session_mutation(self):
         with self.Session() as db:
