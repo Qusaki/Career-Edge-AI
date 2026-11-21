@@ -937,7 +937,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       field: 'score_clarity',
     },
     {
-      label: 'Eye Contact',
+      label: 'Visual Engagement',
       description: 'Camera-based eye direction and head movement measured during Enrollment, Thesis, Pre-Test, Post-Test, and Drill activities.',
       field: 'score_eye_contact',
     },
@@ -5091,11 +5091,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <div className="absolute left-4 right-4 top-14 z-20 overflow-hidden rounded-xl border border-purple-400/40 bg-slate-950 shadow-xl sm:left-auto sm:right-4 sm:top-4 sm:w-40">
                         <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
                         <div className="flex items-center justify-between px-2.5 py-2 text-[11px] font-bold text-slate-200">
-                          <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unavailable' ? 'Tracking unavailable' : 'Loading tracker'}</span>
+                          <span>{eyeTracker.status === 'tracking' ? 'Visual Engagement' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unavailable' ? 'Tracking unavailable' : 'Loading tracker'}</span>
                           <span className="text-purple-300">{getCheckpointEyeContactSummary().samples > 0 ? `${Math.round(getCheckpointEyeContactSummary().score || 0)}%` : '—'}</span>
                         </div>
                         {(eyeTracker.status === 'blocked' || eyeTracker.status === 'unavailable') && (
-                          <p className="px-2.5 pb-2 text-[11px] leading-snug text-slate-400">Activity can continue without eye-contact scoring.</p>
+                          <p className="px-2.5 pb-2 text-[11px] leading-snug text-slate-400">Activity can continue without Visual Engagement scoring.</p>
                         )}
                       </div>
                     )}
@@ -5128,7 +5128,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             ))}
                           </div>
                           <div className="mt-3 flex items-center justify-between rounded-xl border border-purple-500/20 bg-purple-500/10 p-3">
-                            <span className="text-xs font-bold uppercase tracking-wider text-purple-300">Camera Eye Contact</span>
+                            <span className="text-xs font-bold uppercase tracking-wider text-purple-300">Visual Engagement</span>
                             <span className="text-xl font-black text-purple-400">{(thesisResult.eye_contact_samples || 0) > 0 ? `${Math.round(thesisResult.score_eye_contact)}%` : 'Unavailable'}</span>
                           </div>
                           {thesisResult.feedback_summary && (
@@ -5385,11 +5385,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <div className="program-accent-dark-border absolute right-3 top-3 z-20 w-36 overflow-hidden rounded-xl border bg-[var(--interview-card)] shadow-xl sm:right-4 sm:top-4 sm:w-40">
                         <video ref={eyeTracker.videoRef} muted playsInline className="aspect-video w-full scale-x-[-1] object-cover" />
                         <div className="flex items-center justify-between px-2.5 py-2 text-[11px] font-bold text-[var(--interview-text-secondary)]">
-                          <span>{eyeTracker.status === 'tracking' ? 'Eye contact' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unavailable' ? 'Tracking unavailable' : 'Loading tracker'}</span>
+                          <span>{eyeTracker.status === 'tracking' ? 'Visual Engagement' : eyeTracker.status === 'blocked' ? 'Camera blocked' : eyeTracker.status === 'unavailable' ? 'Tracking unavailable' : 'Loading tracker'}</span>
                           <span className="program-accent-on-dark">{getCheckpointEyeContactSummary().samples > 0 ? `${Math.round(getCheckpointEyeContactSummary().score || 0)}%` : '—'}</span>
                         </div>
                         {(eyeTracker.status === 'blocked' || eyeTracker.status === 'unavailable') && (
-                          <p className="px-2.5 pb-2 text-[11px] leading-snug text-[var(--interview-text-muted)]">Activity can continue without eye-contact scoring.</p>
+                          <p className="px-2.5 pb-2 text-[11px] leading-snug text-[var(--interview-text-muted)]">Activity can continue without Visual Engagement scoring.</p>
                         )}
                       </div>
                     )}
@@ -5519,8 +5519,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         type="button"
                         onClick={() => setIsCameraEnabled(enabled => !enabled)}
                         className={`group flex h-12 w-12 items-center justify-center rounded-lg bg-transparent transition-all duration-300 hover:bg-[var(--interview-control-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--program-accent-on-dark)] ${isCameraEnabled ? 'program-accent-on-dark' : 'text-[var(--interview-text-secondary)] hover:text-[var(--interview-text-primary)]'}`}
-                        title={isCameraEnabled ? 'Turn camera off' : 'Turn camera on for eye-contact tracking'}
-                        aria-label={isCameraEnabled ? 'Turn camera off' : 'Turn camera on for eye-contact tracking'}
+                        title={isCameraEnabled ? 'Turn camera off' : 'Turn camera on for Visual Engagement tracking'}
+                        aria-label={isCameraEnabled ? 'Turn camera off' : 'Turn camera on for Visual Engagement tracking'}
                         aria-pressed={isCameraEnabled}
                       >
                         {isCameraEnabled ? <Camera className="h-[22px] w-[22px] transition-transform group-hover:scale-110" /> : <CameraOff className="h-[22px] w-[22px] transition-transform group-hover:scale-110" />}
@@ -5609,7 +5609,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           </div>
 
                           <div className="program-accent-dark-surface program-accent-border mt-3 flex items-center justify-between rounded-xl border p-3">
-                            <span className="text-xs font-bold uppercase tracking-wider">Camera Eye Contact</span>
+                            <span className="text-xs font-bold uppercase tracking-wider">Visual Engagement</span>
                             <span className="text-xl font-black">{(interviewResult.eye_contact_samples || 0) > 0 ? `${Math.round(interviewResult.score_eye_contact)}%` : 'Unavailable'}</span>
                           </div>
 

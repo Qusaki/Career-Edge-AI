@@ -30,7 +30,7 @@ test('the shared camera block is inline and compact instead of fixed to the view
 test('camera unavailable stays in the same compact preview slot with non-blocking copy', () => {
   const markup = renderCamera('unavailable');
   assert.match(markup, /Camera unavailable/);
-  assert.match(markup, /Activity can continue without eye-contact scoring\./);
+  assert.match(markup, /Activity can continue without Visual Engagement scoring\./);
   assert.match(markup, /<video/);
   assert.match(markup, /role="status"/);
 });
@@ -40,7 +40,7 @@ test('camera off is distinct from camera loading and essential status text remai
     <CameraTrackingNotice videoRef={{ current: null }} status="off" score={0} samples={0} />,
   );
   assert.match(markup, /Camera off/);
-  assert.match(markup, /Eye-contact tracking is not active/);
+  assert.match(markup, /Visual Engagement tracking is not active/);
   assert.match(cameraSource, /text-xs font-bold/);
   assert.match(cameraSource, /text-\[11px\]/);
 });
@@ -69,7 +69,11 @@ test('Enrollment and Thesis keep compact camera states inside the upper-right st
   assert.match(dashboardSource, /absolute right-3 top-3 z-20 w-36[\s\S]*?sm:top-4 sm:w-40/);
   assert.match(dashboardSource, /absolute left-4 right-4 top-14 z-20[\s\S]*?sm:top-4 sm:w-40/);
   assert.doesNotMatch(dashboardSource, /absolute bottom-4 right-4 z-20 w-44|absolute bottom-3 right-3 z-20 w-36/);
-  assert.ok((dashboardSource.match(/Activity can continue without eye-contact scoring\./g) ?? []).length >= 2);
+  assert.ok((dashboardSource.match(/Activity can continue without Visual Engagement scoring\./g) ?? []).length >= 2);
+  assert.match(dashboardSource, /label: 'Visual Engagement',[\s\S]*?field: 'score_eye_contact'/);
+  assert.match(dashboardSource, /title=\{isCameraEnabled \? 'Turn camera off' : 'Turn camera on for Visual Engagement tracking'\}/);
+  assert.match(dashboardSource, /aria-label=\{isCameraEnabled \? 'Turn camera off' : 'Turn camera on for Visual Engagement tracking'\}/);
+  assert.doesNotMatch(dashboardSource, /Camera Eye Contact|>Eye contact</);
 });
 
 test('camera tracking state and score sampling logic remain authoritative in the existing hook', () => {

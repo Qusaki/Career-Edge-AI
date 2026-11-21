@@ -1412,11 +1412,11 @@ export function DrillsPage({
     try {
       const eyeContactSummary = getCheckpointEyeContactSummary();
       if (!Number.isSafeInteger(eyeContactSummary.samples) || eyeContactSummary.samples < 0) {
-        throw new Error('Eye-contact sample data is invalid. Your response is still available; restart the camera or retry completion.');
+        throw new Error('Visual Engagement sample data is invalid. Your response is still available; restart the camera or retry completion.');
       }
       const eyeContactScore = eyeContactSummary.samples > 0 ? eyeContactSummary.score : null;
       if (eyeContactScore !== null && (!Number.isFinite(eyeContactScore) || eyeContactScore < 0 || eyeContactScore > 100)) {
-        throw new Error('Eye-contact score data is invalid. Your response is still available; restart the camera or retry completion.');
+        throw new Error('Visual Engagement score data is invalid. Your response is still available; restart the camera or retry completion.');
       }
       perf?.mark('postStart');
       const response = await fetch(`${apiUrl}/drills/${serverSessionId}/complete`, {
