@@ -60,6 +60,77 @@ INTRO = (
 
 
 class AssessmentScoringTests(unittest.IsolatedAsyncioTestCase):
+    def test_drill_tenths_validation_accepts_decimals_and_historical_integers(self):
+        scores = dict(zip(DRILL_KEYS, (3.7, 4.1, 3.5, 3.2, 4, 3.8)))
+        payload = {**scores, "task_alignment": 4, "total_score": 22.3,
+                   "feedback_summary": "Relevant and coherent response."}
+        validated = validate_assessment_response(json.dumps(payload), DRILL_KEYS, 5, drill_tenths=True)
+        self.assertEqual(validated["vocabulary"], 3.7)
+        self.assertEqual(validated["conciseness"], 3.2)
+        self.assertEqual(validated["task_completion"], 4.0)
+        self.assertEqual(validated["total_score"], 22.3)
+        for boundary in (1, 1.0, 2, 2.5, 3, 5, 5.0):
+            with self.subTest(boundary=boundary):
+                values = {key: boundary for key in DRILL_KEYS}
+                result = validate_assessment_response(json.dumps({
+                    **values, "task_alignment": 4, "total_score": boundary * 6,
+                    "feedback_summary": "Relevant response.",
+                }), DRILL_KEYS, 5, drill_tenths=True)
+                self.assertEqual(result["clarity"], boundary)
+
+    def test_drill_tenths_validation_rejects_invalid_scores_totals_and_alignment(self):
+        base = {**{key: 3 for key in DRILL_KEYS}, "task_alignment": 4,
+                "total_score": 18, "feedback_summary": "Relevant response."}
+        for value in (0, 0.9, 5.1, 3.74, 3.75, "3.5", None, float("nan"), float("inf"), True, False):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                validate_assessment_response(json.dumps({**base, "clarity": value}), DRILL_KEYS, 5, drill_tenths=True)
+        for total in (18.1, 18.01, "18", True, float("nan")):
+            with self.subTest(total=total), self.assertRaises(ValueError):
+                validate_assessment_response(json.dumps({**base, "total_score": total}), DRILL_KEYS, 5, drill_tenths=True)
+        for alignment in (2.5, True, False, 0, 6):
+            with self.subTest(alignment=alignment), self.assertRaises(ValueError):
+                validate_assessment_response(json.dumps({**base, "task_alignment": alignment}), DRILL_KEYS, 5, drill_tenths=True)
+        with self.assertRaises(ValueError):
+            validate_assessment_response(json.dumps({**base, "clarity": 3.7, "total_score": 18.7}), DRILL_KEYS, 5)
+
+    async def test_drill_decimal_total_and_raw_pass_boundary(self):
+        answer = (
+            "The ocean supports diverse ecosystems, and I would protect coastal habitats "
+            "by reducing pollution and explaining practical conservation steps to local communities."
+        )
+        for values, expected_raw, expected_passed in (
+            ((3.3, 3.3, 3.3, 3.3, 3.3, 3.4), 19.9, False),
+            ((3.3, 3.3, 3.3, 3.3, 3.4, 3.4), 20.0, True),
+            ((3.3, 3.3, 3.3, 3.4, 3.4, 3.4), 20.1, True),
+        ):
+            with self.subTest(raw=expected_raw):
+                provider = FakeProvider({
+                    **dict(zip(DRILL_KEYS, values)), "task_alignment": 4,
+                    "total_score": expected_raw, "feedback_summary": "Relevant and coherent response.",
+                })
+                result = await score_drill("jam", {"prompt": {"topic": "The Ocean"}, "spoken_response": answer}, provider)
+                self.assertEqual(result["scoring"]["raw_score"], expected_raw)
+                self.assertEqual(result["passed"], expected_passed)
+                self.assertEqual(result["score"], round(expected_raw / 30 * 100, 2))
+                self.assertEqual(result["scoring"]["authority"], "semantic_ai_with_objective_caps")
+                self.assertIn("number from 1.0 to 5.0 in increments of 0.1", provider.messages[0]["content"])
+                self.assertIn("task_alignment remains an integer", provider.messages[0]["content"])
+
+    async def test_drill_objective_cap_keeps_unrelated_tenths(self):
+        answer = (
+            "The ocean supports diverse ecosystems, and I would protect coastal habitats "
+            "by reducing pollution and explaining practical conservation steps to local communities."
+        )
+        values = dict(zip(DRILL_KEYS, (2.5, 3.7, 2.8, 3.1, 4.2, 3.9)))
+        provider = FakeProvider({**values, "task_alignment": 3, "total_score": 20.2,
+                                 "feedback_summary": "The response partly follows the task."})
+        result = await score_drill("jam", {"prompt": {"topic": "The Ocean"}, "spoken_response": answer}, provider)
+        self.assertEqual(result["scoring"]["criteria"]["vocabulary"], 2.5)
+        self.assertEqual(result["scoring"]["criteria"]["grammar"], 2.8)
+        self.assertEqual(result["scoring"]["criteria"]["clarity"], 3.0)
+        self.assertEqual(result["scoring"]["raw_score"], 17.3)
+        self.assertFalse(result["passed"])
+
     async def test_strong_intro_can_score_high(self):
         result = await score_intro(INTRO, FakeProvider(high(INTRO_KEYS, 3)))
         self.assertEqual(result["total_score"], 15)

@@ -47,7 +47,7 @@ export function ProgressDrillEvaluationSection({ records }: { records: Array<Rec
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
               <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Overall score</p>
-              <p className="mt-1 text-2xl font-black text-slate-100" aria-label={`Overall score: ${selected.score} percent`}>{selected.score}%</p>
+              <p className="mt-1 text-2xl font-black text-slate-100" aria-label={`Overall score: ${selected.score.toFixed(1)} percent`}>{selected.score.toFixed(1)}%</p>
             </div>
             <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
               <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Result</p>
@@ -69,7 +69,7 @@ export function ProgressDrillEvaluationSection({ records }: { records: Array<Rec
                 {progressDrillCriteria.map(key => (
                   <div key={key} className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-800 px-3 py-2 text-sm text-slate-300">
                     <dt className="break-words">{key === 'task_completion' ? 'Task completion' : key.charAt(0).toUpperCase() + key.slice(1)}</dt>
-                    <dd className="shrink-0 font-bold text-slate-100">{selected.criteria?.[key]} / 5</dd>
+                    <dd className="shrink-0 font-bold text-slate-100">{selected.criteria?.[key].toFixed(1)} / 5</dd>
                   </div>
                 ))}
               </dl>

@@ -19,6 +19,7 @@ import { combineEyeContactSummaries, shouldCheckpointEyeContact, type EyeContact
 import { evaluateDrill, getOfflineNegotiationTurn, type NegotiationTurnResult } from '../offline/localEvaluation';
 import { DRILLS_VERSION, getOfflineDrillPrompt, hasCurrentQuestionPack, NEGOTIATION_OPENING_PROMPT } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
+import { isCanonicalDrillCriterion } from '../utils/analytics';
 import { resolveDrillSessionExecution } from '../utils/drillSessionExecution';
 import { hasRestorableOfflineIdentity } from '../utils/sessionIdentity';
 import { readPostTestAccess, type PostTestAccess } from '../utils/postTestProgress';
@@ -116,9 +117,8 @@ export function createDrillCompletionResult(
     : isRecord(evaluationData) && isRecord(evaluationData.scoring) ? evaluationData.scoring : null;
   const rawCriteria = scoring?.criteria;
   const criteriaKeys = Object.keys(drillCriteriaLabels) as Array<keyof DrillCriteria>;
-  const criteria = isRecord(rawCriteria) && criteriaKeys.every(key =>
-    Number.isInteger(rawCriteria[key]) && Number(rawCriteria[key]) >= 1 && Number(rawCriteria[key]) <= 5,
-  ) ? Object.fromEntries(criteriaKeys.map(key => [key, rawCriteria[key]])) as DrillCriteria : null;
+  const criteria = isRecord(rawCriteria) && criteriaKeys.every(key => isCanonicalDrillCriterion(rawCriteria[key]))
+    ? Object.fromEntries(criteriaKeys.map(key => [key, rawCriteria[key]])) as DrillCriteria : null;
 
   return {
     drillType,
@@ -509,7 +509,7 @@ export function DrillEvaluationResultView({ result, error, onDone }: {
             {result.score !== null && (
               <div className="rounded-lg border border-line bg-background p-4">
                 <h2 className="text-xs font-bold uppercase tracking-wider text-muted">Overall score</h2>
-                <p className="mt-1 text-3xl font-bold" aria-label={`Overall score: ${result.score} percent`}>{result.score}%</p>
+                <p className="mt-1 text-3xl font-bold" aria-label={`Overall score: ${result.score.toFixed(1)} percent`}>{result.score.toFixed(1)}%</p>
               </div>
             )}
             {result.passed !== null && (
@@ -531,7 +531,7 @@ export function DrillEvaluationResultView({ result, error, onDone }: {
               <dl className="mt-3 grid gap-2 sm:grid-cols-2">
                 {(Object.keys(drillCriteriaLabels) as Array<keyof DrillCriteria>).map(key => (
                   <div key={key} className="flex justify-between gap-3 rounded-lg border border-line bg-background px-3 py-2 text-sm">
-                    <dt>{drillCriteriaLabels[key]}</dt><dd className="font-semibold">{result.criteria?.[key]} / 5</dd>
+                    <dt>{drillCriteriaLabels[key]}</dt><dd className="font-semibold">{result.criteria?.[key].toFixed(1)} / 5</dd>
                   </div>
                 ))}
               </dl>

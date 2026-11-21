@@ -4,7 +4,7 @@ import test from 'node:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ProgressDrillEvaluationSection } from '../src/components/ProgressDrillEvaluation';
 import { getDrillTitle } from '../src/components/DrillsPage';
-import { buildActivityComparison, getNormalizedActivityScore, getProgressDrillEvaluations } from '../src/utils/analytics';
+import { buildActivityComparison, getNormalizedActivityScore, getProgressDrillEvaluations, isCanonicalDrillCriterion } from '../src/utils/analytics';
 
 const dashboardSource = readFileSync(new URL('../src/components/Dashboard.tsx', import.meta.url), 'utf8');
 const drillsSource = readFileSync(new URL('../src/components/DrillsPage.tsx', import.meta.url), 'utf8');
@@ -35,7 +35,7 @@ test('Progress shows the latest completed authoritative Drill evaluation and let
   assert.match(dashboardSource, /fetch\(`\$\{API_URL\}\/drills\/`,/);
   assert.match(html, /Drill Evaluation/);
   assert.match(html, /30 Seconds Speaking/);
-  assert.match(html, /Overall score: 76\.67 percent/);
+  assert.match(html, /Overall score: 76\.7 percent/);
   assert.match(html, /Choose a completed Drill/);
   assert.match(html, /Fast Word Response/);
   assert.match(sectionSource, /onChange=\{event => setSelectedId\(Number\(event\.target\.value\)\)\}/);
@@ -43,8 +43,8 @@ test('Progress shows the latest completed authoritative Drill evaluation and let
 
 test('zero scores and explicit pass states remain visible', () => {
   const failed = render([completedDrill({ score: 0, passed: false })]);
-  assert.match(failed, /Overall score: 0 percent/);
-  assert.match(failed, /0%/);
+  assert.match(failed, /Overall score: 0\.0 percent/);
+  assert.match(failed, /0\.0%/);
   assert.match(failed, /Needs more practice/);
   assert.match(render([completedDrill()]), /Passed/);
 });
@@ -59,10 +59,37 @@ test('feedback and six validated rubric criteria render without invented descrip
   assert.doesNotMatch(html, /Strengths|Weaknesses|Confidence/);
 });
 
+test('Progress accepts decimal Drill criteria and formats historical integers as tenths', () => {
+  const decimalCriteria = { ...criteria, vocabulary: 2.5, clarity: 3.7 };
+  const record = completedDrill({ score: 74.33,
+    evaluation_data: JSON.stringify({ scoring: { authority: 'semantic_ai_with_objective_caps', criteria: decimalCriteria } }),
+  });
+  assert.equal(getProgressDrillEvaluations([record])[0].criteria?.clarity, 3.7);
+  const html = render([record]);
+  assert.match(html, /2\.5 \/ 5/);
+  assert.match(html, /3\.7 \/ 5/);
+  assert.match(html, /4\.0 \/ 5/);
+  assert.match(html, /74\.3%/);
+});
+
+test('Progress rubric validation rejects malformed or over-precise values but retains the score', () => {
+  for (const value of [0, 0.9, 5.1, 3.74, 3.75, '3.5', null, true, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.equal(isCanonicalDrillCriterion(value), false, String(value));
+    const record = completedDrill({
+      evaluation_data: JSON.stringify({ scoring: { criteria: { ...criteria, clarity: value } } }),
+    });
+    assert.equal(getProgressDrillEvaluations([record])[0].criteria, null);
+    assert.match(render([record]), /76\.7%/);
+  }
+  for (const value of [1, 1.0, 2.5, 3, 3.7, 5, 5.0]) {
+    assert.equal(isCanonicalDrillCriterion(value), true, String(value));
+  }
+});
+
 test('malformed or missing evaluation data cannot hide valid score and feedback', () => {
   for (const evaluation_data of ['not JSON', null, JSON.stringify({ scoring: { criteria: { clarity: 5 } } })]) {
     const html = render([completedDrill({ evaluation_data })]);
-    assert.match(html, /76\.67%/);
+    assert.match(html, /76\.7%/);
     assert.match(html, /The response addressed the assigned topic\./);
     assert.doesNotMatch(html, /Performance breakdown/);
   }
@@ -76,6 +103,7 @@ test('stored fallback authority is not presented as AI scoring', () => {
     evaluation_data: JSON.stringify({ scoring: { authority: 'deterministic_fallback', criteria } }),
   })]);
   assert.match(fallback, /Evaluation source: Deterministic fallback/);
+  assert.match(fallback, /3\.0 \/ 5/);
   assert.doesNotMatch(fallback, /AI-assisted assessment/);
   assert.match(render([completedDrill()]), /Evaluation source: AI-assisted assessment/);
   assert.doesNotMatch(render([completedDrill({ evaluation_data: null })]), /Evaluation source:/);
@@ -106,7 +134,7 @@ test('unsynced local results stay out, while an authoritative synced backend ses
   const pending = completedDrill({ id: 11, status: 'pending_sync', score: 99 });
   assert.equal(getProgressDrillEvaluations([provisional, pending]).length, 0);
   assert.match(render([provisional, pending]), /Complete a Drill to see your detailed evaluation here/);
-  assert.match(render([provisional, pending, completedDrill()]), /76\.67%/);
+  assert.match(render([provisional, pending, completedDrill()]), /76\.7%/);
   assert.match(dashboardSource, /if \(synchronized <= 0\) return;[\s\S]*?fetchCommunicationHistory\(authenticatedUserId\)/);
 });
 
