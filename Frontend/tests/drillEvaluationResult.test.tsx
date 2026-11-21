@@ -38,7 +38,7 @@ test('all twelve Drill types share the completed result view and display their f
     const html = render(createDrillCompletionResult(drillType, 'online', onlinePayload));
     assert.ok(html.includes(name), drillType);
     assert.match(html, /Evaluation complete/);
-    assert.match(html, /76\.67%/);
+    assert.match(html, /76\.7%/);
     assert.match(html, /Relevant answer with a clear next step\./);
     assert.match(html, /Passed/);
   }
@@ -51,14 +51,44 @@ test('online response retains rubric criteria and labels its actual scoring auth
     assert.ok(html.includes(label));
   }
   assert.match(html, /AI-assisted assessment/);
-  assert.match(html, /Overall score: 76\.67 percent/);
+  assert.match(html, /Overall score: 76\.7 percent/);
   assert.match(html, /Back to Drills/);
+});
+
+test('immediate Drill result displays canonical tenths and historical whole numbers', () => {
+  const decimalCriteria = { ...scoring.criteria, vocabulary: 2.5, clarity: 3.7 };
+  const result = createDrillCompletionResult('jam', 'online', {
+    ...onlinePayload, score: 74.33,
+    evaluation_data: JSON.stringify({ scoring: { ...scoring, criteria: decimalCriteria } }),
+  });
+  assert.equal(result.criteria?.vocabulary, 2.5);
+  assert.equal(result.criteria?.clarity, 3.7);
+  const html = render(result);
+  assert.match(html, /2\.5 \/ 5/);
+  assert.match(html, /3\.7 \/ 5/);
+  assert.match(html, /4\.0 \/ 5/);
+  assert.match(html, /74\.3%/);
+  assert.match(html, /Passed/);
+});
+
+test('immediate Drill rubric rejects excess precision and malformed values without hiding the overall result', () => {
+  for (const invalid of [0, 0.9, 5.1, 3.74, 3.75, '3.5', null, true, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const result = createDrillCompletionResult('jam', 'online', {
+      ...onlinePayload,
+      evaluation_data: JSON.stringify({ scoring: { ...scoring, criteria: { ...scoring.criteria, clarity: invalid } } }),
+    });
+    assert.equal(result.criteria, null, String(invalid));
+    const html = render(result);
+    assert.doesNotMatch(html, /Performance breakdown/);
+    assert.match(html, /76\.7%/);
+    assert.match(html, /Relevant answer with a clear next step\./);
+  }
 });
 
 test('malformed or missing criteria cannot hide valid score and feedback', () => {
   for (const evaluation_data of ['not JSON', JSON.stringify({ scoring: { criteria: { clarity: 5 } } }), null]) {
     const html = render(createDrillCompletionResult('fast_word', 'online', { ...onlinePayload, evaluation_data }));
-    assert.match(html, /76\.67%/);
+    assert.match(html, /76\.7%/);
     assert.match(html, /Relevant answer with a clear next step\./);
     assert.doesNotMatch(html, /Performance breakdown/);
   }
@@ -83,7 +113,7 @@ test('offline evaluated Drill is explicitly provisional', () => {
   assert.match(html, /Provisional evaluation/);
   assert.match(html, /Provisional result calculated offline/);
   assert.match(html, /may change after synchronization/);
-  assert.match(html, /76\.67%/);
+  assert.match(html, /76\.7%/);
   assert.doesNotMatch(html, /Evaluation source: AI-assisted assessment/);
 });
 

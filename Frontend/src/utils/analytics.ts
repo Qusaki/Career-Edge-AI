@@ -5,6 +5,10 @@ export const progressDrillCriteria: readonly ProgressDrillCriterion[] = [
   'vocabulary', 'clarity', 'grammar', 'conciseness', 'task_completion', 'courtesy',
 ];
 
+export const isCanonicalDrillCriterion = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 1 && value <= 5
+  && Math.abs(value * 10 - Math.round(value * 10)) <= 1e-9;
+
 export interface ProgressDrillEvaluation {
   id: number;
   drillType: string;
@@ -37,10 +41,8 @@ export const readProgressDrillEvaluation = (record: ScoreRecord): ProgressDrillE
   }
   const scoring = isRecord(evaluation) && isRecord(evaluation.scoring) ? evaluation.scoring : null;
   const rawCriteria = scoring?.criteria;
-  const criteria = isRecord(rawCriteria) && progressDrillCriteria.every(key =>
-    typeof rawCriteria[key] === 'number' && Number.isInteger(rawCriteria[key])
-    && rawCriteria[key] >= 1 && rawCriteria[key] <= 5,
-  ) ? Object.fromEntries(progressDrillCriteria.map(key => [key, rawCriteria[key]])) as Record<ProgressDrillCriterion, number> : null;
+  const criteria = isRecord(rawCriteria) && progressDrillCriteria.every(key => isCanonicalDrillCriterion(rawCriteria[key]))
+    ? Object.fromEntries(progressDrillCriteria.map(key => [key, rawCriteria[key]])) as Record<ProgressDrillCriterion, number> : null;
 
   return {
     id: record.id,

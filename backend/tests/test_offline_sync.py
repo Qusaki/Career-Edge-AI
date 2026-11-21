@@ -400,6 +400,38 @@ class OfflineSyncEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["authoritative_result"]["score"], 40.0)
 
+    def test_authoritative_drill_sync_preserves_decimal_rubric_and_float_score(self):
+        self.add_completed_drills("jam")
+        criteria = dict(zip(
+            ("vocabulary", "clarity", "grammar", "conciseness", "task_completion", "courtesy"),
+            (3.7, 4.1, 3.5, 3.2, 4.0, 3.8),
+        ))
+        provider = FakeProvider({**criteria, "task_alignment": 4, "total_score": 22.3,
+                                 "feedback_summary": "A relevant and coherent response."})
+        payload = {
+            "client_session_id": "precise-drill-client",
+            "activity_type": "drill",
+            "question_pack_version": "drills-v1",
+            "answers": [{"step": 1, "text": "I can explain the assigned word clearly with a practical example and relevant details."}],
+            "conversation_log": [],
+            "activity_state": {"drillType": "fast_word", "drillLevel": "easy"},
+            "local_score": 1,
+        }
+        with patch("services.offline_sync.get_ai_provider", return_value=provider):
+            response = self.client.post("/offline-sync", json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        authoritative = response.json()["authoritative_result"]
+        self.assertEqual(authoritative["score"], 74.33)
+        self.assertTrue(authoritative["passed"])
+        stored_rubric = json.loads(authoritative["evaluation_data"])["scoring"]
+        self.assertEqual(stored_rubric["criteria"], criteria)
+        self.assertEqual(stored_rubric["raw_score"], 22.3)
+        self.assertEqual(provider.calls, 1)
+        with self.Session() as db:
+            stored = db.get(DrillSession, authoritative["id"])
+            self.assertEqual(stored.score, 74.33)
+            self.assertEqual(json.loads(stored.evaluation_data)["scoring"]["criteria"], criteria)
+
     def test_department_v2_drills_sync_only_for_authenticated_department(self):
         for department in ("CTE", "CBAPA"):
             with self.subTest(department=department):
