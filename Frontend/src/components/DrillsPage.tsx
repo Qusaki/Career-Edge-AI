@@ -395,6 +395,11 @@ const getDrillScoringNote = (drillType: string) => drillType === 'negotiation'
   : 'Current automatic scoring focuses mainly on response completion and speaking length.';
 
 const drillLevels: DrillLevel[] = ['easy', 'medium', 'hard'];
+const drillLevelLabels: Record<DrillLevel, string> = {
+  easy: 'Beginner',
+  medium: 'Intermediate',
+  hard: 'Advanced',
+};
 
 const createInitialLevelProgress = (level: DrillLevel): DrillLevelProgress => {
   const orderedTypes = drillTypesByLevel[level];
@@ -420,8 +425,8 @@ const createInitialProgress = (): DrillProgress => ({
 });
 
 const getLockedLevelCopy = (level: DrillLevel) => level === 'medium'
-  ? 'Complete all Easy drills to unlock Medium.'
-  : 'Complete all Medium drills to unlock Hard.';
+  ? 'Complete all Beginner drills to unlock Intermediate.'
+  : 'Complete all Intermediate drills to unlock Advanced.';
 
 const getLockedDrillCopy = (drillProgress: DrillTypeProgress | undefined) => drillProgress?.prerequisite_type
   ? `Complete ${drillUnlockNames[drillProgress.prerequisite_type]} first to unlock.`
@@ -564,6 +569,7 @@ export function DrillsPage({
 }: DrillsPageProps) {
   const [sessions, setSessions] = useState<DrillSession[]>([]);
   const [progress, setProgress] = useState<DrillProgress>(createInitialProgress);
+  const [selectedLevel, setSelectedLevel] = useState<DrillLevel | null>(null);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshInFlightRef = useRef(false);
@@ -1505,7 +1511,7 @@ export function DrillsPage({
                 <p className="text-program-accent mb-2 text-xs font-bold uppercase tracking-[0.2em]">Drill Session</p>
                 <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">Current Drill</h1>
                 <p className="text-program-accent mt-1 text-sm font-bold uppercase tracking-wider">
-                  {activeSession.drill_level} · {getDrillDisplayName(activeSession.drill_type)}
+                  {drillLevelLabels[activeSession.drill_level as DrillLevel] ?? activeSession.drill_level} · {getDrillDisplayName(activeSession.drill_type)}
                 </p>
               </div>
               <CameraTrackingNotice {...eyeTracker} />
@@ -1699,8 +1705,21 @@ export function DrillsPage({
         </p>
       )}
 
-      <section className="space-y-4">
-        {drillLevels.map(level => {
+      <section aria-label="Drill difficulty" className="mb-5">
+        <div className="flex flex-wrap gap-2">
+          {drillLevels.map(level => (
+            <button key={level} type="button" onClick={() => setSelectedLevel(level)}
+              aria-pressed={selectedLevel === level}
+              className={`program-accent-focus-ring min-h-11 rounded-lg border px-4 py-2 text-sm font-semibold transition-colors ${selectedLevel === level ? 'program-accent-button border-transparent' : 'border-line bg-card text-ink hover:bg-active'}`}>
+              {drillLevelLabels[level]}
+            </button>
+          ))}
+        </div>
+        {selectedLevel === null && <p className="mt-3 text-sm text-muted">Choose a difficulty level to view available Drills.</p>}
+      </section>
+
+      <section className="space-y-4" aria-label="Drills by difficulty">
+        {selectedLevel !== null && drillLevels.filter(level => level === selectedLevel).map(level => {
           const levelProgress = progress[level];
           const levelDrills = drillTypesByLevel[level].map(getDrillDefinition);
           const isLevelLocked = !levelProgress.unlocked;
@@ -1713,7 +1732,7 @@ export function DrillsPage({
                   </div>
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-xl font-bold capitalize text-ink">{level}</h2>
+                      <h2 className="text-xl font-bold text-ink">{drillLevelLabels[level]}</h2>
                       <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${isLevelLocked ? 'border border-line text-muted' : 'program-accent-surface'}`}>
                         {isLevelLocked ? 'Locked' : 'Unlocked'}
                       </span>
