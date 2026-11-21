@@ -132,11 +132,12 @@ test('PreTestPage hydrates server history before connecting and guards one onlin
   assert.match(source, /activeListeningCompletionDisabled/);
 });
 
-test('saved v1 Active Listening stories retain their pack on online and offline resume', () => {
+test('saved V1/V2 Active Listening stories retain their pack on online and offline resume', () => {
   const source = readFileSync(new URL('../src/components/PreTestPage.tsx', import.meta.url), 'utf8');
   assert.match(source, /restoredActiveListeningStory = restoredMessages\.find\(message => message\.sender === 'ai'\)\?\.text \?\? null/);
   assert.match(source, /canonicalPrompt = restoredActiveListeningStory \?\? getActiveListeningPromptForServerSession\(activeListeningServerSessionId\)/);
   assert.match(source, /ACTIVE_LISTENING_PROMPTS_V1\.some\(prompt => prompt === restoredActiveListeningStory\)/);
+  assert.match(source, /ACTIVE_LISTENING_PROMPTS_V2\.some\(prompt => prompt === restoredActiveListeningStory\)/);
   assert.match(source, /getOfflineActiveListeningPrompt\(resumeSession\.clientSessionId, resumeSession\.questionPackVersion\)/);
   assert.match(source, /getActiveListeningPromptForServerSession\(resumeSession\.serverSessionId, resumeSession\.questionPackVersion\)/);
   assert.match(source, /speakText\(completedQuestion, !messagesRef\.current\.some\(message => message\.sender === 'user'\)\)/);

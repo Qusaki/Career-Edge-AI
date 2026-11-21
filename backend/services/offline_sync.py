@@ -18,7 +18,11 @@ from models.upcoming_student_interview import UpcomingStudentInterviewMessage, U
 from models.user import User
 from routers.thesis_interview import get_thesis_evaluation_score_keys, get_thesis_evaluation_system_prompt
 from routers.upcoming_student_interview import get_evaluation_score_keys, get_evaluation_system_prompt
-from routers.pre_test_active_listening import ACTIVE_LISTENING_PROMPTS, ACTIVE_LISTENING_PROMPTS_V1
+from routers.pre_test_active_listening import (
+    ACTIVE_LISTENING_PROMPTS,
+    ACTIVE_LISTENING_PROMPTS_V1,
+    ACTIVE_LISTENING_PROMPTS_V2,
+)
 from routers.post_test_interview import get_post_test_questions
 from schemas.offline_sync import OfflineSyncRequest
 from services.ai_provider import AIProvider, get_ai_provider
@@ -28,7 +32,7 @@ from services.assessment_scoring import score_drill, score_intro, score_listenin
 
 SUPPORTED_PACK_VERSIONS = {
     "pre_test_intro": "pretest-who-am-i-v1",
-    "pre_test_active_listening": "pretest-active-listening-v2",
+    "pre_test_active_listening": "pretest-active-listening-v3",
     "post_test": "posttest-v1",
     "drill": "drills-v2",
     "upcoming": "enrollment-interview-v1",
@@ -76,9 +80,13 @@ def validate_sync_payload(payload: OfflineSyncRequest, department: str) -> None:
     if payload.activity_type in {"post_test", "upcoming", "thesis"} and normalized_department not in {"CCIT", "CTE", "CBAPA"}:
         raise HTTPException(status_code=403, detail="This activity is not available for the authenticated department.")
     expected_version = SUPPORTED_PACK_VERSIONS[payload.activity_type]
+    legacy_listening_packs = {
+        "pretest-active-listening-v1": ACTIVE_LISTENING_PROMPTS_V1,
+        "pretest-active-listening-v2": ACTIVE_LISTENING_PROMPTS_V2,
+    }
     is_legacy_listening_pack = (
         payload.activity_type == "pre_test_active_listening"
-        and payload.question_pack_version == "pretest-active-listening-v1"
+        and payload.question_pack_version in legacy_listening_packs
     )
     is_legacy_drill_pack = payload.activity_type == "drill" and payload.question_pack_version == "drills-v1"
     if payload.question_pack_version != expected_version and not is_legacy_listening_pack and not is_legacy_drill_pack:
@@ -90,7 +98,7 @@ def validate_sync_payload(payload: OfflineSyncRequest, department: str) -> None:
             raise HTTPException(status_code=409, detail="The offline interview question order does not match the canonical pack.")
     if payload.activity_type == "pre_test_active_listening":
         prompts = [turn.text for turn in payload.conversation_log if turn.sender == "ai"]
-        canonical_prompts = ACTIVE_LISTENING_PROMPTS_V1 if is_legacy_listening_pack else ACTIVE_LISTENING_PROMPTS
+        canonical_prompts = legacy_listening_packs.get(payload.question_pack_version, ACTIVE_LISTENING_PROMPTS)
         if not prompts or prompts[0] not in canonical_prompts:
             raise HTTPException(status_code=409, detail="The Active Listening story does not match the canonical pack.")
     if payload.activity_type == "post_test":

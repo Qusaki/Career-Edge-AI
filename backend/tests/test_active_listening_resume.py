@@ -134,13 +134,19 @@ class ActiveListeningPersistenceTests(unittest.TestCase):
             1,
         )
 
-    def test_new_session_prompts_use_the_three_approved_shorter_stories_and_questions(self):
-        expected = [
+    def test_new_session_prompts_use_v3_and_preserve_v2_stories(self):
+        expected_v2 = [
             "Mara and Luis were preparing 120 orientation kits, but the campus maps showed the wrong library entrance. At 2 p.m., they set aside 30 unsigned scholarship forms and packed the other 90 kits. By 4:30 p.m., only 80 water bottles had arrived, so the first two groups received bottles and the rest would collect theirs tomorrow. Can you summarize the main numbers, timing, and decisions?",
             "Arrive at the multimedia hall by 8:15 a.m. for an 8:30 student leadership workshop, and bring a laptop, two action-plan copies, and a flash-drive backup. The morning covers problems and the afternoon covers presentations, after lunch from noon to 1 p.m. If the projector fails, use Room 204 but register at the lobby; leaders must give Ms. Reyes the attendance sheet and revised plan before leaving. Can you summarize the schedule, materials, backup room, and final tasks?",
             "At the community reading event, Jonah managed books and Aira registered pupils; 72 arrived instead of the expected 50. They had enough books but only 48 activity sheets, so Jonah copied 25 more while Aira formed six groups; when rain delayed the reader, they began with a vocabulary game. Everyone got a book, but only 60 received certificates because the printer ran out of ink. Can you summarize the main events, numbers, problems, and solutions?",
         ]
+        expected = [
+            "Mara and Luis are preparing 120 orientation kits for new students. The campus maps show the wrong library entrance, so Luis updates them before the kits are packed. Only 80 water bottles arrive, and Mara decides the remaining students can collect theirs tomorrow. Summarize the main problem, numbers, and decisions.",
+            "The student leadership workshop begins at 8:30 in the multimedia hall. Each group must bring one laptop and two copies of its action plan. The projector is broken, so the workshop moves to Room 204 while registration stays in the lobby. Summarize the schedule, materials, and change of location.",
+            "Jonah and Aira are helping at a community reading event for 72 pupils. They have books for everyone but only 48 activity sheets, so Jonah makes extra copies. Heavy rain delays the guest reader, and Aira starts a vocabulary game while they wait. Summarize the problems and how the volunteers responded.",
+        ]
         self.assertEqual(pre_test_active_listening.ACTIVE_LISTENING_PROMPTS, expected)
+        self.assertEqual(pre_test_active_listening.ACTIVE_LISTENING_PROMPTS_V2, expected_v2)
         self.assertEqual(len(pre_test_active_listening.ACTIVE_LISTENING_PROMPTS_V1), 3)
         for index, prompt in enumerate(expected):
             self.assertEqual(pre_test_active_listening.get_active_listening_prompt(index), prompt)
@@ -227,6 +233,22 @@ class ActiveListeningPersistenceTests(unittest.TestCase):
             ],
         )
 
+    def test_v2_and_v3_resume_replay_the_persisted_story(self):
+        for story in (
+            pre_test_active_listening.ACTIVE_LISTENING_PROMPTS_V2[0],
+            pre_test_active_listening.ACTIVE_LISTENING_PROMPTS[0],
+        ):
+            with self.subTest(story=story[:20]):
+                session = self.create_session()
+                self.add_message(session.id, "ai", story)
+                original_ids = [message.id for message in self.ordered_messages(session.id)]
+                websocket = FakeWebSocket([{"text": json.dumps({"text": "/start_exercise"})}])
+                provider = StaticProvider([])
+                self.run_chat(session.id, websocket, provider)
+                self.assertEqual([message.id for message in self.ordered_messages(session.id)], original_ids)
+                self.assertEqual(self.ordered_messages(session.id)[0].content, story)
+                self.assertEqual(provider.calls, [])
+
     def test_resume_retries_pending_user_without_duplicate_user_message(self):
         session = self.create_session()
         self.add_message(session.id, "ai", "Story")
@@ -280,6 +302,7 @@ class ActiveListeningPersistenceTests(unittest.TestCase):
     def test_completion_scores_each_session_against_its_stored_old_or_new_story(self):
         for story in (
             pre_test_active_listening.ACTIVE_LISTENING_PROMPTS_V1[0],
+            pre_test_active_listening.ACTIVE_LISTENING_PROMPTS_V2[0],
             pre_test_active_listening.ACTIVE_LISTENING_PROMPTS[0],
         ):
             session = self.create_session()
@@ -300,6 +323,30 @@ class ActiveListeningPersistenceTests(unittest.TestCase):
                 ))
             score.assert_awaited_once_with(story, "A summary of the assigned story.")
             self.assertEqual(result.status, "completed")
+            self.assertEqual(result.total_score, 20.0)
+            self.assertTrue(result.passed)
+
+    def test_active_listening_pass_threshold_remains_seventeen_of_twenty_five(self):
+        for clarity, expected_passed in ((5, True), (4, False)):
+            with self.subTest(clarity=clarity):
+                session = self.create_session()
+                self.add_message(session.id, "ai", pre_test_active_listening.ACTIVE_LISTENING_PROMPTS[0])
+                self.add_message(session.id, "user", "A summary of the assigned story.")
+                scores = {
+                    "score_vocabulary": 3, "score_clarity": clarity, "score_grammar": 3,
+                    "score_courtesy": 3, "score_conciseness": 3,
+                    "feedback_summary": "Summary feedback.",
+                }
+                with patch.object(pre_test_active_listening, "score_listening", new=AsyncMock(return_value=scores)):
+                    result = asyncio.run(pre_test_active_listening.complete_session(
+                        session_id=session.id,
+                        request=PreTestActiveListeningCompleteRequest(
+                            conversation=[], evaluation={"eye_contact_samples": 0},
+                        ),
+                        db=self.db, current_user=SimpleNamespace(id=7),
+                    ))
+                self.assertEqual(result.total_score, float(12 + clarity))
+                self.assertEqual(result.passed, expected_passed)
 
     def test_completed_and_unowned_sessions_reject_websocket_turns(self):
         completed_session = self.create_session(status="completed")

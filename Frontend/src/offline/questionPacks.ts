@@ -4,7 +4,8 @@ import type { OfflineActivityType } from '../db';
 // backend wording or ordering change must increment the matching version here.
 export const PRETEST_WHO_AM_I_VERSION = 'pretest-who-am-i-v1';
 export const PRETEST_ACTIVE_LISTENING_V1_VERSION = 'pretest-active-listening-v1';
-export const PRETEST_ACTIVE_LISTENING_VERSION = 'pretest-active-listening-v2';
+export const PRETEST_ACTIVE_LISTENING_V2_VERSION = 'pretest-active-listening-v2';
+export const PRETEST_ACTIVE_LISTENING_VERSION = 'pretest-active-listening-v3';
 export const POST_TEST_VERSION = 'posttest-v1';
 export const LEGACY_DRILLS_VERSION = 'drills-v1';
 export const DRILLS_VERSION = 'drills-v2';
@@ -25,10 +26,16 @@ export const ACTIVE_LISTENING_PROMPTS_V1 = [
   'Here is a short story to summarize. During the community reading program, Jonah volunteered to manage book donations while Aira handled student registration. They expected fifty pupils, but seventy-two arrived because a nearby school joined at the last minute. The team had enough storybooks, but only forty-eight activity sheets, so Jonah photocopied twenty-five more while Aira divided the pupils into six smaller groups. The guest reader was delayed by heavy rain, so the volunteers started with a vocabulary game and moved the storytelling activity after the snack break. By the end of the program, every pupil received a book, but only the first sixty received certificates because the printer ran out of ink. Please summarize the important events, problems, numbers, and solutions.',
 ] as const;
 
-export const ACTIVE_LISTENING_PROMPTS = [
+export const ACTIVE_LISTENING_PROMPTS_V2 = [
   'Mara and Luis were preparing 120 orientation kits, but the campus maps showed the wrong library entrance. At 2 p.m., they set aside 30 unsigned scholarship forms and packed the other 90 kits. By 4:30 p.m., only 80 water bottles had arrived, so the first two groups received bottles and the rest would collect theirs tomorrow. Can you summarize the main numbers, timing, and decisions?',
   'Arrive at the multimedia hall by 8:15 a.m. for an 8:30 student leadership workshop, and bring a laptop, two action-plan copies, and a flash-drive backup. The morning covers problems and the afternoon covers presentations, after lunch from noon to 1 p.m. If the projector fails, use Room 204 but register at the lobby; leaders must give Ms. Reyes the attendance sheet and revised plan before leaving. Can you summarize the schedule, materials, backup room, and final tasks?',
   'At the community reading event, Jonah managed books and Aira registered pupils; 72 arrived instead of the expected 50. They had enough books but only 48 activity sheets, so Jonah copied 25 more while Aira formed six groups; when rain delayed the reader, they began with a vocabulary game. Everyone got a book, but only 60 received certificates because the printer ran out of ink. Can you summarize the main events, numbers, problems, and solutions?',
+] as const;
+
+export const ACTIVE_LISTENING_PROMPTS = [
+  'Mara and Luis are preparing 120 orientation kits for new students. The campus maps show the wrong library entrance, so Luis updates them before the kits are packed. Only 80 water bottles arrive, and Mara decides the remaining students can collect theirs tomorrow. Summarize the main problem, numbers, and decisions.',
+  'The student leadership workshop begins at 8:30 in the multimedia hall. Each group must bring one laptop and two copies of its action plan. The projector is broken, so the workshop moves to Room 204 while registration stays in the lobby. Summarize the schedule, materials, and change of location.',
+  'Jonah and Aira are helping at a community reading event for 72 pupils. They have books for everyone but only 48 activity sheets, so Jonah makes extra copies. Heavy rain delays the guest reader, and Aira starts a vocabulary game while they wait. Summarize the problems and how the volunteers responded.',
 ] as const;
 
 // Canonical source: backend/routers/post_test_interview.py.
@@ -239,6 +246,7 @@ const chooseMany = <T>(items: readonly T[], count: number, seed: string): T[] =>
 
 const getActiveListeningPromptsForVersion = (version: string): readonly string[] => {
   if (version === PRETEST_ACTIVE_LISTENING_V1_VERSION) return ACTIVE_LISTENING_PROMPTS_V1;
+  if (version === PRETEST_ACTIVE_LISTENING_V2_VERSION) return ACTIVE_LISTENING_PROMPTS_V2;
   if (version === PRETEST_ACTIVE_LISTENING_VERSION) return ACTIVE_LISTENING_PROMPTS;
   throw new Error('Unsupported Active Listening question-pack version.');
 };
@@ -327,4 +335,5 @@ export const getQuestionPackVersion = (type: OfflineActivityType): string | null
 export const hasCurrentQuestionPack = (type: OfflineActivityType, version: string | null): boolean =>
   getQuestionPackVersion(type) === version
   || (type === 'drill' && version === LEGACY_DRILLS_VERSION)
-  || (type === 'pre_test_active_listening' && version === PRETEST_ACTIVE_LISTENING_V1_VERSION);
+  || (type === 'pre_test_active_listening'
+    && (version === PRETEST_ACTIVE_LISTENING_V1_VERSION || version === PRETEST_ACTIVE_LISTENING_V2_VERSION));

@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { getDrillTimerConfig } from '../src/utils/drillTimer';
+import { selectActiveListeningVoice } from '../src/utils/activeListeningVoice';
 
 import {
   CAREER_EDGE_SPEECH_LANGUAGE,
@@ -16,7 +17,7 @@ const voice = (name: string, lang: string, localService: boolean): SpeechSynthes
   name, lang, localService, voiceURI: `${name}:${lang}`, default: false,
 });
 
-test('Active Listening, Drills, and Post-Test use one natural profile while Maxiel stays separate', () => {
+test('Active Listening alone opts into local natural preference while Drills and Post-Test retain shared defaults', () => {
   assert.equal(CAREER_EDGE_SPEECH_RATE, 0.95);
   assert.equal(CAREER_EDGE_SPEECH_PITCH, 1.02);
   assert.equal(CAREER_EDGE_SPEECH_VOLUME, 1);
@@ -27,7 +28,8 @@ test('Active Listening, Drills, and Post-Test use one natural profile while Maxi
   const postTest = readFileSync(new URL('../src/components/PostTestPage.tsx', import.meta.url), 'utf8');
   const shared = readFileSync(new URL('../src/utils/speech.ts', import.meta.url), 'utf8');
   const profile = /rate: CAREER_EDGE_SPEECH_RATE,[\s\S]*?pitch: CAREER_EDGE_SPEECH_PITCH,[\s\S]*?volume: CAREER_EDGE_SPEECH_VOLUME,[\s\S]*?language: CAREER_EDGE_SPEECH_LANGUAGE,[\s\S]*?selectVoice: selectCareerEdgeVoice/;
-  assert.match(preTest, profile);
+  const listeningProfile = /rate: CAREER_EDGE_SPEECH_RATE,[\s\S]*?pitch: CAREER_EDGE_SPEECH_PITCH,[\s\S]*?volume: CAREER_EDGE_SPEECH_VOLUME,[\s\S]*?language: CAREER_EDGE_SPEECH_LANGUAGE,[\s\S]*?selectVoice: selectActiveListeningVoice/;
+  assert.match(preTest, listeningProfile);
   assert.match(drills, profile);
   assert.match(postTest, profile);
   assert.match(preTest, /void speakBrowserText\(text, \{/);
@@ -46,7 +48,22 @@ test('Active Listening, Drills, and Post-Test use one natural profile while Maxi
   assert.doesNotMatch(dashboard, /careerEdgeVoice|selectCareerEdgeVoice/);
   assert.match(dashboard, /const selectPreferredFemaleVoice = \(voices: SpeechSynthesisVoice\[], lang: string\)/);
   assert.match(dashboard, /selectVoice: selectPreferredFemaleVoice/);
-  assert.equal(existsSync(new URL('../src/utils/activeListeningVoice.ts', import.meta.url)), false);
+  assert.equal(existsSync(new URL('../src/utils/activeListeningVoice.ts', import.meta.url)), true);
+});
+
+test('Active Listening prefers a natural or neural local English voice without changing shared selection', () => {
+  const generic = voice('Generic US', 'en-US', true);
+  const family = voice('Microsoft Desktop', 'en-US', true);
+  const neural = voice('Neural Reader', 'en-US', true);
+  const natural = voice('Natural Narrator', 'en-GB', true);
+  const remote = voice('Premium Remote', 'en-US', false);
+  assert.equal(selectActiveListeningVoice([generic, family, remote, neural]), neural);
+  assert.equal(selectActiveListeningVoice([generic, natural, neural]), natural);
+  assert.equal(selectActiveListeningVoice([generic, family]), family);
+  assert.equal(selectActiveListeningVoice([generic]), generic);
+  assert.equal(selectActiveListeningVoice([remote]), undefined);
+  assert.equal(selectActiveListeningVoice([]), undefined);
+  assert.equal(selectCareerEdgeVoice([generic, family, remote, neural]), family);
 });
 
 test('Post-Test initial, subsequent, and replayed questions share the same playback and mic guard', () => {

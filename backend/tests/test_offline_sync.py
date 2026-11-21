@@ -24,7 +24,7 @@ from models.pre_test_intro import PreTestIntroSession
 from models.upcoming_student_interview import UpcomingStudentInterviewSession
 from models.user import User
 from routers import offline_sync, post_test_interview
-from routers.pre_test_active_listening import ACTIVE_LISTENING_PROMPTS, ACTIVE_LISTENING_PROMPTS_V1
+from routers.pre_test_active_listening import ACTIVE_LISTENING_PROMPTS, ACTIVE_LISTENING_PROMPTS_V1, ACTIVE_LISTENING_PROMPTS_V2
 from routers.post_test_interview import get_post_test_questions
 from services.ai_provider import AIProviderUnavailableError
 
@@ -200,11 +200,12 @@ class OfflineSyncEndpointTests(unittest.TestCase):
             response = client.post("/offline-sync", json=who_payload())
         self.assertEqual(response.status_code, 401)
 
-    def test_active_listening_v1_and_v2_sync_without_cross_version_prompts(self):
+    def test_active_listening_v1_v2_and_v3_sync_without_cross_version_prompts(self):
         with patch("services.offline_sync.get_ai_provider", return_value=FailingProvider()):
             for version, story, client_id in (
                 ("pretest-active-listening-v1", ACTIVE_LISTENING_PROMPTS_V1[0], "old-listening"),
-                ("pretest-active-listening-v2", ACTIVE_LISTENING_PROMPTS[0], "new-listening"),
+                ("pretest-active-listening-v2", ACTIVE_LISTENING_PROMPTS_V2[0], "middle-listening"),
+                ("pretest-active-listening-v3", ACTIVE_LISTENING_PROMPTS[0], "new-listening"),
             ):
                 response = self.client.post("/offline-sync", json=listening_payload(version, story, client_id))
                 self.assertEqual(response.status_code, 200, response.text)
@@ -212,12 +213,14 @@ class OfflineSyncEndpointTests(unittest.TestCase):
             for version, story, client_id in (
                 ("pretest-active-listening-v1", ACTIVE_LISTENING_PROMPTS[0], "wrong-v1-story"),
                 ("pretest-active-listening-v2", ACTIVE_LISTENING_PROMPTS_V1[0], "wrong-v2-story"),
+                ("pretest-active-listening-v3", ACTIVE_LISTENING_PROMPTS_V2[0], "wrong-v3-story"),
+                ("pretest-active-listening-v3", "An arbitrary listening story.", "tampered-story"),
             ):
                 response = self.client.post("/offline-sync", json=listening_payload(version, story, client_id))
                 self.assertEqual(response.status_code, 409, response.text)
 
         with self.Session() as db:
-            self.assertEqual(db.query(PreTestActiveListeningSession).count(), 2)
+            self.assertEqual(db.query(PreTestActiveListeningSession).count(), 3)
 
     def test_pure_offline_who_am_i_creates_one_native_result_and_ignores_local_score(self):
         response = self.client.post("/offline-sync", json=who_payload())

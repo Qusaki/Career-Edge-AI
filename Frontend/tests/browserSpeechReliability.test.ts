@@ -3,12 +3,12 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { cancelBrowserSpeech, speakBrowserText } from '../src/utils/browserSpeech';
+import { selectActiveListeningVoice } from '../src/utils/activeListeningVoice';
 import {
   CAREER_EDGE_SPEECH_LANGUAGE,
   CAREER_EDGE_SPEECH_PITCH,
   CAREER_EDGE_SPEECH_RATE,
   CAREER_EDGE_SPEECH_VOLUME,
-  selectCareerEdgeVoice,
 } from '../src/utils/careerEdgeVoice';
 
 type FakeUtterance = SpeechSynthesisUtterance;
@@ -43,6 +43,7 @@ const createSpeechHarness = () => {
     setPaused: (value: boolean) => { paused = value; },
     setBehavior: (behavior: typeof speakBehavior) => { speakBehavior = behavior; },
     fireVoicesChanged: () => listeners.forEach(listener => listener(new Event('voiceschanged'))),
+    get voiceListenerCount() { return listeners.size; },
     createUtterance,
   };
 };
@@ -86,7 +87,7 @@ test('Active Listening selects a late local natural voice without changing the s
     pitch: CAREER_EDGE_SPEECH_PITCH,
     volume: CAREER_EDGE_SPEECH_VOLUME,
     language: CAREER_EDGE_SPEECH_LANGUAGE,
-    selectVoice: selectCareerEdgeVoice,
+    selectVoice: selectActiveListeningVoice,
   });
   const preferred = {
     name: 'Enhanced Local English', lang: 'en-US', localService: true,
@@ -101,6 +102,7 @@ test('Active Listening selects a late local natural voice without changing the s
   assert.equal(harness.utterances[0].pitch, 1.02);
   assert.equal(harness.utterances[0].volume, 1);
   assert.equal(harness.utterances[0].lang, 'en-US');
+  assert.equal(harness.voiceListenerCount, 0);
 });
 
 test('Active Listening plays with the browser default when no local English voice exists', async () => {
@@ -113,7 +115,7 @@ test('Active Listening plays with the browser default when no local English voic
   assert.equal(await speakBrowserText('Story and question together.', {
     synthesis: harness.synthesis,
     createUtterance: harness.createUtterance,
-    selectVoice: selectCareerEdgeVoice,
+    selectVoice: selectActiveListeningVoice,
   }), 'ended');
   assert.equal(harness.utterances[0].voice, undefined);
 });

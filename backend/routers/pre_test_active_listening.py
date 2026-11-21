@@ -41,10 +41,16 @@ Here is a short story to summarize. During the community reading program, Jonah 
 """.strip(),
 ]
 
-ACTIVE_LISTENING_PROMPTS = [
+ACTIVE_LISTENING_PROMPTS_V2 = [
     "Mara and Luis were preparing 120 orientation kits, but the campus maps showed the wrong library entrance. At 2 p.m., they set aside 30 unsigned scholarship forms and packed the other 90 kits. By 4:30 p.m., only 80 water bottles had arrived, so the first two groups received bottles and the rest would collect theirs tomorrow. Can you summarize the main numbers, timing, and decisions?",
     "Arrive at the multimedia hall by 8:15 a.m. for an 8:30 student leadership workshop, and bring a laptop, two action-plan copies, and a flash-drive backup. The morning covers problems and the afternoon covers presentations, after lunch from noon to 1 p.m. If the projector fails, use Room 204 but register at the lobby; leaders must give Ms. Reyes the attendance sheet and revised plan before leaving. Can you summarize the schedule, materials, backup room, and final tasks?",
     "At the community reading event, Jonah managed books and Aira registered pupils; 72 arrived instead of the expected 50. They had enough books but only 48 activity sheets, so Jonah copied 25 more while Aira formed six groups; when rain delayed the reader, they began with a vocabulary game. Everyone got a book, but only 60 received certificates because the printer ran out of ink. Can you summarize the main events, numbers, problems, and solutions?",
+]
+
+ACTIVE_LISTENING_PROMPTS = [
+    "Mara and Luis are preparing 120 orientation kits for new students. The campus maps show the wrong library entrance, so Luis updates them before the kits are packed. Only 80 water bottles arrive, and Mara decides the remaining students can collect theirs tomorrow. Summarize the main problem, numbers, and decisions.",
+    "The student leadership workshop begins at 8:30 in the multimedia hall. Each group must bring one laptop and two copies of its action plan. The projector is broken, so the workshop moves to Room 204 while registration stays in the lobby. Summarize the schedule, materials, and change of location.",
+    "Jonah and Aira are helping at a community reading event for 72 pupils. They have books for everyone but only 48 activity sheets, so Jonah makes extra copies. Heavy rain delays the guest reader, and Aira starts a vocabulary game while they wait. Summarize the problems and how the volunteers responded.",
 ]
 
 
