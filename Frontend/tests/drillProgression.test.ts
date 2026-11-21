@@ -64,8 +64,41 @@ test('safe initial progression unlocks only JAM for a new user', () => {
 
 test('locked levels remain visible with clear lock guidance', () => {
   assert.match(source, /<Lock className=/);
-  assert.match(source, /Complete all Easy drills to unlock Medium\./);
-  assert.match(source, /Complete all Medium drills to unlock Hard\./);
+  assert.match(source, /Complete all Beginner drills to unlock Intermediate\./);
+  assert.match(source, /Complete all Intermediate drills to unlock Advanced\./);
+});
+
+test('difficulty selector begins unselected and renders only the chosen canonical group', () => {
+  assert.match(source, /const \[selectedLevel, setSelectedLevel\] = useState<DrillLevel \| null>\(null\)/);
+  assert.match(source, /selectedLevel === null && <p[^>]*>Choose a difficulty level to view available Drills\.<\/p>/);
+  assert.match(source, /selectedLevel !== null && drillLevels\.filter\(level => level === selectedLevel\)\.map\(level =>/);
+  assert.match(source, /easy: \['jam', 'fast_word'\]/);
+  assert.match(source, /medium: \['emotion', 'synonym', 'fake_profile', 'emoji_story', 'positive_framing'\]/);
+  assert.match(source, /hard: \['taboo', 'elevator_pitch', 'rephrase', 'negotiation', 'crisis'\]/);
+});
+
+test('difficulty buttons expose selection without starting a Drill or disabling locked levels', () => {
+  const selector = source.slice(source.indexOf('<section aria-label="Drill difficulty"'), source.indexOf('<section className="space-y-4" aria-label="Drills by difficulty"'));
+  assert.match(selector, /drillLevels\.map\(level => \(/);
+  assert.match(selector, /type="button" onClick=\{\(\) => setSelectedLevel\(level\)\}/);
+  assert.match(selector, /aria-pressed=\{selectedLevel === level\}/);
+  assert.match(selector, /program-accent-focus-ring min-h-11/);
+  assert.match(selector, /flex flex-wrap gap-2/);
+  assert.doesNotMatch(selector, /startDrill|disabled=|fetch\(|getUserMedia|startListening|speakText/);
+  assert.match(source, /disabled=\{isDrillLocked \|\| starting !== null \|\| completing !== null\}/);
+});
+
+test('difficulty labels are presentation-only and survive Back to Drills on the same mount', () => {
+  assert.match(source, /easy: 'Beginner'/);
+  assert.match(source, /medium: 'Intermediate'/);
+  assert.match(source, /hard: 'Advanced'/);
+  assert.match(source, /\{drillLevelLabels\[level\]\}<\/h2>/);
+  assert.match(source, /drillLevelLabels\[activeSession\.drill_level as DrillLevel\]/);
+  assert.match(source, /onDone=\{\(\) => \{\s*setCompletionResult\(null\);\s*setError\(null\);/);
+  assert.doesNotMatch(source, /setSelectedLevel\(null\)/);
+  assert.match(source, /drillLevel: 'easy'/);
+  assert.match(source, /drillLevel: 'medium'/);
+  assert.match(source, /drillLevel: 'hard'/);
 });
 
 test('locked drills show the immediate prerequisite returned by progression state', () => {
