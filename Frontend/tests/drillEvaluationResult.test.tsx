@@ -33,6 +33,11 @@ const onlinePayload = {
 const render = (result: ReturnType<typeof createDrillCompletionResult>) =>
   renderToStaticMarkup(<DrillEvaluationResultView result={result} error={null} onDone={() => {}} />);
 
+const renderWithRecommendation = (result: ReturnType<typeof createDrillCompletionResult>) =>
+  renderToStaticMarkup(<DrillEvaluationResultView result={result} error={null} onDone={() => {}}
+    recommendation={{ criterion: 'vocabulary', drillType: 'synonym', level: 'medium' }}
+    onAcceptRecommendation={() => {}} onDeclineRecommendation={() => {}} />);
+
 test('all twelve Drill types share the completed result view and display their full names', () => {
   for (const [drillType, name] of Object.entries(drillNames) as Array<[keyof typeof drillNames, string]>) {
     const html = render(createDrillCompletionResult(drillType, 'online', onlinePayload));
@@ -53,6 +58,38 @@ test('online response retains rubric criteria and labels its actual scoring auth
   assert.match(html, /AI-assisted assessment/);
   assert.match(html, /Overall score: 76\.7 percent/);
   assert.match(html, /Back to Drills/);
+});
+
+test('optional recommendation follows the complete failed authoritative evaluation', () => {
+  const html = renderWithRecommendation(createDrillCompletionResult('jam', 'online', { ...onlinePayload, passed: false }));
+  assert.match(html, /Practice recommendation/);
+  assert.match(html, /Your Vocabulary could use more practice/);
+  assert.match(html, /Synonym Sprint can help you work on this area/);
+  assert.match(html, /Yes, show Drill/);
+  assert.match(html, /No, thanks/);
+  assert.ok(html.indexOf('Practice recommendation') > html.indexOf('Evaluation source:'));
+  assert.ok(html.indexOf('Practice recommendation') > html.indexOf('Performance breakdown'));
+  assert.match(html, /Relevant answer with a clear next step/);
+  assert.match(html, /4\.0 \/ 5/);
+  assert.match(html, /aria-labelledby="drill-remediation-heading"/);
+});
+
+test('passed, fallback, provisional and pending results cannot display an offer', () => {
+  const cases = [
+    createDrillCompletionResult('jam', 'online', onlinePayload),
+    createDrillCompletionResult('jam', 'online', { ...onlinePayload, passed: false,
+      evaluation_data: JSON.stringify({ scoring: { ...scoring, authority: 'deterministic_fallback' } }) }),
+    createDrillCompletionResult('jam', 'provisional', { ...onlinePayload, passed: false }),
+    createDrillCompletionResult('jam', 'pending-transcription'),
+  ];
+  for (const result of cases) assert.doesNotMatch(renderWithRecommendation(result), /Practice recommendation/);
+});
+
+test('Yes and No return to the list without calling startDrill or changing the result', () => {
+  const flow = source.slice(source.indexOf('if (completionResult) {'), source.indexOf('if (activeSession) {', source.indexOf('if (completionResult) {')));
+  assert.match(flow, /onAcceptRecommendation=\{\(\) => \{[\s\S]*?setSelectedLevel\(recommendation\.level\);[\s\S]*?setCompletionResult\(null\)/);
+  assert.match(flow, /onDeclineRecommendation=\{\(\) => \{\s*setCompletionResult\(null\);/);
+  assert.doesNotMatch(flow, /startDrill\(|fetch\(|getUserMedia|startListening|speakText|setProgress\(/);
 });
 
 test('immediate result renders the complete stored paragraph without truncation', () => {
@@ -137,7 +174,7 @@ test('completion result survives session close and refresh until Back to Drills 
   assert.match(completion, /setCompletionResult\(createDrillCompletionResult\(activeSession\.drill_type as DrillType, 'provisional', result\.evaluation\)\)/);
   assert.match(completion, /setCompletionResult\(createDrillCompletionResult\(activeSession\.drill_type as DrillType, 'pending-transcription'\)\)/);
   assert.match(source, /if \(completionResult\) \{[\s\S]*?<DrillEvaluationResultView[\s\S]*?setCompletionResult\(null\)/);
-  assert.equal((source.match(/setCompletionResult\(null\)/g) ?? []).length, 1);
+  assert.equal((source.match(/setCompletionResult\(null\)/g) ?? []).length, 3);
   assert.match(completion, /setActiveSession\(null\)[\s\S]*?await loadSessions\(\)/);
   assert.match(source, /fetch\(`\$\{apiUrl\}\/drills\/`, \{ headers \}\)[\s\S]*?fetch\(`\$\{apiUrl\}\/drills\/progress`, \{ headers \}\)/);
 });

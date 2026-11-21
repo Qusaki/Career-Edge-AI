@@ -21,6 +21,7 @@ import { DRILLS_VERSION, getOfflineDrillPrompt, hasCurrentQuestionPack, NEGOTIAT
 import { normalizeApiError } from '../utils/httpError';
 import { isCanonicalDrillCriterion } from '../utils/analytics';
 import { resolveDrillSessionExecution } from '../utils/drillSessionExecution';
+import { drillRemediationLabels, getDrillRemediationRecommendation, type DrillRemediationRecommendation } from '../utils/drillRemediation';
 import { hasRestorableOfflineIdentity } from '../utils/sessionIdentity';
 import { readPostTestAccess, type PostTestAccess } from '../utils/postTestProgress';
 import { transcribeAnswer } from '../utils/transcribeAnswer';
@@ -483,10 +484,13 @@ export const claimDrillCompletion = (inFlight: { current: boolean }): boolean =>
   return true;
 };
 
-export function DrillEvaluationResultView({ result, error, onDone }: {
+export function DrillEvaluationResultView({ result, error, onDone, recommendation, onAcceptRecommendation, onDeclineRecommendation }: {
   result: DrillCompletionResult;
   error: string | null;
   onDone: () => void;
+  recommendation?: DrillRemediationRecommendation | null;
+  onAcceptRecommendation?: () => void;
+  onDeclineRecommendation?: () => void;
 }) {
   const pending = result.kind === 'pending-transcription';
   const provisional = result.kind === 'provisional';
@@ -543,6 +547,19 @@ export function DrillEvaluationResultView({ result, error, onDone }: {
             </div>
           )}
           {!provisional && source && <p className="mt-5 text-xs text-muted">Evaluation source: {source}</p>}
+          {recommendation && result.kind === 'online' && result.authority === 'semantic_ai_with_objective_caps'
+            && result.passed === false && onAcceptRecommendation && onDeclineRecommendation && (
+            <section aria-labelledby="drill-remediation-heading" className="mt-6 rounded-lg border border-line bg-background p-4">
+              <h2 id="drill-remediation-heading" className="text-sm font-bold">Practice recommendation</h2>
+              <p className="mt-2 break-words text-sm leading-relaxed text-muted">
+                Your {drillRemediationLabels[recommendation.criterion]} could use more practice. {getDrillDefinition(recommendation.drillType).title} can help you work on this area. Would you like to try it?
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button type="button" onClick={onAcceptRecommendation} className="program-accent-button program-accent-focus-ring min-h-11 rounded-lg px-4 py-2 text-sm font-semibold">Yes, show Drill</button>
+                <button type="button" onClick={onDeclineRecommendation} className="program-accent-focus-ring min-h-11 rounded-lg border border-line bg-card px-4 py-2 text-sm font-semibold text-ink">No, thanks</button>
+              </div>
+            </section>
+          )}
         </>
       )}
       {error && <p role="alert" className="mt-5 text-sm text-rose-700">{error}</p>}
@@ -1465,11 +1482,34 @@ export function DrillsPage({
   };
 
   if (completionResult) {
+    const recommendation = getDrillRemediationRecommendation({
+      kind: completionResult.kind,
+      authority: completionResult.authority,
+      passed: completionResult.passed,
+      criteria: completionResult.criteria,
+      currentDrillType: completionResult.drillType,
+      available: drills.map(drill => {
+        const drillProgress = progress[drill.drillLevel].drills.find(item => item.type === drill.drillType);
+        return { drillType: drill.drillType, level: drill.drillLevel,
+          unlocked: Boolean(drillProgress?.unlocked), completed: Boolean(drillProgress?.completed) };
+      }),
+    });
     return (
       <div className="w-full bg-page px-4 py-8 sm:px-8">
         <DrillEvaluationResultView
           result={completionResult}
           error={error}
+          recommendation={recommendation}
+          onAcceptRecommendation={() => {
+            if (!recommendation) return;
+            setSelectedLevel(recommendation.level);
+            setCompletionResult(null);
+            setError(null);
+          }}
+          onDeclineRecommendation={() => {
+            setCompletionResult(null);
+            setError(null);
+          }}
           onDone={() => {
             setCompletionResult(null);
             setError(null);
