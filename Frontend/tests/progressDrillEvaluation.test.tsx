@@ -59,6 +59,12 @@ test('feedback and six validated rubric criteria render without invented descrip
   assert.doesNotMatch(html, /Strengths|Weaknesses|Confidence/);
 });
 
+test('Progress shows the complete stored paragraph for a selected completed Drill', () => {
+  const feedback = 'The response explained the scenario clearly and kept its tone professional. It addressed the main issue, although the proposed action lacked a concrete detail. Next time, name one practical step and explain why it helps the audience.';
+  const html = render([completedDrill({ feedback_summary: feedback })]);
+  assert.ok(html.includes(feedback));
+});
+
 test('Progress accepts decimal Drill criteria and formats historical integers as tenths', () => {
   const decimalCriteria = { ...criteria, vocabulary: 2.5, clarity: 3.7 };
   const record = completedDrill({ score: 74.33,
