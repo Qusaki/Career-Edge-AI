@@ -7,6 +7,7 @@ import { PreTestPage } from './PreTestPage';
 import { DrillsPage } from './DrillsPage';
 import { ProgressDrillEvaluationSection } from './ProgressDrillEvaluation';
 import { ProgressPostTestEvaluationSection } from './ProgressPostTestEvaluation';
+import { ProgressBaseline } from './ProgressBaseline';
 import { DashboardEvaluationSummarySection } from './DashboardEvaluationSummary';
 import { PostTestPage } from './PostTestPage';
 import { AppUpdateNotice, type UpdateBlockReason } from './AppUpdateNotice';
@@ -75,7 +76,6 @@ import { isPostTestUnlocked, postTestAccessForUser, readPostTestAccess, requestP
 import { getProgramAccentTheme } from '../config/programTheme';
 import {
   buildActivityComparison,
-  getCommunicationSkillScore,
   getNormalizedActivityScore,
   hasCompletedTotalScore,
   isCompletedActivity,
@@ -937,39 +937,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
     eyeContactAutosaveRef.current.lastSamples = eyeTracker.samples;
     void updateActivityCheckpoint({ eyeContactSummary: getCheckpointEyeContactSummary() });
   }, [activeActivityCheckpoint, eyeTracker.samples, getCheckpointEyeContactSummary, updateActivityCheckpoint]);
-  const communicationSkillCriteria = [
-    {
-      label: 'Vocabulary Usage',
-      description: 'Measures breadth and appropriateness of word choice in context',
-      field: 'score_vocabulary',
-    },
-    {
-      label: 'Clarity of Speech',
-      description: 'Assesses pronunciation accuracy and how clearly words are articulated',
-      field: 'score_clarity',
-    },
-    {
-      label: 'Visual Engagement',
-      description: 'Camera-based eye direction and head movement measured during Enrollment, Thesis, Pre-Test, Post-Test, and Drill activities.',
-      field: 'score_eye_contact',
-    },
-    {
-      label: 'Grammar & Sentence Structure',
-      description: 'Assesses correct use of tenses, subject-verb agreement, and sentence construction',
-      field: 'score_grammar',
-    },
-    {
-      label: 'Courtesy',
-      description: 'Assesses the showcase of empathy and proper manners when communicating',
-      field: 'score_courtesy',
-    },
-    {
-      label: 'Conciseness',
-      description: 'Assesses directness and relevance',
-      field: 'score_conciseness',
-    },
-  ];
-
   // Calculate statistics once for reuse
   const stats = (() => {
     const completedEnrollment = interviewHistory.filter(isCompletedActivity);
@@ -980,7 +947,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
       .map(item => getNormalizedActivityScore(item))
       .filter((score): score is number => score != null);
     const totalInterviews = completedActivities.length;
-    const scoredCommunication = completedModules.filter(item => item._source !== 'drills');
     const scoredCount = allScoredActivities.length;
 
     const avgScore = scoredCount > 0
@@ -996,50 +962,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
       else if (avgScore >= 60) { performance = "Passing"; perfColor = "text-amber-400"; perfMsg = "You're getting warmer."; }
       else { performance = "Needs Practice"; perfColor = "text-rose-400"; perfMsg = "Keep practicing!"; }
     }
-
-    const skillBreakdown = communicationSkillCriteria.map(criteria => {
-      if (criteria.field === 'score_eye_contact') {
-        const cameraRecords = [
-          ...completedEnrollment,
-          ...completedThesis,
-          ...completedModules,
-        ].filter(item =>
-          (item.eye_contact_samples || 0) > 0 && item.score_eye_contact != null
-        );
-        const totalCameraSamples = cameraRecords.reduce((sum, item) => sum + Number(item.eye_contact_samples || 0), 0);
-        const cameraPercentage = totalCameraSamples > 0
-          ? parseFloat((cameraRecords.reduce(
-              (sum, item) => sum + (Number(item.score_eye_contact) * Number(item.eye_contact_samples || 0)),
-              0,
-            ) / totalCameraSamples).toFixed(1))
-          : null;
-
-        return {
-          label: criteria.label,
-          description: criteria.description,
-          score: cameraPercentage == null ? 0 : parseFloat((cameraPercentage / 20).toFixed(1)),
-          displayScore: cameraPercentage == null ? 'N/A' : `${cameraPercentage}%`,
-          value: cameraPercentage == null ? 0 : Math.round(cameraPercentage),
-          scale: cameraPercentage == null ? 'No camera data' : 'Camera-based',
-        };
-      }
-
-      const recordedScores = scoredCommunication
-        .map(item => getCommunicationSkillScore(item, criteria.field))
-        .filter((score): score is number => score != null);
-      const score = recordedScores.length > 0
-        ? parseFloat((recordedScores.reduce((sum, currentScore) => sum + currentScore, 0) / recordedScores.length).toFixed(1))
-        : null;
-
-      return {
-        label: criteria.label,
-        description: criteria.description,
-        score: score || 0,
-        displayScore: score == null ? 'N/A' : `${score}/5`,
-        value: score == null ? 0 : Math.round((score / 5) * 100),
-        scale: score == null ? 'No scored data' : '1-5 scale',
-      };
-    });
 
     const activityGroups = [
       { label: 'University Enrollment', records: completedEnrollment },
@@ -1079,7 +1001,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       ),
     ];
 
-    return { totalInterviews, avgScore, performance, perfColor, perfMsg, skillBreakdown, activityGroups, comparisonInsights };
+    return { totalInterviews, avgScore, performance, perfColor, perfMsg, activityGroups, comparisonInsights };
   })();
 
   const currentEvaluation = React.useMemo(
@@ -6010,33 +5932,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 />
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-xl backdrop-blur-sm">
-                    <h3 className="text-xl font-bold text-slate-100 mb-6 italic tracking-tight">Skill Breakdown</h3>
-                    <div className="space-y-5">
-                      {stats.skillBreakdown.map((skill, idx) => (
-                        <div key={idx} className="space-y-2 rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
-                          <div className="flex items-start justify-between gap-4">
-                            <div>
-                              <h4 className="text-sm font-bold text-slate-100">{skill.label}</h4>
-                              <p className="mt-1 text-xs leading-relaxed text-slate-400">{skill.description}</p>
-                            </div>
-                            <div className="shrink-0 text-right">
-                              <p className="text-sm font-black text-slate-100">{skill.displayScore}</p>
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{skill.scale}</p>
-                            </div>
-                          </div>
-                          <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
-                            <motion.div
-                              initial={{ width: 0 }}
-                              animate={{ width: `${skill.value}%` }}
-                              transition={{ duration: 1, delay: 0.5 + (idx * 0.1) }}
-                              className="program-accent-fill h-full rounded-full"
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  <ProgressBaseline
+                    records={communicationHistory}
+                    historyState={communicationHistoryState}
+                    historyOwnerId={communicationHistoryUserId}
+                    userId={authenticatedUserId}
+                  />
 
                   <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl backdrop-blur-sm">
                     <div className="mb-6 flex items-center gap-4">

@@ -55,7 +55,7 @@ const renderEmbedded = (raw: Record<string, unknown>) => {
 test('Progress places a separate Post-Test Evaluation after unchanged Drill Evaluation', () => {
   assert.ok(dashboardSource.indexOf('<ProgressDrillEvaluationSection records={communicationHistory} />')
     < dashboardSource.indexOf('<ProgressPostTestEvaluationSection'));
-  assert.ok(dashboardSource.indexOf('<ProgressPostTestEvaluationSection') < dashboardSource.indexOf('Skill Breakdown'));
+  assert.ok(dashboardSource.indexOf('<ProgressPostTestEvaluationSection') < dashboardSource.indexOf('<ProgressBaseline'));
   assert.match(dashboardSource, /records=\{communicationHistory\}[\s\S]*?historyOwnerId=\{communicationHistoryUserId\}/);
   assert.match(dashboardSource, /fetch\(`\$\{API_URL\}\/post-test-interview\/`,/);
   assert.doesNotMatch(sectionSource, /post-test-interview\/`|post-test-interview\/\$/);

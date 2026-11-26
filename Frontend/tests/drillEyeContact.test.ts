@@ -5,6 +5,7 @@ import test from 'node:test';
 import { combineEyeContactSummaries } from '../src/offline/eyeContact';
 import { buildOfflineSyncPayload } from '../src/offline/offlineSyncClient';
 import { createActivityCheckpoint } from '../src/offline/sessionFoundation';
+import { derivePreTestBaseline } from '../src/utils/preTestBaseline';
 
 
 const drillsSource = readFileSync(new URL('../src/components/DrillsPage.tsx', import.meta.url), 'utf8');
@@ -94,13 +95,11 @@ test('offline Drill sync payload includes the corrected cumulative summary', () 
   });
 });
 
-test('analytics includes completed Drills only when positive camera samples exist', () => {
-  assert.match(dashboardSource, /const cameraRecords = \[[\s\S]*?\.\.\.completedModules,[\s\S]*?\]\s*\.filter\(item =>[\s\S]*?\(item\.eye_contact_samples \|\| 0\) > 0 && item\.score_eye_contact != null/);
-  const cameraRecordsStart = dashboardSource.indexOf('const cameraRecords = [');
-  const cameraRecordsEnd = dashboardSource.indexOf('const totalCameraSamples', cameraRecordsStart);
-  assert.ok(cameraRecordsStart >= 0 && cameraRecordsEnd > cameraRecordsStart);
-  assert.doesNotMatch(
-    dashboardSource.slice(cameraRecordsStart, cameraRecordsEnd),
-    /completedModules\.filter\(item => item\._source !== 'drills'\)/,
-  );
+test('Drill camera data remains in activity history but cannot change initial Pre-Test Baseline', () => {
+  assert.match(dashboardSource, /\{ label: 'Drills', records: completedModules\.filter\(item => item\._source === 'drills'\) \}/);
+  const initial = { _source: 'pre-test-intro', id: 1, status: 'completed',
+    start_time: '2026-01-01T00:00:00Z', score_eye_contact: 40, eye_contact_samples: 10 };
+  const drill = { _source: 'drills', id: 2, status: 'completed',
+    start_time: '2026-01-02T00:00:00Z', score_eye_contact: 100, eye_contact_samples: 100 };
+  assert.equal(derivePreTestBaseline([initial, drill])?.visualEngagement, 40);
 });
