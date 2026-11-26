@@ -52,7 +52,12 @@ test('score data contracts remain while recent rows keep their compact responsiv
     [postTest, 'Recent Post-Tests'],
   ] as const) {
     const section = recentSection(source, heading);
-    assert.match(section, /flex items-center justify-between border-b border-line px-4 py-3 last:border-b-0/);
+    if (heading === 'Recent Post-Tests') {
+      assert.match(section, /flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3 last:border-b-0/);
+      assert.match(section, /session\.status === 'completed'[\s\S]*?View Evaluation/);
+    } else {
+      assert.match(section, /flex items-center justify-between border-b border-line px-4 py-3 last:border-b-0/);
+    }
     assert.match(section, /program-accent-surface rounded-full px-2\.5 py-1 text-xs font-bold capitalize/);
     assert.doesNotMatch(section, /className="mt-1 text-sm font-bold text-ink"/);
   }

@@ -26,17 +26,30 @@ export type PostTestCompletionResult = {
   evaluation_data: PostTestEvaluationData | null;
 };
 
+type DisplayResult = Omit<PostTestCompletionResult, 'total_score' | 'passed' | 'feedback_summary'> & {
+  total_score: number | null;
+  passed: boolean | null;
+  feedback_summary: string | null;
+};
+
+type AggregateCriteria = Record<keyof PostTestQuestionEvaluation['criteria'], number | null>;
+
 const criterionLabels = [
   ['vocabulary', 'Vocabulary'], ['clarity', 'Clarity'], ['grammar', 'Grammar'],
   ['courtesy', 'Courtesy'], ['conciseness', 'Conciseness'],
 ] as const;
 
 export function PostTestEvaluationResult({
-  result, questions, onClose,
+  result, questions, onClose, answers, completedAt, aggregateCriteria, detailNotice, closeLabel,
 }: {
-  result: PostTestCompletionResult;
+  result: DisplayResult;
   questions: readonly string[];
   onClose: () => void;
+  answers?: readonly string[];
+  completedAt?: string | null;
+  aggregateCriteria?: AggregateCriteria;
+  detailNotice?: string | null;
+  closeLabel?: string;
 }) {
   const detail = result.evaluation_data;
   const evaluations = [...(detail?.question_evaluations || [])].sort((a, b) => a.question_index - b.question_index);
@@ -49,21 +62,36 @@ export function PostTestEvaluationResult({
             <h1 id="post-test-result-heading" className="text-2xl font-bold sm:text-3xl">Your evaluation</h1>
           </div>
           <button type="button" onClick={onClose} className="program-accent-focus-ring rounded-lg border border-line px-4 py-2 font-semibold hover:bg-active">
-            Back to Post-Test
+            {closeLabel || 'Back to Post-Test'}
           </button>
         </div>
-        <p className="mt-4 text-lg font-semibold">{result.total_score}/25 · {result.passed ? 'Passed' : 'Needs more practice'}</p>
+        {completedAt && <p className="mt-4 text-sm text-muted">Completed {new Date(completedAt).toLocaleString()}</p>}
+        <p className="mt-4 text-lg font-semibold">
+          {result.total_score === null ? 'Score unavailable' : `${result.total_score}/25`}
+          {' · '}{result.passed === null ? 'Result unavailable' : result.passed ? 'Passed' : 'Needs more practice'}
+        </p>
+        {aggregateCriteria && (
+          <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3" aria-label="Overall communication criteria">
+            {criterionLabels.map(([key, label]) => (
+              <p key={key} className="min-w-0 rounded-lg border border-line p-2">
+                <span className="text-muted">{label}</span> <strong>{aggregateCriteria[key] === null ? 'Unavailable' : `${aggregateCriteria[key]}/5`}</strong>
+              </p>
+            ))}
+          </div>
+        )}
+        {aggregateCriteria && detail && <p className="mt-3 text-sm text-muted">Scoring: {detail.scoring_authority === 'deterministic_fallback' ? 'Limited objective evaluation' : 'AI-assisted evaluation'}</p>}
         {detail?.scoring_authority === 'deterministic_fallback' && (
           <p role="status" className="mt-3 rounded-lg border border-line bg-background p-3 text-sm text-muted">
             Detailed AI feedback was unavailable. These are limited objective scores, not a semantic evaluation of your answers.
           </p>
         )}
+        {detailNotice && <p role="status" className="mt-3 rounded-lg border border-line bg-background p-3 text-sm text-muted">{detailNotice}</p>}
         <h2 className="mt-5 font-semibold">Overall feedback</h2>
-        <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted">{result.feedback_summary}</p>
+        <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted">{result.feedback_summary || 'Feedback unavailable.'}</p>
         {detail && detail.recommendations.length > 0 && (
           <div className="mt-5">
             <h2 className="font-semibold">Recommendations</h2>
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted">
+            <ul className="mt-2 list-disc space-y-1 break-words pl-5 text-sm text-muted">
               {detail.recommendations.map((recommendation, index) => <li key={index}>{recommendation}</li>)}
             </ul>
           </div>
@@ -73,7 +101,13 @@ export function PostTestEvaluationResult({
         <article key={evaluation.question_index} className="min-w-0 rounded-xl border border-line bg-card p-5 sm:p-6">
           <h2 className="text-lg font-bold">Question {evaluation.question_index}</h2>
           {questions[evaluation.question_index - 1] && (
-            <p className="mt-1 text-sm leading-relaxed text-muted">{questions[evaluation.question_index - 1]}</p>
+            <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted">{questions[evaluation.question_index - 1]}</p>
+          )}
+          {answers?.[evaluation.question_index - 1] && (
+            <div className="mt-3 min-w-0">
+              <h3 className="text-sm font-semibold">Your answer</h3>
+              <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted">{answers[evaluation.question_index - 1]}</p>
+            </div>
           )}
           <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
             {criterionLabels.map(([key, label]) => (
