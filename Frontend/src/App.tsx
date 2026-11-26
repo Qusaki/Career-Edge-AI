@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, useMotionValue, useSpring, useTransform } from 'motion/react';
 import { Mic, FileText, CheckCircle, BarChart, Play, ArrowRight, BrainCircuit, Target, GraduationCap, MessageSquare, Video, Plus, Send, MousePointer2, Paperclip, LogOut, MapPin, Phone, Mail, Globe } from 'lucide-react';
 import { AuthPage } from './components/AuthPage';
 import { ResetPasswordPage } from './components/ResetPasswordPage';
-import { Dashboard } from './components/Dashboard';
+import { AuthenticatedEntry } from './components/AuthenticatedEntry';
 import { usePwaUpdate } from './hooks/usePwaUpdate';
 import { forgetVerifiedAccount } from './offline/accountBinding';
 import { clearNewSignupHandoff, recordAuthenticationEntry } from './utils/onboardingState';
@@ -398,6 +398,13 @@ export default function App() {
   const [resetToken, setResetToken] = useState<string | null>(readResetToken);
   const [isNewSignupSession, setIsNewSignupSession] = useState(false);
   const pwaUpdate = usePwaUpdate();
+  const handleLogout = useCallback(() => {
+    clearNewSignupHandoff();
+    localStorage.removeItem('token');
+    forgetVerifiedAccount();
+    setIsNewSignupSession(false);
+    setCurrentView('landing');
+  }, []);
 
   useEffect(() => {
     if (currentView === 'reset-password' && window.location.hash.includes('?')) {
@@ -463,19 +470,13 @@ export default function App() {
 
   if (currentView === 'dashboard') {
     return (
-      <Dashboard
+      <AuthenticatedEntry
         isNewSignupSession={isNewSignupSession}
         updateAvailable={pwaUpdate.updateAvailable}
         updateRefreshing={pwaUpdate.isRefreshing}
         updateError={pwaUpdate.error}
         onRefreshUpdate={pwaUpdate.refresh}
-        onLogout={() => {
-          clearNewSignupHandoff();
-          localStorage.removeItem('token');
-          forgetVerifiedAccount();
-          setIsNewSignupSession(false);
-          setCurrentView('landing');
-        }}
+        onLogout={handleLogout}
       />
     );
   }

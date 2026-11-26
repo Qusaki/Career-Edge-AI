@@ -12,6 +12,8 @@ import { DashboardEvaluationSummarySection } from './DashboardEvaluationSummary'
 import { PostTestPage } from './PostTestPage';
 import { AppUpdateNotice, type UpdateBlockReason } from './AppUpdateNotice';
 import { OnboardingGuide, type OnboardingTab } from './OnboardingGuide';
+import { PrivacyPolicyView, TermsAgreementView } from './LegalDocuments';
+import { hasCurrentLegalAccess, LEGAL_BUNDLE_VERSION, type LegalConsentState } from '../utils/legalConsent';
 import { useWebLLM } from '../hooks/useWebLLM';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import { cancelBrowserSpeech, speakBrowserText } from '../utils/browserSpeech';
@@ -132,7 +134,7 @@ interface DashboardProps {
   onRefreshUpdate: () => Promise<void>;
 }
 
-interface AuthenticatedUserResponse {
+interface AuthenticatedUserResponse extends LegalConsentState {
   id: number;
   email?: string | null;
   firstname?: string | null;
@@ -381,13 +383,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const cloudConnectionStateRef = React.useRef(connectivity.connectionState);
   cloudConnectionStateRef.current = connectivity.connectionState;
   const isCloudChecking = () => cloudConnectionStateRef.current === 'checking';
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'pre-test' | 'drills' | 'post-test' | 'history' | 'analytics' | 'profile' | 'settings' | 'support' | 'privacy' | 'interview-type' | 'university-setup' | 'new-interview' | 'interview-session' | 'interview-result' | 'thesis-setup' | 'thesis-session'>(() => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'pre-test' | 'drills' | 'post-test' | 'history' | 'analytics' | 'profile' | 'settings' | 'support' | 'privacy' | 'terms' | 'interview-type' | 'university-setup' | 'new-interview' | 'interview-session' | 'interview-result' | 'thesis-setup' | 'thesis-session'>(() => {
     if (window.location.pathname === '/pre-test') return 'pre-test';
     if (window.location.pathname === '/drills') return 'drills';
     if (window.location.pathname === '/post-test') return 'post-test';
     if (window.location.pathname === '/settings') return 'settings';
     if (window.location.pathname === '/support') return 'support';
     if (window.location.pathname === '/privacy') return 'privacy';
+    if (window.location.pathname === '/terms') return 'terms';
     if (window.location.pathname === '/profile') return 'profile';
     return 'dashboard';
   });
@@ -1050,6 +1053,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       settings: '/settings',
       support: '/support',
       privacy: '/privacy',
+      terms: '/terms',
       profile: '/profile',
     };
     const path = routes[activeTab];
@@ -1070,6 +1074,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       else if (route === '/settings') setActiveTab('settings');
       else if (route === '/support') setActiveTab('support');
       else if (route === '/privacy') setActiveTab('privacy');
+      else if (route === '/terms') setActiveTab('terms');
       else if (route === '/profile') setActiveTab('profile');
       else setActiveTab('dashboard');
     };
@@ -1305,6 +1310,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             name: p.name,
             department: p.department,
             profilePicture: p.profilePicture,
+            legalConsentVerifiedBundleVersion: hasCurrentLegalAccess(data) ? LEGAL_BUNDLE_VERSION : undefined,
           }).catch(console.error);
           rememberVerifiedAccount(token, data.id).catch((bindingError) => {
             console.error('Failed to remember the verified offline account binding:', bindingError);
@@ -1708,6 +1714,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           name: updatedProfile.name,
           department: updatedProfile.department,
           profilePicture: updatedProfile.profilePicture,
+          legalConsentVerifiedBundleVersion: hasCurrentLegalAccess(updatedUser) ? LEGAL_BUNDLE_VERSION : undefined,
         });
         setSelectedFile(null);
         setIsSaved(true);
@@ -4551,7 +4558,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 aria-controls="sidebar-account-menu"
                 onClick={() => setIsAccountMenuOpen((isOpen) => !isOpen)}
                 className={`program-accent-focus-ring flex w-full items-center gap-3 rounded-lg border border-line p-2 text-left transition-colors duration-200 ${
-                  ['profile', 'settings', 'support', 'privacy'].includes(activeTab) || isAccountMenuOpen ? 'bg-active' : 'bg-transparent hover:bg-active'
+                  ['profile', 'settings', 'support', 'privacy', 'terms'].includes(activeTab) || isAccountMenuOpen ? 'bg-active' : 'bg-transparent hover:bg-active'
                 }`}
               >
                 <ProfileAvatar
@@ -6101,18 +6108,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           <Shield className="h-5 w-5" aria-hidden="true" />
                         </div>
                         <div>
-                          <h2 id="privacy-settings-heading" className="text-lg font-bold text-ink">Privacy Policy</h2>
-                          <p className="mt-1 text-sm text-muted">View the space reserved for the approved policy.</p>
+                          <h2 id="privacy-settings-heading" className="text-lg font-bold text-ink">Privacy &amp; Legal</h2>
+                          <p className="mt-1 text-sm text-muted">Read the Privacy Policy and Terms and Agreement.</p>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('privacy')}
-                        className="program-accent-focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line bg-card px-4 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-active"
-                      >
-                        View
-                        <ArrowRight className="h-4 w-4" aria-hidden="true" />
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={() => setActiveTab('privacy')}
+                          className="program-accent-focus-ring inline-flex min-h-11 items-center justify-center rounded-lg border border-line bg-card px-4 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-active">Privacy Policy</button>
+                        <button type="button" onClick={() => setActiveTab('terms')}
+                          className="program-accent-focus-ring inline-flex min-h-11 items-center justify-center rounded-lg border border-line bg-card px-4 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-active">Terms &amp; Agreement</button>
+                      </div>
                     </section>
                   </div>
                 </div>
@@ -6168,31 +6173,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 animate={{ opacity: 1, y: 0 }}
                 className="mx-auto w-full max-w-3xl"
               >
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('settings')}
-                  className="program-accent-focus-ring mb-6 inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-semibold text-muted transition-colors hover:bg-active hover:text-ink"
-                >
-                  <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-                  Back to Settings
-                </button>
-                <div className="mb-7">
-                  <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">Privacy Policy</h1>
-                  <p className="mt-2 text-base text-muted">Career Edge policy information.</p>
-                </div>
-                <section className="rounded-xl border border-line bg-card p-5 sm:p-6" aria-labelledby="privacy-content-heading">
-                  <div className="flex items-start gap-3">
-                    <div className="program-accent-surface flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
-                      <FileText className="h-5 w-5" aria-hidden="true" />
-                    </div>
-                    <div>
-                      <h2 id="privacy-content-heading" className="text-lg font-bold text-ink">Policy content pending</h2>
-                      <p className="mt-2 text-sm leading-relaxed text-muted">
-                        The official approved Privacy Policy has not been added to the application yet. This page is ready to display that content when it becomes available.
-                      </p>
-                    </div>
-                  </div>
-                </section>
+                <PrivacyPolicyView onBack={() => setActiveTab('settings')} />
+              </motion.div>
+            )}
+
+            {activeTab === 'terms' && (
+              <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+                className="mx-auto w-full max-w-3xl">
+                <TermsAgreementView onBack={() => setActiveTab('settings')} />
               </motion.div>
             )}
 

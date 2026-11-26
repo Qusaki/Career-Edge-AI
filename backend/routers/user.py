@@ -3,10 +3,11 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from database import get_db
 from models.user import User
-from schemas.user import UserCreate, UserResponse
+from schemas.user import LegalConsentRequest, UserCreate, UserResponse
 from core.security import get_password_hash
 from core.password_policy import validate_new_password
-from core.deps import get_current_user
+from core.deps import get_authenticated_user, get_current_user
+from core.legal_consent import LEGAL_BUNDLE_VERSION, accept_legal_bundle
 
 
 router = APIRouter()
@@ -31,6 +32,7 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
         middlename=user.middlename,
         lastname=user.lastname,
         department=user.department,
+        legal_consent_required_version=LEGAL_BUNDLE_VERSION,
     )
     db.add(new_user)
     db.commit()
@@ -39,8 +41,26 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/me", response_model=UserResponse)
-def get_user_me(current_user: User = Depends(get_current_user)):
+def get_user_me(current_user: User = Depends(get_authenticated_user)):
     return current_user
+
+
+@router.post("/me/legal-consent", response_model=UserResponse)
+def accept_user_legal_consent(
+    request: LegalConsentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_authenticated_user),
+):
+    # PostgreSQL serializes concurrent retries for this account.
+    user = db.query(User).filter(User.id == current_user.id).with_for_update().one()
+    try:
+        changed = accept_legal_bundle(user, request.version)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if changed:
+        db.commit()
+        db.refresh(user)
+    return user
 
 
 @router.get("/{user_id}", response_model=UserResponse)
