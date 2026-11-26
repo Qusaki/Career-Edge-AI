@@ -33,6 +33,17 @@ type DisplayResult = Omit<PostTestCompletionResult, 'total_score' | 'passed' | '
 };
 
 type AggregateCriteria = Record<keyof PostTestQuestionEvaluation['criteria'], number | null>;
+type ResultProps = {
+  result: DisplayResult;
+  questions: readonly string[];
+  answers?: readonly string[];
+  completedAt?: string | null;
+  aggregateCriteria?: AggregateCriteria;
+  detailNotice?: string | null;
+} & (
+  | { embedded: true; onClose?: never; closeLabel?: never }
+  | { embedded?: false; onClose: () => void; closeLabel?: string }
+);
 
 const criterionLabels = [
   ['vocabulary', 'Vocabulary'], ['clarity', 'Clarity'], ['grammar', 'Grammar'],
@@ -40,31 +51,24 @@ const criterionLabels = [
 ] as const;
 
 export function PostTestEvaluationResult({
-  result, questions, onClose, answers, completedAt, aggregateCriteria, detailNotice, closeLabel,
-}: {
-  result: DisplayResult;
-  questions: readonly string[];
-  onClose: () => void;
-  answers?: readonly string[];
-  completedAt?: string | null;
-  aggregateCriteria?: AggregateCriteria;
-  detailNotice?: string | null;
-  closeLabel?: string;
-}) {
+  result, questions, onClose, answers, completedAt, aggregateCriteria, detailNotice, closeLabel, embedded = false,
+}: ResultProps) {
   const detail = result.evaluation_data;
   const evaluations = [...(detail?.question_evaluations || [])].sort((a, b) => a.question_index - b.question_index);
   return (
-    <section className="mx-auto w-full max-w-5xl space-y-5 text-ink" aria-labelledby="post-test-result-heading">
+    <section className="mx-auto w-full max-w-5xl space-y-5 text-ink" aria-labelledby={embedded ? undefined : 'post-test-result-heading'} aria-label={embedded ? 'Selected Post-Test evaluation result' : undefined}>
       <div className="rounded-xl border border-line bg-card p-5 sm:p-7">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-program-accent mb-1 text-xs font-bold uppercase tracking-[0.2em]">Post-Test Result</p>
-            <h1 id="post-test-result-heading" className="text-2xl font-bold sm:text-3xl">Your evaluation</h1>
+        {!embedded && (
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-program-accent mb-1 text-xs font-bold uppercase tracking-[0.2em]">Post-Test Result</p>
+              <h1 id="post-test-result-heading" className="text-2xl font-bold sm:text-3xl">Your evaluation</h1>
+            </div>
+            {onClose && <button type="button" onClick={onClose} className="program-accent-focus-ring rounded-lg border border-line px-4 py-2 font-semibold hover:bg-active">
+              {closeLabel || 'Back to Post-Test'}
+            </button>}
           </div>
-          <button type="button" onClick={onClose} className="program-accent-focus-ring rounded-lg border border-line px-4 py-2 font-semibold hover:bg-active">
-            {closeLabel || 'Back to Post-Test'}
-          </button>
-        </div>
+        )}
         {completedAt && <p className="mt-4 text-sm text-muted">Completed {new Date(completedAt).toLocaleString()}</p>}
         <p className="mt-4 text-lg font-semibold">
           {result.total_score === null ? 'Score unavailable' : `${result.total_score}/25`}
@@ -86,11 +90,11 @@ export function PostTestEvaluationResult({
           </p>
         )}
         {detailNotice && <p role="status" className="mt-3 rounded-lg border border-line bg-background p-3 text-sm text-muted">{detailNotice}</p>}
-        <h2 className="mt-5 font-semibold">Overall feedback</h2>
+        {embedded ? <h4 className="mt-5 font-semibold">Overall feedback</h4> : <h2 className="mt-5 font-semibold">Overall feedback</h2>}
         <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted">{result.feedback_summary || 'Feedback unavailable.'}</p>
         {detail && detail.recommendations.length > 0 && (
           <div className="mt-5">
-            <h2 className="font-semibold">Recommendations</h2>
+            {embedded ? <h4 className="font-semibold">Recommendations</h4> : <h2 className="font-semibold">Recommendations</h2>}
             <ul className="mt-2 list-disc space-y-1 break-words pl-5 text-sm text-muted">
               {detail.recommendations.map((recommendation, index) => <li key={index}>{recommendation}</li>)}
             </ul>
@@ -99,13 +103,14 @@ export function PostTestEvaluationResult({
       </div>
       {evaluations.map(evaluation => (
         <article key={evaluation.question_index} className="min-w-0 rounded-xl border border-line bg-card p-5 sm:p-6">
-          <h2 className="text-lg font-bold">Question {evaluation.question_index}</h2>
+          {embedded ? <h4 className="text-lg font-bold">Question {evaluation.question_index}</h4>
+            : <h2 className="text-lg font-bold">Question {evaluation.question_index}</h2>}
           {questions[evaluation.question_index - 1] && (
             <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted">{questions[evaluation.question_index - 1]}</p>
           )}
           {answers?.[evaluation.question_index - 1] && (
             <div className="mt-3 min-w-0">
-              <h3 className="text-sm font-semibold">Your answer</h3>
+              {embedded ? <h5 className="text-sm font-semibold">Your answer</h5> : <h3 className="text-sm font-semibold">Your answer</h3>}
               <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted">{answers[evaluation.question_index - 1]}</p>
             </div>
           )}
