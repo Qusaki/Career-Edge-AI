@@ -21,6 +21,7 @@ import { combineEyeContactSummaries, shouldCheckpointEyeContact, type EyeContact
 import { evaluatePostTest } from '../offline/localEvaluation';
 import { getPostTestQuestions, hasCurrentQuestionPack, POST_TEST_VERSION } from '../offline/questionPacks';
 import { normalizeApiError } from '../utils/httpError';
+import { fetchPostTestHistoryDetail, PostTestHistoryFetchError, readPostTestHistoryDisplay, type PostTestHistoryDisplay } from '../utils/postTestHistory';
 import { transcribeAnswer } from '../utils/transcribeAnswer';
 import { resolveSessionExecution } from '../utils/sessionExecution';
 import { hasRestorableOfflineIdentity } from '../utils/sessionIdentity';
@@ -197,6 +198,12 @@ function PostTestActivity({
 }: PostTestActivityProps) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [completedResult, setCompletedResult] = useState<{ result: PostTestCompletionResult; questions: string[] } | null>(null);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<number | string | null>(null);
+  const [historyDetail, setHistoryDetail] = useState<PostTestHistoryDisplay | null>(null);
+  const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
+  const [historyDetailError, setHistoryDetailError] = useState<string | null>(null);
+  const historyRequestRef = useRef<AbortController | null>(null);
+  const historyGenerationRef = useRef(0);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshInFlightRef = useRef(false);
@@ -432,6 +439,63 @@ function PostTestActivity({
   };
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
+
+  const closeHistory = () => {
+    historyGenerationRef.current += 1;
+    historyRequestRef.current?.abort();
+    historyRequestRef.current = null;
+    setSelectedHistoryId(null);
+    setHistoryDetail(null);
+    setHistoryDetailLoading(false);
+    setHistoryDetailError(null);
+  };
+
+  const viewHistory = async (id: number | string) => {
+    historyRequestRef.current?.abort();
+    const controller = new AbortController();
+    historyRequestRef.current = controller;
+    const generation = ++historyGenerationRef.current;
+    setSelectedHistoryId(id);
+    setHistoryDetail(null);
+    setHistoryDetailError(null);
+    if (!effectiveOnline) {
+      setHistoryDetailLoading(false);
+      setHistoryDetailError('Post-Test evaluation details are unavailable while offline. Reconnect and try again.');
+      return;
+    }
+    const token = localStorage.getItem('token');
+    if (!token) {
+      setHistoryDetailLoading(false);
+      setHistoryDetailError('Your session could not be verified. Please sign in again.');
+      return;
+    }
+    setHistoryDetailLoading(true);
+    try {
+      const raw = await fetchPostTestHistoryDetail(apiUrl, id, token, controller.signal);
+      if (controller.signal.aborted || generation !== historyGenerationRef.current) return;
+      const display = readPostTestHistoryDisplay(raw, id);
+      if (!display) throw new Error('This Post-Test evaluation is unavailable. Please refresh the history and try again.');
+      setHistoryDetail(display);
+    } catch (err) {
+      if (controller.signal.aborted || generation !== historyGenerationRef.current) return;
+      setHistoryDetailError(err instanceof PostTestHistoryFetchError
+        ? err.status === 404 ? 'This Post-Test evaluation is no longer available.'
+          : err.status === 403 ? 'You do not have access to this Post-Test evaluation.'
+            : 'Unable to load this Post-Test evaluation. Please try again.'
+        : err instanceof TypeError ? 'Unable to reach the server. Check your connection and try again.'
+          : err instanceof Error ? err.message : 'Unable to load this Post-Test evaluation. Please try again.');
+    } finally {
+      if (generation === historyGenerationRef.current) {
+        setHistoryDetailLoading(false);
+        historyRequestRef.current = null;
+      }
+    }
+  };
+
+  useEffect(() => () => {
+    historyGenerationRef.current += 1;
+    historyRequestRef.current?.abort();
+  }, []);
 
   useEffect(() => () => {
     lifecycleGenerationRef.current += 1;
@@ -1301,6 +1365,32 @@ function PostTestActivity({
     return <PostTestEvaluationResult result={completedResult.result} questions={completedResult.questions} onClose={() => setCompletedResult(null)} />;
   }
 
+  if (selectedHistoryId !== null) {
+    if (historyDetail) {
+      return <PostTestEvaluationResult
+        result={historyDetail.result}
+        questions={historyDetail.pairs.map(pair => pair.question)}
+        answers={historyDetail.pairs.map(pair => pair.answer)}
+        aggregateCriteria={historyDetail.aggregateCriteria}
+        completedAt={historyDetail.completedAt}
+        detailNotice={historyDetail.detailNotice}
+        closeLabel="Back to Post-Test History"
+        onClose={closeHistory}
+      />;
+    }
+    return (
+      <section className="mx-auto w-full max-w-5xl rounded-xl border border-line bg-card p-5 text-ink sm:p-7" aria-labelledby="post-test-history-detail-heading">
+        <h1 id="post-test-history-detail-heading" className="text-2xl font-bold">Post-Test evaluation</h1>
+        {historyDetailLoading ? <p role="status" className="mt-4 text-muted">Loading evaluation...</p>
+          : <p role="alert" className="mt-4 text-muted">{historyDetailError || 'This Post-Test evaluation is unavailable.'}</p>}
+        <div className="mt-5 flex flex-wrap gap-3">
+          {!historyDetailLoading && <button type="button" onClick={() => void viewHistory(selectedHistoryId)} className="program-accent-focus-ring rounded-lg border border-line px-4 py-2 font-semibold hover:bg-active">Try again</button>}
+          <button type="button" onClick={closeHistory} className="program-accent-focus-ring rounded-lg border border-line px-4 py-2 font-semibold hover:bg-active">Back to Post-Test History</button>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <div className="w-full">
       <header className="mb-6">
@@ -1355,15 +1445,20 @@ function PostTestActivity({
           ) : sessions.length === 0 ? (
             <p className="p-10 text-center text-sm text-muted">No post-test sessions yet.</p>
           ) : sessions.slice(0, 8).map(session => (
-            <div key={session.id} className="flex items-center justify-between border-b border-line px-4 py-3 last:border-b-0">
-              <div>
+            <div key={session.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3 last:border-b-0">
+              <div className="min-w-0">
                 <p className="font-semibold text-ink">
                   Post-Test — Question {session.question_number || 1} of 5
                 </p>
                 <p className="mt-0.5 text-xs text-muted">{new Date(session.start_time).toLocaleString()}</p>
               </div>
-              <div className="text-right">
+              <div className="flex flex-wrap items-center gap-3">
                 <span className="program-accent-surface rounded-full px-2.5 py-1 text-xs font-bold capitalize">{session.status}</span>
+                {session.status === 'completed' && (
+                  <button type="button" onClick={() => void viewHistory(session.id)} aria-label={`View Evaluation for Post-Test on ${new Date(session.start_time).toLocaleString()}`} className="program-accent-link program-accent-focus-ring rounded-lg px-2 py-1 text-sm font-semibold hover:underline">
+                    View Evaluation
+                  </button>
+                )}
               </div>
             </div>
           ))}
