@@ -6,6 +6,7 @@ import { clearProfessorModelCache, ProfessorModel, ProfessorModelPreloader } fro
 import { PreTestPage } from './PreTestPage';
 import { DrillsPage } from './DrillsPage';
 import { ProgressDrillEvaluationSection } from './ProgressDrillEvaluation';
+import { ProgressPostTestEvaluationSection } from './ProgressPostTestEvaluation';
 import { DashboardEvaluationSummarySection } from './DashboardEvaluationSummary';
 import { PostTestPage } from './PostTestPage';
 import { AppUpdateNotice, type UpdateBlockReason } from './AppUpdateNotice';
@@ -5998,6 +5999,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </div>
 
                 <ProgressDrillEvaluationSection records={communicationHistory} />
+
+                <ProgressPostTestEvaluationSection
+                  records={communicationHistory}
+                  historyState={communicationHistoryState}
+                  historyOwnerId={communicationHistoryUserId}
+                  userId={authenticatedUserId}
+                  apiUrl={API_URL}
+                  effectiveOnline={connectivity.effectiveOnline}
+                />
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-xl backdrop-blur-sm">
