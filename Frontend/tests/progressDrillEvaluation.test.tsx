@@ -149,15 +149,15 @@ test('no scored completed Drill shows a compact empty state', () => {
   assert.match(render([completedDrill({ score: null })]), /Complete a Drill to see your detailed evaluation here/);
 });
 
-test('existing aggregate, Eye Contact, and Recent Drills policies are unchanged', () => {
+test('existing aggregate and Recent Drills policies remain separate from the new Baseline', () => {
   const record = completedDrill({ score: 0 });
   assert.equal(getNormalizedActivityScore(record), 0);
   assert.equal(buildActivityComparison('Drills', [record]).current, 0);
   assert.match(dashboardSource, /const allScoredActivities = completedActivities[\s\S]*?\.map\(item => getNormalizedActivityScore\(item\)\)/);
   assert.match(dashboardSource, /\{ label: 'Drills', records: completedModules\.filter\(item => item\._source === 'drills'\) \}/);
   assert.match(dashboardSource, /buildActivityComparison\([\s\S]*?'Drills',[\s\S]*?completedModules\.filter\(item => item\._source === 'drills'\)/);
-  assert.match(dashboardSource, /const scoredCommunication = completedModules\.filter\(item => item\._source !== 'drills'\)/);
-  assert.match(dashboardSource, /const cameraRecords = \[[\s\S]*?\.\.\.completedModules,[\s\S]*?eye_contact_samples[\s\S]*?score_eye_contact/);
+  assert.match(dashboardSource, /<ProgressBaseline[\s\S]*?records=\{communicationHistory\}/);
+  assert.doesNotMatch(dashboardSource, /stats\.skillBreakdown/);
   const recent = drillsSource.slice(drillsSource.indexOf('Recent Drills'));
   assert.doesNotMatch(recent, /session\.score|session\.feedback_summary|session\.evaluation_data/);
 });

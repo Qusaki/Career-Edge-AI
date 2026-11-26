@@ -70,7 +70,7 @@ test('Enrollment and Thesis keep compact camera states inside the upper-right st
   assert.match(dashboardSource, /absolute left-4 right-4 top-14 z-20[\s\S]*?sm:top-4 sm:w-40/);
   assert.doesNotMatch(dashboardSource, /absolute bottom-4 right-4 z-20 w-44|absolute bottom-3 right-3 z-20 w-36/);
   assert.ok((dashboardSource.match(/Activity can continue without Visual Engagement scoring\./g) ?? []).length >= 2);
-  assert.match(dashboardSource, /label: 'Visual Engagement',[\s\S]*?field: 'score_eye_contact'/);
+  assert.match(dashboardSource, /<ProgressBaseline[\s\S]*?records=\{communicationHistory\}/);
   assert.match(dashboardSource, /title=\{isCameraEnabled \? 'Turn camera off' : 'Turn camera on for Visual Engagement tracking'\}/);
   assert.match(dashboardSource, /aria-label=\{isCameraEnabled \? 'Turn camera off' : 'Turn camera on for Visual Engagement tracking'\}/);
   assert.doesNotMatch(dashboardSource, /Camera Eye Contact|>Eye contact</);
