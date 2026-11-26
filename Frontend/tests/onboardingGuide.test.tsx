@@ -175,8 +175,8 @@ test('Skip, Finish, close and Escape share a completion path; logout and account
   assert.match(dashboard, /const dismissOnboardingGuide = \(\) => \{[\s\S]*?markOnboardingCompleted\(onboardingTourUserId\)/);
   assert.match(dashboard, /onboardingTourUserId !== authenticatedUserId \|\| onboardingTourTab === null \|\| onboardingBlocked/);
   assert.match(dashboard, /window\.history\.replaceState\(\{\}, '', '\/dashboard'\);\s*setActiveTab\('dashboard'\)/);
-  assert.match(app, /onLogout=\{\(\) => \{[\s\S]*?setCurrentView\('landing'\)/);
-  assert.match(app, /onLogout=\{\(\) => \{\s*clearNewSignupHandoff\(\)/);
+  assert.match(app, /const handleLogout = useCallback\(\(\) => \{[\s\S]*?setCurrentView\('landing'\)/);
+  assert.match(app, /onLogout=\{handleLogout\}/);
 });
 
 test('Settings manual replay returns to Dashboard without resetting completed storage', () => {

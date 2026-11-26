@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel
 from typing import Optional, Literal
 
@@ -22,6 +23,17 @@ class UserLogin(BaseModel):
 
 class UserResponse(UserBase):
     id: int
+    legal_consent_required: bool
+    legal_consent_required_version: Optional[str] = None
+    legal_consent_version: Optional[str] = None
+    privacy_acknowledged_at: Optional[datetime] = None
+    terms_accepted_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+class LegalConsentRequest(BaseModel):
+    version: str
+    privacy_acknowledged: Literal[True]
+    terms_agreed: Literal[True]

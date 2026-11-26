@@ -89,6 +89,8 @@ export interface AccountCachedProfile {
   name: string;
   department: string;
   profilePicture: string;
+  /** Last server-verified access for this bundle; never evidence of acceptance. */
+  legalConsentVerifiedBundleVersion?: string;
 }
 
 export interface AccountCachedHistory {

@@ -9,12 +9,13 @@ from alembic.migration import MigrationContext
 from sqlalchemy.engine import make_url
 
 
-EXPECTED_REVISION = "d6c8e1f4a2b7"
+EXPECTED_REVISION = "a1c9e3f7b2d4"
 EXPECTED_TABLES = {
     "custom_skills_messages",
     "custom_skills_sessions",
     "drill_sessions",
     "offline_sync_receipts",
+    "password_reset_tokens",
     "post_test_interview_messages",
     "post_test_interview_sessions",
     "pre_test_active_listening_messages",
@@ -77,6 +78,13 @@ EYE_CONTACT_COLUMNS = {
         "eye_contact_samples": "integer",
         "evaluation_data": "json",
     },
+}
+
+LEGAL_CONSENT_COLUMNS = {
+    "legal_consent_required_version": "string",
+    "legal_consent_version": "string",
+    "privacy_acknowledged_at": "datetime",
+    "terms_accepted_at": "datetime",
 }
 
 
@@ -228,6 +236,13 @@ class PostgreSQLSchemaParityTests(unittest.TestCase):
                     column = table.columns[column_name]
                     self.assertEqual(_type_family(column.type), expected_type)
                     self.assertTrue(column.nullable)
+
+    def test_legal_consent_columns_are_nullable_for_legacy_accounts(self) -> None:
+        table = self.reflected_metadata.tables["users"]
+        for column_name, expected_type in LEGAL_CONSENT_COLUMNS.items():
+            column = table.columns[column_name]
+            self.assertEqual(_type_family(column.type), expected_type)
+            self.assertTrue(column.nullable)
 
     def test_alembic_autogenerate_reports_no_schema_differences(self) -> None:
         with self.engine.connect() as connection:

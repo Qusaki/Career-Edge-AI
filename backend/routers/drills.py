@@ -88,28 +88,28 @@ def backfill_drill_score(session: DrillSession) -> bool:
 
 # --- Generator Endpoints ---
 
-@router.get("/generate/jam")
+@router.get("/generate/jam", dependencies=[Depends(get_current_user)])
 def generate_jam_topic():
     topics = ["Coffee", "Smartphones", "The Future of AI", "My Favorite Book", "Why Sleep is Important", "Traveling", "The Ocean", "Social Media"]
     return {"topic": random.choice(topics)}
 
-@router.get("/generate/fast-word")
+@router.get("/generate/fast-word", dependencies=[Depends(get_current_user)])
 def generate_fast_word():
     words = ["Database", "Cloud", "Network", "Algorithm", "Security", "Frontend", "Backend", "Python", "Server"]
     return {"word": random.choice(words)}
 
-@router.get("/generate/emotion")
+@router.get("/generate/emotion", dependencies=[Depends(get_current_user)])
 def generate_emotion_sentence():
     sentences = ["The food is here.", "I can't believe this is happening.", "Look at what you've done.", "It's time to go home.", "Are you sure about that?"]
     emotions = ["Angry", "Excited", "Sad", "Confused", "Nervous", "Joyful"]
     return {"sentence": random.choice(sentences), "emotion": random.choice(emotions)}
 
-@router.get("/generate/synonym")
+@router.get("/generate/synonym", dependencies=[Depends(get_current_user)])
 def generate_synonym_word():
     words = ["Good", "Fast", "Big", "Small", "Happy", "Sad", "Hard", "Easy"]
     return {"word": random.choice(words)}
 
-@router.get("/generate/fake-profile")
+@router.get("/generate/fake-profile", dependencies=[Depends(get_current_user)])
 def generate_fake_profile():
     names = ["Alex", "Jordan", "Taylor", "Casey", "Morgan", "Riley"]
     ages = [22, 28, 35, 41, 19, 50]
@@ -123,12 +123,12 @@ def generate_fake_profile():
         "hobby": random.choice(hobbies)
     }
 
-@router.get("/generate/emojis")
+@router.get("/generate/emojis", dependencies=[Depends(get_current_user)])
 def generate_emojis():
     emojis_pool = ["🚀", "🍕", "🐱", "🎸", "⛰️", "📱", "🎈", "👻", "🌮", "🐉"]
     return {"emojis": random.sample(emojis_pool, 3)}
 
-@router.get("/generate/taboo")
+@router.get("/generate/taboo", dependencies=[Depends(get_current_user)])
 def generate_taboo_words():
     scenarios = [
         {"topic": "How to cook rice", "banned_words": ["Rice", "Water", "Cooker", "Eat"]},
@@ -138,7 +138,7 @@ def generate_taboo_words():
     ]
     return random.choice(scenarios)
 
-@router.get("/generate/elevator-pitch")
+@router.get("/generate/elevator-pitch", dependencies=[Depends(get_current_user)])
 def generate_elevator_pitch():
     scenarios = [
         {"scenario": "Pitch your app idea to a billionaire in an elevator."},
@@ -148,7 +148,7 @@ def generate_elevator_pitch():
     ]
     return random.choice(scenarios)
 
-@router.get("/generate/rephrase")
+@router.get("/generate/rephrase", dependencies=[Depends(get_current_user)])
 def generate_rephrase():
     paragraphs = [
         "In the event of an unforeseen exigency, it is imperative that personnel evacuate the premises expeditiously using the designated egress routes to ensure maximal survivability.",
@@ -157,7 +157,7 @@ def generate_rephrase():
     ]
     return {"text": random.choice(paragraphs)}
 
-@router.get("/generate/positive-framing")
+@router.get("/generate/positive-framing", dependencies=[Depends(get_current_user)])
 def generate_positive_framing():
     complaints = [
         "Your app is slow, full of bugs, and completely ruined my project!",
@@ -169,7 +169,7 @@ def generate_positive_framing():
 
 # --- Generator Endpoints (Hard) ---
 
-@router.get("/generate/hard/crisis")
+@router.get("/generate/hard/crisis", dependencies=[Depends(get_current_user)])
 def generate_crisis():
     scenarios = [
         "Your system got hacked and user data leaked!",

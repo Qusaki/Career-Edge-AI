@@ -88,7 +88,8 @@ test('ordinary sign-in and logout discard unbound signup intent before another a
   assert.equal(recordAuthenticationEntry(false, tab), false);
   assert.equal(bindNewSignupToVerifiedUser(19, false, accounts, tab), 'not-applicable');
   assert.equal(readOnboardingState(19, accounts), null);
-  assert.match(appSource, /onLogout=\{\(\) => \{\s*clearNewSignupHandoff\(\)/);
+  assert.match(appSource, /const handleLogout = useCallback\(\(\) => \{\s*clearNewSignupHandoff\(\)/);
+  assert.match(appSource, /onLogout=\{handleLogout\}/);
   recordAuthenticationEntry(true, tab);
   clearNewSignupHandoff(tab);
   assert.equal(hasNewSignupHandoff(tab), false);
