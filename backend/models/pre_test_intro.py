@@ -12,6 +12,7 @@ class PreTestIntroSession(Base):
     start_time = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     end_time = Column(DateTime, nullable=True)
     status = Column(String, default="active", nullable=False) # active, completed
+    scoring_authority = Column(String(64), nullable=True)
     
     # Grading criteria (Beginning 1, Developing 2, Proficient 3)
     score_clarity = Column(Integer, nullable=True)

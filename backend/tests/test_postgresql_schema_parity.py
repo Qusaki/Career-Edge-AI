@@ -9,8 +9,9 @@ from alembic.migration import MigrationContext
 from sqlalchemy.engine import make_url
 
 
-EXPECTED_REVISION = "a1c9e3f7b2d4"
+EXPECTED_REVISION = "c3e8a1b7d4f2"
 EXPECTED_TABLES = {
+    "adaptive_practice_sessions",
     "custom_skills_messages",
     "custom_skills_sessions",
     "drill_sessions",
@@ -242,6 +243,12 @@ class PostgreSQLSchemaParityTests(unittest.TestCase):
         for column_name, expected_type in LEGAL_CONSENT_COLUMNS.items():
             column = table.columns[column_name]
             self.assertEqual(_type_family(column.type), expected_type)
+            self.assertTrue(column.nullable)
+
+    def test_historical_pre_test_authority_remains_nullable(self) -> None:
+        for table_name in ("pre_test_intro_sessions", "pre_test_active_listening_sessions"):
+            column = self.reflected_metadata.tables[table_name].columns["scoring_authority"]
+            self.assertEqual(_type_family(column.type), "string")
             self.assertTrue(column.nullable)
 
     def test_alembic_autogenerate_reports_no_schema_differences(self) -> None:

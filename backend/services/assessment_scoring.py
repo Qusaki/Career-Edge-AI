@@ -533,3 +533,39 @@ async def score_drill(drill_type: str, evaluation_data: dict[str, Any],
             "max_score": 30, "passing_score": 20, "percentage": percentage,
         },
     }
+
+
+async def score_adaptive_practice(
+    target_criterion: str, scenario: str, prompt: str, response: str,
+    provider: AIProvider | None = None,
+) -> dict[str, Any]:
+    """Score a persisted generated task without weakening canonical Drill type checks."""
+    if target_criterion not in POST_TEST_CRITERIA or not scenario.strip() or not prompt.strip() or not response.strip():
+        raise ValueError("A valid persisted Adaptive Practice task and response are required.")
+    context = {"scenario": scenario, "prompt": prompt, "instructional_focus": target_criterion}
+    evaluation = await _evaluate(
+        "drill_adaptive_practice",
+        "Score this specific communication task on six 1-5 criteria: vocabulary, clarity, grammar, "
+        "conciseness, task_completion, courtesy. The instructional focus is not a score bonus. "
+        "Task completion reflects the exact saved scenario and prompt. Never infer vocal tone from a transcript.",
+        context, response, DRILL_KEYS, 5, provider, drill_tenths=True,
+    )
+    cap = None
+    reason = None
+    if repetition_dominated(response):
+        cap, reason = 2, "The response repeated fragments instead of developing the assigned task."
+    elif len(words(response)) < 8:
+        cap, reason = 2, "The response was too short to demonstrate the assigned task."
+    if evaluation["task_alignment"] <= 2:
+        cap, reason = min(cap or 5, 2), "The response did not meaningfully address the saved practice prompt."
+    elif evaluation["task_alignment"] == 3:
+        cap, reason = min(cap or 5, 3), "The response only partly addressed the saved practice prompt."
+    evaluation = _apply_cap(evaluation, DRILL_KEYS, cap, reason, drill_tenths=True)
+    total = evaluation["total_score"]
+    return {
+        "criteria": {key: evaluation[key] for key in DRILL_KEYS},
+        "score_total": total,
+        "passed": total >= 20,
+        "feedback_summary": evaluation["feedback_summary"],
+        "scoring_authority": evaluation["scoring_authority"],
+    }

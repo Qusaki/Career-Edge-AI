@@ -4,6 +4,7 @@ from models.user import Base
 
 # Import every concrete model module so its tables are registered on Base.metadata.
 from models import custom_skills
+from models import adaptive_practice
 from models import drills
 from models import offline_sync
 from models import password_reset_token

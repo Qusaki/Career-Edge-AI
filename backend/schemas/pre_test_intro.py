@@ -9,6 +9,7 @@ class PreTestIntroSessionResponse(BaseModel):
     start_time: datetime
     end_time: Optional[datetime] = None
     status: str
+    scoring_authority: Optional[str] = None
     
     score_clarity: Optional[int] = None
     score_completeness: Optional[int] = None

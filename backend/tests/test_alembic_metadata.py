@@ -7,6 +7,7 @@ import unittest
 
 
 EXPECTED_TABLES = {
+    "adaptive_practice_sessions",
     "custom_skills_messages",
     "custom_skills_sessions",
     "drill_sessions",
