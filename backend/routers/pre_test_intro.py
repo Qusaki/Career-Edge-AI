@@ -98,6 +98,7 @@ async def complete_intro_session(session_id: int, request: PreTestIntroCompleteR
         
     try:
         evaluation = await score_intro(canonical_transcript)
+        session.scoring_authority = evaluation.get("scoring_authority")
         
         session.score_clarity = bounded_integer_score(evaluation, "score_clarity", minimum=1, maximum=3, default=1)
         session.score_completeness = bounded_integer_score(evaluation, "score_completeness", minimum=1, maximum=3, default=1)

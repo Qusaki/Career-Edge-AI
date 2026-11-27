@@ -302,6 +302,7 @@ def persist_authoritative_result(
         db.flush()
 
     if payload.activity_type == "pre_test_intro":
+        session.scoring_authority = evaluation.get("scoring_authority")
         session.transcript = payload.answers[0].text
         for field in ["clarity", "completeness", "courtesy", "correctness", "conciseness"]:
             setattr(session, f"score_{field}", bounded_integer_score(evaluation, f"score_{field}", minimum=1, maximum=3, default=1))
@@ -313,6 +314,8 @@ def persist_authoritative_result(
         _apply_eye_contact(session, payload)
     elif payload.activity_type in {"pre_test_active_listening", "post_test"}:
         _apply_five_point_scores(session, evaluation)
+        if payload.activity_type == "pre_test_active_listening":
+            session.scoring_authority = evaluation.get("scoring_authority")
         if payload.activity_type == "post_test":
             session.evaluation_data = evaluation["evaluation_data"]
         _apply_eye_contact(session, payload)

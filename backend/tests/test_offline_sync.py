@@ -221,6 +221,8 @@ class OfflineSyncEndpointTests(unittest.TestCase):
 
         with self.Session() as db:
             self.assertEqual(db.query(PreTestActiveListeningSession).count(), 3)
+            self.assertTrue(all(row.scoring_authority in {"semantic_ai_with_objective_caps", "deterministic_fallback"}
+                                for row in db.query(PreTestActiveListeningSession).all()))
 
     def test_pure_offline_who_am_i_creates_one_native_result_and_ignores_local_score(self):
         response = self.client.post("/offline-sync", json=who_payload())
@@ -232,6 +234,7 @@ class OfflineSyncEndpointTests(unittest.TestCase):
             sessions = db.query(PreTestIntroSession).all()
             self.assertEqual(len(sessions), 1)
             self.assertEqual(sessions[0].status, "completed")
+            self.assertIn(sessions[0].scoring_authority, {"semantic_ai_with_objective_caps", "deterministic_fallback"})
 
     def test_identical_retry_replays_result_without_duplicate_history(self):
         first = self.client.post("/offline-sync", json=who_payload()).json()

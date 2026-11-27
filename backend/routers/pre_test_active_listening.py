@@ -254,6 +254,7 @@ async def complete_session(session_id: int, request: PreTestActiveListeningCompl
         if not summary.strip():
             raise HTTPException(status_code=409, detail="A saved listening response is required before scoring.")
         evaluation = await score_listening(story, summary)
+        session.scoring_authority = evaluation.get("scoring_authority")
         
         session.score_vocabulary = bounded_integer_score(evaluation, "score_vocabulary", minimum=1, maximum=5, default=1)
         session.score_clarity = bounded_integer_score(evaluation, "score_clarity", minimum=1, maximum=5, default=1)

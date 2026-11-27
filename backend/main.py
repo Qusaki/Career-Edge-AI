@@ -12,6 +12,7 @@ from routers import (
     pre_test_active_listening,
     post_test_interview,
     drills,
+    adaptive_practice,
     custom_skills,
     offline_sync,
     speech,
@@ -62,6 +63,7 @@ api.include_router(pre_test_intro.router, prefix="/pre-test-intro", tags=["Pre-t
 api.include_router(pre_test_active_listening.router, prefix="/pre-test-active-listening", tags=["Pre-test Exercises"])
 api.include_router(post_test_interview.router, prefix="/post-test-interview", tags=["Post-test Exercises"])
 api.include_router(drills.router, prefix="/drills", tags=["Drills"])
+api.include_router(adaptive_practice.router, prefix="/adaptive-practice", tags=["Adaptive Practice"])
 api.include_router(custom_skills.router, prefix="/custom-skills", tags=["Custom Skills AI Session"])
 api.include_router(offline_sync.router, prefix="/offline-sync", tags=["Offline Synchronization"])
 api.include_router(speech.router, prefix="/speech", tags=["Speech"])

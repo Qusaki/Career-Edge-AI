@@ -25,6 +25,7 @@ import { drillRemediationLabels, getDrillRemediationRecommendation, type DrillRe
 import { hasRestorableOfflineIdentity } from '../utils/sessionIdentity';
 import { readPostTestAccess, type PostTestAccess } from '../utils/postTestProgress';
 import { transcribeAnswer } from '../utils/transcribeAnswer';
+import { AdaptivePracticePage } from './AdaptivePracticePage';
 import type { OfflineAudioCapture } from '../offline/offlineAudioRecorder';
 import {
   createDrillTimerState,
@@ -587,6 +588,7 @@ export function DrillsPage({
   const [sessions, setSessions] = useState<DrillSession[]>([]);
   const [progress, setProgress] = useState<DrillProgress>(createInitialProgress);
   const [selectedLevel, setSelectedLevel] = useState<DrillLevel | null>(null);
+  const [adaptiveActive, setAdaptiveActive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshInFlightRef = useRef(false);
@@ -1745,6 +1747,8 @@ export function DrillsPage({
         </p>
       )}
 
+      <AdaptivePracticePage apiUrl={apiUrl} effectiveOnline={effectiveOnline} onActiveChange={setAdaptiveActive} />
+      {!adaptiveActive && <>
       <section aria-label="Drill difficulty" className="mb-5">
         <div className="flex flex-wrap gap-2">
           {drillLevels.map(level => (
@@ -1865,6 +1869,7 @@ export function DrillsPage({
           ))}
         </div>
       </section>
+      </>}
     </div>
   );
 }

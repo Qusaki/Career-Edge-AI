@@ -12,6 +12,7 @@ class PreTestActiveListeningSession(Base):
     start_time = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     end_time = Column(DateTime, nullable=True)
     status = Column(String, default="active", nullable=False) # active, completed, expired
+    scoring_authority = Column(String(64), nullable=True)
     
     # Grading criteria (1-5 Scale)
     score_vocabulary = Column(Integer, nullable=True)
